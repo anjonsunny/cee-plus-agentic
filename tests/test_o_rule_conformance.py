@@ -320,3 +320,36 @@ def test_o19_redundant_self_loop(main_module):
     flagged = [v["detail"] for v in violations if v["rule"] == "redundant_self_loop"]
     assert any("fire_1" in d for d in flagged)
     assert not any("car_9" in d for d in flagged)
+
+
+# O21 — fluid-as-object: an inundation state with no matching fluid node fires;
+# the same state paired with the fluid node emitted is clean.
+@pytest.mark.blocking
+def test_o21_fluid_encoded_as_state(main_module):
+    # house 'flooded', no water entity -> the fluid was collapsed into a state.
+    bad = {
+        "nodes": [
+            _node("house_1", "house", "flooded", True),
+            _node("person_1", "person", "stranded", True),
+        ],
+        "edges": [_edge("house_1", "house_1", "worsens", "flooded")],
+    }
+    assert "fluid_encoded_as_state" in _rules_of(main_module, bad)
+
+    # same scene done right: water_1 nodalized -> no fluid-as-state violation.
+    good = {
+        "nodes": [
+            _node("water_1", "water", "rising", True),
+            _node("house_1", "house", "flooded", True),
+        ],
+        "edges": [
+            _edge("water_1", "house_1", "increases_risk_to", "rising"),
+            _edge("water_1", "water_1", "worsens", "rising"),
+        ],
+    }
+    assert "fluid_encoded_as_state" not in _rules_of(main_module, good)
+
+    # ambiguous inundation (engulfed) is deliberately NOT mapped -> never fires.
+    amb = {"nodes": [_node("figure_1", "person", "engulfed", True)],
+           "edges": [_edge("figure_1", "figure_1", "worsens", "engulfed")]}
+    assert "fluid_encoded_as_state" not in _rules_of(main_module, amb)

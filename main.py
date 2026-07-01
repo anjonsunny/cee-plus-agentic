@@ -3474,6 +3474,25 @@ def normalize_result(raw: dict[str, Any], image_contents: str | None = None) -> 
 # ---------------------------------------------------------------------------
 
 RC_FLUID_LABELS = {"water", "mud", "smoke", "dust", "gas", "chemical"}
+
+# Fluid-as-object conformance (mirrors the prompt convention at lines ~106/467:
+# a diffuse hazard must be its OWN entity node, not a state on the entity it
+# inundates). An inundation state whose implied fluid was NOT emitted as a node
+# means the model collapsed the fluid into the affected entity. Only states with
+# an UNAMBIGUOUS fluid are mapped (engulfed/buried are cross-cause and omitted)
+# to keep the rule false-positive-safe (it shifts trust). Kept in sync with
+# intervention.py `_FLUID_INUNDATION_STATES` / `_FLUID_BASE_LABELS`.
+RC_INUNDATION_TO_FLUID = {
+    "flooded": "water", "submerged": "water", "inundated": "water",
+    "underwater": "water", "waterlogged": "water", "swamped": "water",
+    "standing_in_water": "water", "partially_submerged": "water",
+    "smoke_filled": "smoke", "mud_covered": "mud",
+}
+RC_FLUID_SYNONYMS = {
+    "water": {"water", "floodwater", "flood", "seawater", "stormwater", "floodwaters"},
+    "smoke": {"smoke"},
+    "mud": {"mud", "sludge", "slurry", "mudflow"},
+}
 RC_PERSONISH_LABELS = {
     "person", "man", "woman", "child", "firefighter", "officer", "rescuer",
     "homeowner", "driver", "worker", "resident", "responder", "victim",
@@ -3515,10 +3534,26 @@ def check_graph_rule_conformance(graph: dict[str, Any], graph_name: str) -> list
     }
     touched = {str(e.get("source", "")) for e in edges} | {str(e.get("target", "")) for e in edges}
 
+    # Fluids present as their own entities (by label family). Used to decide
+    # whether an inundation state was legally paired with a fluid node.
+    present_fluids: set[str] = set()
+    for n in nodes.values():
+        lab = str(n.get("label", "")).strip().lower()
+        for fam, syn in RC_FLUID_SYNONYMS.items():
+            if lab in syn:
+                present_fluids.add(fam)
+
     # Node-level rules
     for nid, n in nodes.items():
         state = canon(n.get("state"))
         hazardous = bool(n.get("hazardous", False))
+        expected_fluid = RC_INUNDATION_TO_FLUID.get(state)
+        if expected_fluid and expected_fluid not in present_fluids and not is_fluid(n):
+            violation("fluid_encoded_as_state",
+                      f"{nid} ({n.get('label')}): state '{state}' implies a "
+                      f"{expected_fluid} hazard, but no {expected_fluid} entity node was "
+                      f"emitted; the fluid was written as a state on the inundated entity "
+                      f"instead of its own node (fluid-as-object rule)")
         if hazardous != (state in HAZARD_BEARING_STATES) and state:
             violation("hazard_flag_state_mismatch",
                       f"{nid}: state '{state}' vs hazardous={hazardous}")
@@ -3723,7 +3758,7 @@ FAILURE_FAMILIES: dict[str, dict[str, Any]] = {
     },
     "structure_blind": {
         "label": "Misreads how entities connect",
-        "rules": ["one_way_worsens", "spread_between_hazards"],
+        "rules": ["one_way_worsens", "spread_between_hazards", "fluid_encoded_as_state"],
         "meaning": "Cannot track how hazards relate (direction, mutual feeding); treats co-located hazards as one blob.",
         "impact": "Cannot tell which intervention helps, so it recommends the wrong suppression.",
     },
@@ -3788,6 +3823,7 @@ CONSEQUENCE_CATEGORY: dict[str, str] = {
     "may_harm_hazardous_target": "under_response",
     "spread_between_hazards": "under_response",
     "one_way_worsens": "under_response",
+    "fluid_encoded_as_state": "under_response",  # the propagating fluid is never an actionable node -> real hazard softened
     "hazardous_node_no_edges": "under_response",
     "hazard_flag_state_mismatch": "under_response",
     "unresolved_affected_object": "under_response",
