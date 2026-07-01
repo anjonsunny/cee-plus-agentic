@@ -2157,3 +2157,45 @@ def test_cascade_no_clean_control_no_placebo_is_undecidable(tmp_path):
     assert d.get("discriminates_raw") is not None  # the raw bool retained for audit
     # And because discriminates is None (not False), no 'did not beat control' caveat fires.
     assert out["verdict"].get("discrimination_caveat") is False
+
+
+def test_label_coref_terminology_synonym():
+    """GT 'tanker' co-refers model 'tanker_truck' (curated synonym). Under the
+    state-required tier, tanker/leaking disambiguates from a parked tanker."""
+    lc = intervention._label_coref
+    assert lc("tanker", "tanker_truck", "leaking", "leaking", False)
+    assert lc("tanker", "tanker_truck", "leaking", "leaking", True)
+    assert not lc("tanker", "tanker_truck", "leaking", "parked", True)
+
+
+def test_label_coref_no_overmatch_via_generic_token():
+    """'fire' must NOT co-refer 'fire_truck' via the shared 'fire' when states differ."""
+    lc = intervention._label_coref
+    assert not lc("fire", "fire_truck", "burning", "responding", True)
+    assert not lc("fire", "fire_truck", "burning", "responding", False)
+
+
+def test_gt_core_unobserved_reason_fluid_vs_miss(tmp_path, monkeypatch):
+    """Fluid GT core the model wrote as inundation states (house/flooded, no water node)
+    -> reason 'fluid_encoded_as_state'; nothing encoding the fluid -> 'not_perceived'."""
+    gt = {"image_filename": "s.jpg",
+          "nodes": [{"id": "water_1", "label": "water", "state": "rising", "hazardous": True},
+                    {"id": "house_1", "label": "house", "state": "flooded", "hazardous": True}],
+          "edges": [{"source": "water_1", "via_state": "rising", "effect": "may_harm", "target": "house_1"}]}
+    (tmp_path / "s.jpg.gt.json").write_text(json.dumps(gt))
+    monkeypatch.setattr(intervention, "GT_VERIFIED_DIR", tmp_path)
+
+    fluid = {"image_filename": "s.jpg",
+             "detected_objects": [{"object_id": "house_1", "label": "house", "state": "flooded"}],
+             "causal_graph": {"nodes": [{"id": "house_1", "hazardous": True, "state": "flooded"}], "edges": []},
+             "graph_b": {"nodes": [], "edges": []}, "disaster_level": 6, "pre_intervention_trust": {}}
+    c = intervention.enumerate_candidates(intervention.intervention_baseline(fluid, None, gt_dir=tmp_path))
+    assert c["should_be_core"] is None
+    assert c["gt_core_unobserved"]["reason"] == "fluid_encoded_as_state"
+
+    miss = {"image_filename": "s.jpg",
+            "detected_objects": [{"object_id": "person_1", "label": "person", "state": "standing"}],
+            "causal_graph": {"nodes": [{"id": "person_1", "hazardous": False, "state": "standing"}], "edges": []},
+            "graph_b": {"nodes": [], "edges": []}, "disaster_level": 6, "pre_intervention_trust": {}}
+    c2 = intervention.enumerate_candidates(intervention.intervention_baseline(miss, None, gt_dir=tmp_path))
+    assert c2["gt_core_unobserved"]["reason"] == "not_perceived"

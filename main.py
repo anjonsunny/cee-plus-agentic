@@ -9345,9 +9345,13 @@ def make_candidates_panel(
                               should_be_core.get("state", ""))
     elif gt_unobs is not None:
         gt_lab = gt_unobs.get("label", "?")
+        if gt_unobs.get("reason") == "fluid_encoded_as_state":
+            gt_text = (f"ground-truth core '{gt_lab}' was perceived but written as states "
+                       f"(e.g. 'flooded') instead of its own node — fluid-as-object rule violation")
+        else:
+            gt_text = f"the model never perceived the ground-truth core: {gt_lab}"
         gt_body = html.Span(
-            f"the model never perceived the ground-truth core: {gt_lab}",
-            style={"fontSize": "12px", "fontWeight": 700, "color": "#b45309"})
+            gt_text, style={"fontSize": "12px", "fontWeight": 700, "color": "#b45309"})
     else:
         gt_body = html.Span("GT pick unavailable",
                             style={"fontSize": "12px", "color": "#94a3b8",

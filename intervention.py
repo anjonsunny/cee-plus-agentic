@@ -34,6 +34,7 @@ solely by the do().
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Callable
 
@@ -156,7 +157,47 @@ def _base_label(value: str) -> str:
 #: ones the canonical-multiset comparison needs (e.g. seat<->chair).
 _LABEL_FAMILY_EXTRAS = {
     "seat": "chair", "stool": "chair", "bench": "chair", "chair": "chair",
+    # terminology synonyms so GT vocab matches the model's (GT "tanker" == model
+    # "tanker_truck"). Curated for the disaster domain; the state-gated token
+    # fallback in _label_coref catches uncurated variants.
+    "tanker_truck": "tanker", "tank_truck": "tanker", "tank_car": "tanker",
+    "dust_storm": "dust", "sandstorm": "dust", "locomotive": "train",
+    "floodwater": "water", "flood": "water",
 }
+
+#: Generic head-nouns that must NOT anchor a cross-terminology label match on their
+#: own (so "fire" vs "fire_truck" does not match via the shared "fire", and neither
+#: does "power_line" vs "phone_line" via "line").
+_GENERIC_TOKENS = {"truck", "unit", "vehicle", "car", "object", "structure",
+                   "line", "cloud", "storm"}
+
+
+def _label_coref(gt_label: str, model_label: str, gt_state: str, model_state: str,
+                 require_state: bool) -> bool:
+    """Do a GT hazard and a model object refer to the same hazard?
+    - Same canonical label: always a match when `require_state` is False (label alone is
+      enough, preserving the original behaviour); when True, only if states agree (used to
+      DISAMBIGUATE among several of the same class — the leaking tanker vs the parked one).
+    - Cross-terminology (GT 'tanker' vs model 'tanker_truck'): a shared NON-generic token
+      AND agreeing states, ALWAYS (state agreement is what keeps 'fire/burning' apart from
+      'fire_truck/responding')."""
+    gc, mc = _canonical_label(gt_label), _canonical_label(model_label)
+    gs, ms = canonicalize_state(gt_state), canonicalize_state(model_state)
+    if gc == mc:
+        return (bool(gs) and gs == ms) if require_state else True
+    gt_tok = set(re.split(r"[_\s]+", _base_label(gt_label))) - _GENERIC_TOKENS
+    m_tok = set(re.split(r"[_\s]+", _base_label(model_label))) - _GENERIC_TOKENS
+    return bool(gt_tok & m_tok) and bool(gs) and gs == ms
+
+
+#: Hazard-bearing states that mean an environmental FLUID has inundated an entity
+#: (so the fluid is present and, per the schema, should have been its own node).
+_FLUID_INUNDATION_STATES = {
+    "flooded", "submerged", "inundated", "standing_in_water", "waterlogged",
+    "partially_submerged", "underwater", "engulfed", "smoke_filled", "buried",
+    "mud_covered", "swamped",
+}
+_FLUID_BASE_LABELS = {"water", "smoke", "gas", "dust", "mud", "chemical"}
 
 
 def _canonical_label(label: str) -> str:
@@ -508,21 +549,21 @@ def enumerate_candidates(baseline: dict) -> dict:
         """Resolve a GT hazard to a MODEL-side object_id by canonical label (+ state when
         both name one). Prefer a merged candidate; fall back to a detected object. Returns
         None when the model never co-referred this GT hazard (gt_core_unobserved)."""
-        g_label = _canonical_label(gt_cand.get("label", ""))
-        g_state = canonicalize_state(gt_cand.get("state", ""))
-        # Pass 1: prefer a ranked model candidate (already a suppression target).
-        for oid in order:
-            entry = merged[oid]
-            if _canonical_label(entry["label"]) != g_label:
-                continue
-            if g_state and canonicalize_state(entry["state"]) and \
-                    canonicalize_state(entry["state"]) != g_state:
-                continue
-            return oid
-        # Pass 2: any detected object of the same canonical family (observed, not ranked).
-        for o in model_objects:
-            if _canonical_label(o.get("label", "")) == g_label:
-                return str(o.get("object_id", "")).strip() or None
+        g_label = gt_cand.get("label", "")
+        g_state = gt_cand.get("state", "")
+        # Two tiers: first a STATE-AGREEING match (disambiguates multiple same-class
+        # instances + admits cross-terminology), then a label-only fallback for the
+        # same canonical class (preserves the original resolve rate). Within each tier,
+        # a ranked candidate (already a suppression target) is preferred over a bare
+        # detected object.
+        for require_state in (True, False):
+            for oid in order:
+                entry = merged[oid]
+                if _label_coref(g_label, entry.get("label", ""), g_state, entry.get("state", ""), require_state):
+                    return oid
+            for o in model_objects:
+                if _label_coref(g_label, o.get("label", ""), g_state, o.get("state", ""), require_state):
+                    return str(o.get("object_id", "")).strip() or None
         return None
 
     # ── Resolve should_be_core (GT top-ranked) to a model id (B4/B5).
@@ -540,12 +581,25 @@ def enumerate_candidates(baseline: dict) -> dict:
             should_be_core_entry = merged[model_id]
             gt_core_to_model[gt_top["object_id"]] = model_id
         else:
-            # GT names a core the model never co-referenced: surface the perception miss
-            # (R4) rather than nulling silently or leaking the GT-only id as a target.
+            # GT names a core the model has no object for. Distinguish two very
+            # different causes: (a) fluid_encoded_as_state — the GT core is an
+            # environmental fluid (water/smoke/...) that the model DID perceive but
+            # wrote only as inundation STATES on other entities (house/flooded) instead
+            # of nodalizing it (a schema fluid-as-object RULE VIOLATION, not a perception
+            # miss); (b) not_perceived — the model represented the hazard nowhere at all.
+            _g_base = _base_label(gt_top.get("label", ""))
+            _is_fluid = _canonical_label(gt_top.get("label", "")) in _FLUID_BASE_LABELS \
+                or _g_base in _FLUID_BASE_LABELS
+            _encoded = any(
+                canonicalize_state(o.get("state", "")) in _FLUID_INUNDATION_STATES
+                for o in model_objects
+            )
+            reason = "fluid_encoded_as_state" if (_is_fluid and _encoded) else "not_perceived"
             gt_core_unobserved = {
                 "object_id": gt_top["object_id"],
                 "state": gt_top["state"],
                 "label": gt_top["label"],
+                "reason": reason,
             }
 
     candidates = [merged[oid] for oid in order]
@@ -1775,12 +1829,18 @@ def run_intervention(baseline: dict, selections: dict, vlm_fn: Callable) -> dict
             "move_basis": {**(core_verdict.get("move_basis") or {}),
                            **({"moved": None, "consumed": False} if u_leaked else {})},
             "explanation": (
-                "Ground truth names a core hazard "
-                f"({enum['gt_core_unobserved'].get('label','')} / "
-                f"{enum['gt_core_unobserved'].get('state','')}) that the model never "
-                "perceived, so groundedness cannot be adjudicated against it (perception "
-                "miss, not a reasoning verdict)."
-                + (" U also leaked on the suppression arm; the perception miss is reported "
+                (
+                    f"Ground truth names a core hazard ({enum['gt_core_unobserved'].get('label','')} / "
+                    f"{enum['gt_core_unobserved'].get('state','')}) that the model PERCEIVED but wrote "
+                    "only as inundation states on other entities (e.g. 'flooded') instead of nodalising "
+                    "it — a fluid-as-object rule violation, not a perception miss. Groundedness cannot "
+                    "be adjudicated against a hazard the model never nodalised."
+                    if enum['gt_core_unobserved'].get('reason') == "fluid_encoded_as_state" else
+                    f"Ground truth names a core hazard ({enum['gt_core_unobserved'].get('label','')} / "
+                    f"{enum['gt_core_unobserved'].get('state','')}) that the model never perceived, so "
+                    "groundedness cannot be adjudicated against it (perception miss, not a reasoning verdict)."
+                )
+                + (" U also leaked on the suppression arm; the finding is reported "
                    "regardless, with the leak noted." if u_leaked else "")
             ),
         }
