@@ -1,0 +1,6 @@
+# Agentic additions, Stage 1 (perception). Install on top of root requirements:
+#   pip install -r requirements.txt -r agentic/requirements.txt
+# On Apple Silicon, plain `pip install torch` gives the MPS-enabled build.
+pydantic>=2.0
+torch>=2.2
+transformers>=4.44
