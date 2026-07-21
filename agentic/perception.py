@@ -435,6 +435,7 @@ def run_perception(
     out_dir: str | Path | None = None,
     repair: bool = True,
     repair_query_fn: Any = None,
+    on_event: Any = None,
 ) -> PerceptionResult:
     """Full Stage 1 on one image. `entities` supplied = stand-in mode.
 
@@ -443,11 +444,33 @@ def run_perception(
     out-of-vocab words, missing anchors) are cited back to the model for a
     bounded number of rounds. `repair_query_fn` overrides the live model
     call for tests. The full loop history lands in result.repair_trace.
+
+    `on_event` (optional callable taking one dict) receives structured
+    progress events: stage_started / stage_done per pipeline stage, the
+    repair loop's violation and round events, per-entity binding events,
+    and a final `assembled`. This is Stage 23 observability in embryonic
+    form; the live UI is its first consumer. Events never alter behavior.
     """
     import base64
     import mimetypes
+    import time as _time
 
     from PIL import Image
+
+    def emit(event_type: str, **data: Any) -> None:
+        if on_event is not None:
+            on_event({"type": event_type, **data})
+
+    stage_t0: dict[str, float] = {}
+
+    def stage(name: str) -> None:
+        stage_t0[name] = _time.perf_counter()
+        emit("stage_started", stage=name)
+
+    def stage_done(name: str, **data: Any) -> None:
+        emit("stage_done", stage=name,
+             seconds=round(_time.perf_counter() - stage_t0.get(name, _time.perf_counter()), 2),
+             **data)
 
     image_path = Path(image_path)
     image = Image.open(image_path).convert("RGB")
@@ -455,7 +478,10 @@ def run_perception(
     out_dir.mkdir(parents=True, exist_ok=True)
     notes: list[str] = []
 
+    emit("run_started", image_size=[image.width, image.height],
+         caption=caption, image_name=image_path.name)
     data_url: str | None = None
+    stage("Perceive")
     if entities is None:
         mime = mimetypes.guess_type(str(image_path))[0] or "image/jpeg"
         b64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
@@ -465,9 +491,12 @@ def run_perception(
     else:
         entities = [dict(e) for e in entities]
         source = "standin"
+    stage_done("Perceive", n_entities=len(entities),
+               entities=[dict(e) for e in entities])
 
     # ── Loop 1: evidence-triggered repair of the model's answer ─────────
     repair_trace = None
+    stage("Repair")
     if repair and (repair_query_fn is not None or source == "vlm"):
         from agentic.repair_loop import repair_entities
 
@@ -477,8 +506,13 @@ def run_perception(
             def repair_query_fn(prompt_text: str) -> list[dict[str, Any]]:  # noqa: F811
                 return _query_vlm_raw(prompt_text, data_url)
 
-        entities, trace = repair_entities(entities, repair_query_fn, caption=caption)
+        entities, trace = repair_entities(
+            entities, repair_query_fn, caption=caption, on_event=on_event
+        )
         repair_trace = trace.model_dump()
+        stage_done("Repair", stopped=trace.stopped_reason)
+    else:
+        stage_done("Repair", stopped="skipped")
 
     # Canonicalize labels; log drift; clamp anchor boxes.
     for e in entities:
@@ -495,9 +529,24 @@ def run_perception(
         e.pop("bbox", None)
 
     assign_ids(entities)
+    emit("anchors_ready", entities=[
+        {k: e.get(k) for k in ("object_id", "label", "state", "description", "anchor_bbox")}
+        for e in entities
+    ])
+    stage("Ground")
     candidates = detect_candidates(image, entities)
+    stage_done("Ground", n_candidates=sum(len(v) for v in candidates.values()))
+    stage("Bind")
     entities = bind_entities(entities, candidates, (image.width, image.height))
+    for e in entities:
+        emit("entity_bound", object_id=e.get("object_id"),
+             box_source=e.get("box_source"), bbox=e.get("bbox"),
+             confidence=round(float(e.get("box_confidence", 0.0)), 3))
+    stage_done("Bind",
+               matched=sum(1 for e in entities if e.get("box_source") == "dino_matched"),
+               fallback=sum(1 for e in entities if e.get("box_source") == "vlm_sam_fallback"))
 
+    stage("Mask")
     objects: list[DetectedObject] = []
     unlocalized: list[str] = []
     for e in entities:
@@ -531,6 +580,9 @@ def run_perception(
             )
         )
 
+    stage_done("Mask", masks=sum(1 for o in objects if o.mask_path))
+
+    stage("Assemble")
     result = PerceptionResult(
         image_path=str(image_path),
         image_size=[image.width, image.height],
@@ -545,6 +597,9 @@ def run_perception(
         result.model_dump_json(indent=2)
     )
     render_overlay(image, result, out_dir / f"{image_path.stem}__overlay.png")
+    stage_done("Assemble", n_entities=len(objects),
+               unlocalized=list(unlocalized))
+    emit("assembled", result=json.loads(result.model_dump_json()))
     return result
 
 

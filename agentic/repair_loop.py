@@ -315,6 +315,7 @@ def repair_entities(
     query_fn: QueryFn,
     max_rounds: int = MAX_REPAIR_ROUNDS,
     caption: str = "",
+    on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[list[dict[str, Any]], RepairTrace]:
     """Run Loop 1. Returns (final entities, full trace).
 
@@ -328,16 +329,27 @@ def repair_entities(
     the perception record (family_name_as_label, vocab_extension, unknown
     state), so an unrepaired run is visibly unrepaired.
     """
+    # Observability: every notable moment is emitted as a structured event
+    # (Stage 23 in its embryonic form; the live UI is the first consumer).
+    def emit(event_type: str, **data: Any) -> None:
+        if on_event is not None:
+            on_event({"type": event_type, **data})
+
     trace = RepairTrace()
     current = [dict(e) for e in entities]
 
     violations = detect_violations(current, caption)
+    for v in violations:
+        emit("violation_found", round=1, **v.model_dump())
     if not violations:
         trace.clean_on_arrival = True
         trace.stopped_reason = "clean"
+        emit("repair_stopped", reason="clean", rounds=0, remaining=[])
         return current, trace
 
     for round_number in range(1, max_rounds + 1):
+        emit("repair_round_started", round=round_number,
+             open_violations=len(violations))
         prompt = build_repair_prompt(current, violations)
         answer = query_fn(prompt)
 
@@ -349,6 +361,8 @@ def repair_entities(
                 entities_after=current, changed=False,
             ))
             trace.stopped_reason = "no_change"
+            emit("repair_stopped", reason="no_change", rounds=round_number,
+                 remaining=[v.model_dump() for v in violations])
             return current, trace
 
         changed = json.dumps(answer, sort_keys=True) != json.dumps(
@@ -360,14 +374,25 @@ def repair_entities(
             round_number=round_number, violations=violations,
             entities_after=current, changed=changed,
         ))
+        emit("repair_round_done", round=round_number, changed=changed,
+             remaining_violations=len(remaining),
+             entities=[dict(e) for e in current])
+        for v in remaining:
+            emit("violation_found", round=round_number + 1, **v.model_dump())
 
         if not remaining:
             trace.stopped_reason = "clean"
+            emit("repair_stopped", reason="clean", rounds=round_number,
+                 remaining=[])
             return current, trace
         if not changed:
             trace.stopped_reason = "no_change"
+            emit("repair_stopped", reason="no_change", rounds=round_number,
+                 remaining=[v.model_dump() for v in remaining])
             return current, trace
         violations = remaining
 
     trace.stopped_reason = "cap_reached"
+    emit("repair_stopped", reason="cap_reached", rounds=max_rounds,
+         remaining=[v.model_dump() for v in violations])
     return current, trace
