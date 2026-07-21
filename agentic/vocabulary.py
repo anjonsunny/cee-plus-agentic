@@ -65,17 +65,18 @@ LABEL_SYNONYMS: dict[str, str] = {
     "hazmat": "hazmat_worker",
     # animal
     "puppy": "dog", "kitten": "cat", "pet": "animal",
-    # vehicle
-    "sedan": "car", "suv": "car", "automobile": "car", "vehicle": "car",
+    # vehicle  (NOTE: "vehicle" itself is a family name, NOT a synonym; round 1
+    # mapped it to car and silently turned a tanker truck into car_1)
+    "sedan": "car", "suv": "car", "automobile": "car",
     "hatchback": "car", "jeep": "car", "lorry": "truck",
     "tanker": "tanker_truck", "tank_truck": "tanker_truck",
     "fuel_truck": "tanker_truck", "semi": "truck", "pickup": "pickup_truck",
     "bike": "bicycle", "motorbike": "motorcycle", "scooter": "motorcycle",
     "cruiser": "police_car", "firetruck": "fire_truck",
-    # structure
+    # structure  ("structure" itself is a family name, not a synonym)
     "home": "house", "residence": "house", "dwelling": "house",
     "apartment": "building", "apartment_building": "building",
-    "structure": "building", "barn": "shed", "warehouse": "building",
+    "barn": "shed", "warehouse": "building",
     # vegetation
     "trees": "tree", "branch": "tree", "shrub": "bush", "plant": "bush",
     "foliage": "bush", "lawn": "grass", "shrubbery": "brush",
@@ -108,27 +109,36 @@ LABEL_SYNONYMS: dict[str, str] = {
 
 OTHER_LABEL = "other"
 
+# Family names that are NOT also member labels ("person", "responder", "dog"
+# are members; "vehicle", "structure", "hazard_media", "vegetation",
+# "infrastructure", "object", "animal" minus members are pure family names).
+PURE_FAMILY_NAMES: set[str] = set(LABEL_FAMILIES) - ALL_LABELS
 
-def canonicalize_label(raw: str) -> tuple[str, str, bool]:
-    """Return (canonical_label, mapping_note, in_vocab).
+
+def canonicalize_label(raw: str) -> tuple[str, str, bool, bool]:
+    """Return (canonical_label, mapping_note, in_vocab, family_name_as_label).
 
     mapping_note records what happened ('' = verbatim; 'synonym:x->y';
-    'extension:<raw>' when out of vocabulary). Out-of-vocab labels become
-    OTHER_LABEL with in_vocab=False; the raw text is preserved in the note
-    and must be carried in the entity's description field.
+    'extension:<raw>'; 'family_name:<raw>'). A family name used as a label is
+    NEVER silently mapped to a member (round 1 turned a tanker truck into
+    car_1 that way); it falls to OTHER_LABEL with the family_name flag set so
+    the drift is visible and countable. Out-of-vocab labels become
+    OTHER_LABEL with in_vocab=False; the raw text is preserved in the note.
     """
     label = str(raw or "").strip().lower().replace(" ", "_").replace("-", "_")
     if not label:
-        return OTHER_LABEL, "extension:<empty>", False
+        return OTHER_LABEL, "extension:<empty>", False, False
+    if label in PURE_FAMILY_NAMES:
+        return OTHER_LABEL, f"family_name:{label}", False, True
     if label in ALL_LABELS:
-        return label, "", True
+        return label, "", True, False
     if label in LABEL_SYNONYMS:
         canon = LABEL_SYNONYMS[label]
-        return canon, f"synonym:{label}->{canon}", True
+        return canon, f"synonym:{label}->{canon}", True, False
     # Singularize the trivial plural before giving up.
     if label.endswith("s") and label[:-1] in ALL_LABELS:
-        return label[:-1], f"synonym:{label}->{label[:-1]}", True
-    return OTHER_LABEL, f"extension:{label}", False
+        return label[:-1], f"synonym:{label}->{label[:-1]}", True, False
+    return OTHER_LABEL, f"extension:{label}", False, False
 
 
 def family_of(label: str) -> str:

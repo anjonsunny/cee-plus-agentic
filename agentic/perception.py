@@ -1,18 +1,24 @@
-"""Stage 1 — Perception (AGENTIC_PLAN.md Stage 1).
+"""Stage 1 — Perception (AGENTIC_PLAN.md Stage 1), round 2.
 
-One source per field:
-  - The VLM (Qwen via Ollama) owns `label` and `state`. Its boxes are never
-    used; it is not asked for any.
-  - Grounding DINO owns `bbox`, queried with the VLM's own state-qualified
-    label phrase ("burning house").
-  - SAM owns the mask, prompted with the detector's box. Masks are captured
-    now because visual suppression (inpainting) will consume them later.
+Division of labor (revised after the round 1 review with Sunny):
+  - The VLM (Qwen via Ollama) owns `label` and `state`, and now also emits a
+    ROUGH bbox per entity. That box is an instance ANCHOR only: it binds the
+    entity to the right detector candidate (which house is the burning one),
+    and it never becomes the output geometry.
+  - Grounding DINO proposes candidate boxes per label; each entity binds to
+    the candidate that best agrees with its anchor (IoU, then center).
+  - SAM refines the bound box into a mask. When no candidate matches, SAM is
+    prompted directly with the VLM's rough box (recorded as a fallback).
+
+Fluid convention (matches the rulebook in main.py): fire attached to a
+burning object is a STATE on that object, never a separate entity. Only
+diffuse media (smoke, water, gas, dust, spills, free-burning fire) are
+entities of their own.
 
 Not agentic: no planning, no loops, no retrieval. Deterministic tools only.
 
-CLI (development / stand-in mode, no VLM needed):
+CLI (stand-in mode, no VLM):
     python -m agentic.perception --image scene.jpg --entities entities.json
-where entities.json is [{"label": "house", "state": "burning"}, ...].
 Live mode (Ollama running):
     python -m agentic.perception --image scene.jpg
 """
@@ -44,7 +50,20 @@ from main import (  # noqa: E402
     HAZARD_BEARING_STATES,
     NORMAL_STATES,
     canonicalize_state,
+    clamp_bbox,
 )
+
+# Perception-side state extensions, pending Sunny's motion-vocab pass in
+# main.py (PROJECT_STATE 8.3). Kept here so main.py stays untouched; migrate
+# these into NORMAL_STATES / STATE_SYNONYMS there when that pass happens.
+EXTRA_NORMAL_STATES = {"swimming", "walking", "running", "parked", "driving"}
+EXTRA_STATE_SYNONYMS = {
+    "overturned": "fallen",
+    "seated": "resting",
+    "sitting": "resting",
+    "spilled": "seeping",
+    "spilling": "leaking",
+}
 
 # ── Contract ─────────────────────────────────────────────────────────────
 
@@ -55,15 +74,17 @@ class DetectedObject(BaseModel):
     object_id: str                      # "<label>_<N>", N 1-indexed per label
     label: str                          # canonical vocabulary noun
     family: str                         # vocabulary family
-    state: str                          # from main.py state vocabulary
+    state: str                          # from main.py state vocabulary (+ extensions)
     state_kind: str                     # hazard_bearing | at_risk | normal | unknown
     description: str = ""               # VLM prose; REQUIRED for label 'other'
-    bbox: Optional[list[int]] = None    # [x1,y1,x2,y2]; None = not localized
-    box_source: str = "none"            # grounding_dino | none
-    box_confidence: float = 0.0
+    bbox: Optional[list[int]] = None    # [x1,y1,x2,y2] final geometry; None = not localized
+    box_source: str = "none"            # dino_matched | vlm_sam_fallback | none
+    box_confidence: float = 0.0         # DINO score, or 0.0 on the fallback path
+    anchor_bbox: Optional[list[int]] = None  # the VLM's rough box (never the output)
     mask_path: Optional[str] = None     # saved mask PNG, for future inpainting
-    label_note: str = ""                # '' | synonym:x->y | extension:<raw>
+    label_note: str = ""                # '' | synonym:x->y | extension:<raw> | family_name:<raw>
     vocab_extension: bool = False
+    family_name_as_label: bool = False  # VLM answered with a family name
 
 
 class PerceptionResult(BaseModel):
@@ -77,42 +98,70 @@ class PerceptionResult(BaseModel):
 
 
 def state_kind(state: str) -> str:
-    s = canonicalize_state(str(state or "").strip())
+    raw = str(state or "").strip().lower()
+    raw = EXTRA_STATE_SYNONYMS.get(raw, raw)
+    s = canonicalize_state(raw)
     if s in HAZARD_BEARING_STATES:
         return "hazard_bearing"
     if s in AT_RISK_STATES:
         return "at_risk"
-    if s in NORMAL_STATES:
+    if s in NORMAL_STATES or s in EXTRA_NORMAL_STATES:
         return "normal"
     return "unknown"
 
 
-# ── VLM entity naming (labels + states only, no boxes) ──────────────────
+def normalize_state(state: str) -> str:
+    raw = str(state or "").strip().lower()
+    return EXTRA_STATE_SYNONYMS.get(raw, raw)
+
+
+# ── VLM entity naming (labels + states + rough anchor boxes) ────────────
 
 PERCEPTION_PROMPT_TEMPLATE = """Analyze the image (and caption, if given).
 List every distinct entity relevant to safety assessment: people, animals,
-vehicles, structures, hazard media (fire, smoke, water, dust, gas, spills,
-debris), vegetation, infrastructure, and significant objects.
+vehicles, structures, hazard media, vegetation, infrastructure, and
+significant objects.
 
 {vocab_block}
 
+CRITICAL LABEL RULES:
+- The label must be ONE SPECIFIC NOUN from the lists above. NEVER answer
+  with a family name (the word left of the colon). "vehicle", "structure",
+  "hazard_media", "vegetation", "infrastructure" are NOT valid labels: write
+  "tanker_truck", "house", "smoke", "brush", "powerline" instead.
+- Fluid convention: fire attached to a burning object is a STATE, not an
+  entity. A house on fire is one entity: label "house", state "burning". Do
+  NOT add a separate fire entity for it. Emit a hazard-media entity only for
+  diffuse media: smoke ("smoke", state "billowing"), floodwater or pool
+  water containing a victim ("water", state "rising"/"engulfing"), leaked
+  liquid ("spill", state "leaking"/"seeping"), dust ("dust", state
+  "billowing"), gas, and FREE-BURNING fire not attached to one object (a
+  grass or brush fire: label "fire", state "spreading").
+
 For each entity give:
-- label: one noun from the allowed labels above
+- label: one specific noun from the allowed labels
 - state: a single lowercase word for its current condition (examples:
   burning, burnt, collapsed, collapsing, fallen, crushed, flooded, leaking,
   spreading, billowing, rising, seeping, engulfing / injured, bleeding,
   fleeing, trapped, cowering, drowning, suffocating, unconscious / intact,
-  standing, upright, dry, sealed, stationary, resting, healthy, stable)
-- description: one short phrase locating it in the scene (e.g. "silver sedan
-  in the foreground", "child mid-splash near the pool center")
+  standing, upright, dry, sealed, stationary, resting, healthy, stable,
+  swimming, walking, running)
+- description: one short phrase locating it ("silver sedan in the
+  foreground", "child mid-splash near the pool center")
+- bbox: rough pixel bounding box [x_min, y_min, x_max, y_max]. Approximate
+  is fine; it anchors WHICH instance you mean, not exact geometry.
+
+READ DISTRESS CAREFULLY. A person in water with arms up, splashing, head
+low is "drowning", not "swimming". A person pinned, wedged, or unable to
+move is "trapped". Distress states matter more than any other field.
 
 Model each instance separately when instances differ causally (a burning
-house and an intact house are two entries). Do NOT output bounding boxes.
-Do NOT invent entities you cannot see; unseen occupants are handled
-elsewhere. Count people individually.
+house and an intact house are two entries). Count people individually. Do
+NOT invent entities you cannot see; unseen occupants are handled elsewhere.
 
 Return valid JSON only:
-{{"entities": [{{"label": "...", "state": "...", "description": "..."}}]}}
+{{"entities": [{{"label": "...", "state": "...", "description": "...",
+"bbox": [x1, y1, x2, y2]}}]}}
 """
 
 
@@ -121,7 +170,7 @@ def build_perception_prompt() -> str:
 
 
 def query_vlm_entities(image_data_url: str, caption: str = "") -> list[dict[str, Any]]:
-    """Ask the VLM for labels + states only. Requires the Ollama endpoint."""
+    """Ask the VLM for labels + states + rough anchor boxes."""
     import requests
 
     from main import extract_json_block  # lazy: keeps offline import light
@@ -156,12 +205,12 @@ def query_vlm_entities(image_data_url: str, caption: str = "") -> list[dict[str,
     return list(raw.get("entities") or [])
 
 
-# ── Grounding DINO boxes ────────────────────────────────────────────────
+# ── Grounding DINO candidate detection ──────────────────────────────────
 
 _DETECTOR = {"model": None, "processor": None}
 DETECTOR_MODEL_ID = os.getenv("GDINO_MODEL", "IDEA-Research/grounding-dino-base")
-BOX_THRESHOLD = float(os.getenv("GDINO_BOX_THRESHOLD", "0.30"))
-TEXT_THRESHOLD = float(os.getenv("GDINO_TEXT_THRESHOLD", "0.25"))
+BOX_THRESHOLD = float(os.getenv("GDINO_BOX_THRESHOLD", "0.25"))
+TEXT_THRESHOLD = float(os.getenv("GDINO_TEXT_THRESHOLD", "0.20"))
 
 
 def _load_detector():
@@ -176,39 +225,27 @@ def _load_detector():
     return _DETECTOR["model"], _DETECTOR["processor"]
 
 
-def _detector_phrase(label: str, state: str, description: str) -> str:
-    """State-qualified phrase for grounding. 'burning house' localizes better
-    than 'house' when two houses differ exactly by state."""
-    label_text = label.replace("_", " ")
-    state_text = str(state or "").strip().replace("_", " ")
+def _detector_phrase(label: str, description: str) -> str:
+    """Plain label phrase. Instance choice comes from anchor binding, not
+    from state-qualified phrasing (which mis-bound in round 1)."""
     if label == OTHER_LABEL:
         return (description or "object").lower()
-    qualifiable = {"burning", "burnt", "collapsed", "collapsing", "fallen",
-                   "crushed", "flooded", "leaking", "overturned", "intact"}
-    if state_text in qualifiable:
-        return f"{state_text} {label_text}"
-    return label_text
+    return label.replace("_", " ")
 
 
-def ground_entities(
-    image, entities: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    """Run Grounding DINO once with all phrases; greedily assign boxes.
-
-    Returns entities enriched with bbox / box_confidence / box_source.
-    Instances sharing a phrase are assigned boxes in descending score order.
-    """
+def detect_candidates(image, entities: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """One DINO pass over all phrases. Returns phrase -> candidate list,
+    each candidate {'score': float, 'bbox': [x1,y1,x2,y2]}."""
     import torch
 
     model, processor = _load_detector()
-    phrases = []
+    phrases: list[str] = []
     for e in entities:
-        p = _detector_phrase(e["label"], e.get("state", ""), e.get("description", ""))
+        p = _detector_phrase(e["label"], e.get("description", ""))
         e["_phrase"] = p
         if p not in phrases:
             phrases.append(p)
 
-    # transformers grounding-dino expects "a. b. c." style text.
     text = ". ".join(phrases) + "."
     inputs = processor(images=image, text=text, return_tensors="pt")
     with torch.no_grad():
@@ -221,40 +258,101 @@ def ground_entities(
         target_sizes=[image.size[::-1]],
     )[0]
 
-    # Bucket detections by matched phrase text.
-    buckets: dict[str, list[tuple[float, list[int]]]] = {}
+    candidates: dict[str, list[dict[str, Any]]] = {}
     for score, box, lbl in zip(
         results["scores"].tolist(),
         results["boxes"].tolist(),
         results.get("text_labels", results.get("labels", [])),
     ):
         key = str(lbl).strip().lower()
-        buckets.setdefault(key, []).append(
-            (float(score), [int(round(v)) for v in box])
+        candidates.setdefault(key, []).append(
+            {"score": float(score), "bbox": [int(round(v)) for v in box]}
         )
-    for v in buckets.values():
-        v.sort(key=lambda t: -t[0])
+    for v in candidates.values():
+        v.sort(key=lambda c: -c["score"])
+    return candidates
 
-    def _take(phrase: str) -> tuple[float, list[int]] | None:
+
+# ── Anchor binding ──────────────────────────────────────────────────────
+
+
+def _iou(a: list[int], b: list[int]) -> float:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
+    inter = iw * ih
+    union = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _center_dist(a: list[int], b: list[int]) -> float:
+    acx, acy = (a[0] + a[2]) / 2, (a[1] + a[3]) / 2
+    bcx, bcy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+    return ((acx - bcx) ** 2 + (acy - bcy) ** 2) ** 0.5
+
+
+MIN_BIND_IOU = 0.10
+
+
+def bind_entities(
+    entities: list[dict[str, Any]],
+    candidates: dict[str, list[dict[str, Any]]],
+    image_size: tuple[int, int],
+) -> list[dict[str, Any]]:
+    """Bind each entity to its best detector candidate via the anchor box.
+
+    With an anchor: candidates for the entity's phrase are ranked by IoU
+    against the anchor (center distance as tie-break); a bound candidate is
+    removed from the pool so two same-label entities cannot share a box.
+    Binding requires IoU >= MIN_BIND_IOU; otherwise the entity keeps its
+    anchor for the SAM fallback. Without an anchor: highest unclaimed score.
+    """
+    diag = (image_size[0] ** 2 + image_size[1] ** 2) ** 0.5
+
+    def pool_for(phrase: str) -> list[dict[str, Any]]:
         key = phrase.strip().lower()
-        # exact bucket, else any bucket containing the phrase's head noun
-        if buckets.get(key):
-            return buckets[key].pop(0)
-        head = key.split()[-1]
-        for bkey, dets in buckets.items():
-            if head in bkey and dets:
-                return dets.pop(0)
-        return None
+        if key in candidates:
+            return candidates[key]
+        head = key.split()[-1] if key.split() else key
+        for bkey, dets in candidates.items():
+            if head and head in bkey:
+                return dets
+        return []
 
-    for e in entities:
-        det = _take(e.pop("_phrase"))
-        if det is not None:
-            e["box_confidence"], e["bbox"] = det
-            e["box_source"] = "grounding_dino"
+    # Entities with anchors bind first (they carry the strongest evidence).
+    ordered = sorted(entities, key=lambda e: e.get("anchor_bbox") is None)
+    for e in ordered:
+        if "_phrase" not in e:
+            e["_phrase"] = _detector_phrase(e["label"], e.get("description", ""))
+        pool = pool_for(e["_phrase"])
+        anchor = e.get("anchor_bbox")
+        chosen = None
+        if anchor and pool:
+            scored = [
+                (_iou(anchor, c["bbox"]), -_center_dist(anchor, c["bbox"]) / diag, c)
+                for c in pool
+            ]
+            scored.sort(key=lambda t: (-t[0], -t[1]))
+            if scored and scored[0][0] >= MIN_BIND_IOU:
+                chosen = scored[0][2]
+        elif pool:
+            chosen = pool[0]
+        if chosen is not None:
+            pool.remove(chosen)
+            e["bbox"] = chosen["bbox"]
+            e["box_confidence"] = chosen["score"]
+            e["box_source"] = "dino_matched"
+        elif anchor:
+            e["bbox"] = anchor                  # provisional; SAM refines below
+            e["box_confidence"] = 0.0
+            e["box_source"] = "vlm_sam_fallback"
         else:
             e["bbox"] = None
             e["box_confidence"] = 0.0
             e["box_source"] = "none"
+        e.pop("_phrase", None)
     return entities
 
 
@@ -287,10 +385,21 @@ def mask_for_box(image, bbox: list[int]):
         outputs.pred_masks.cpu(),
         inputs["original_sizes"].cpu(),
         inputs["reshaped_input_sizes"].cpu(),
-    )[0][0]                              # (num_masks, H, W) bool
+    )[0][0]
     scores = outputs.iou_scores.cpu().reshape(-1)
     best = masks[int(scores.argmax())].numpy().astype(np.uint8) * 255
     return Image.fromarray(best, mode="L")
+
+
+def mask_bbox(mask) -> list[int] | None:
+    """Tight bbox of a mask's nonzero region (refines the fallback path)."""
+    import numpy as np
+
+    arr = np.array(mask)
+    ys, xs = np.nonzero(arr)
+    if len(xs) == 0:
+        return None
+    return [int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1]
 
 
 # ── Assembly ────────────────────────────────────────────────────────────
@@ -310,8 +419,7 @@ def run_perception(
     with_masks: bool = True,
     out_dir: str | Path | None = None,
 ) -> PerceptionResult:
-    """Full Stage 1 on one image. `entities` supplied = stand-in mode
-    (development without the VLM); omitted = live VLM naming."""
+    """Full Stage 1 on one image. `entities` supplied = stand-in mode."""
     import base64
     import mimetypes
 
@@ -332,19 +440,23 @@ def run_perception(
         entities = [dict(e) for e in entities]
         source = "standin"
 
-    # Canonicalize labels (VLM owns them; we normalize and log drift).
+    # Canonicalize labels; log drift; clamp anchor boxes.
     for e in entities:
-        canon, note, in_vocab = canonicalize_label(e.get("label", ""))
+        canon, note, in_vocab, is_family = canonicalize_label(e.get("label", ""))
         if note:
             notes.append(f"label {e.get('label')!r}: {note}")
         e["label"] = canon
         e["label_note"] = note
         e["vocab_extension"] = not in_vocab
+        e["family_name_as_label"] = is_family
         e.setdefault("description", "")
-        e.setdefault("state", "unknown")
+        e["state"] = normalize_state(e.get("state", "unknown"))
+        e["anchor_bbox"] = clamp_bbox(e.get("bbox"), image.width, image.height)
+        e.pop("bbox", None)
 
     assign_ids(entities)
-    entities = ground_entities(image, entities)
+    candidates = detect_candidates(image, entities)
+    entities = bind_entities(entities, candidates, (image.width, image.height))
 
     objects: list[DetectedObject] = []
     unlocalized: list[str] = []
@@ -352,6 +464,10 @@ def run_perception(
         mask_path = None
         if with_masks and e.get("bbox"):
             mask = mask_for_box(image, e["bbox"])
+            if e["box_source"] == "vlm_sam_fallback":
+                refined = mask_bbox(mask)
+                if refined:
+                    e["bbox"] = refined
             mask_path = str(out_dir / f"{image_path.stem}__{e['object_id']}_mask.png")
             mask.save(mask_path)
         if not e.get("bbox"):
@@ -367,9 +483,11 @@ def run_perception(
                 bbox=e.get("bbox"),
                 box_source=e.get("box_source", "none"),
                 box_confidence=float(e.get("box_confidence", 0.0)),
+                anchor_bbox=e.get("anchor_bbox"),
                 mask_path=mask_path,
                 label_note=e.get("label_note", ""),
                 vocab_extension=bool(e.get("vocab_extension", False)),
+                family_name_as_label=bool(e.get("family_name_as_label", False)),
             )
         )
 
@@ -389,7 +507,7 @@ def run_perception(
     return result
 
 
-# ── Overlay rendering (the first artifact of the scene-is-the-interface UI) ─
+# ── Overlay rendering (first artifact of the scene-is-the-interface UI) ─
 
 STATE_KIND_COLORS = {
     "hazard_bearing": (239, 68, 68),    # red
@@ -417,7 +535,11 @@ def render_overlay(image, result: PerceptionResult, out_path: str | Path) -> Non
             continue
         color = STATE_KIND_COLORS.get(obj.state_kind, STATE_KIND_COLORS["unknown"])
         x1, y1, x2, y2 = obj.bbox
-        draw.rectangle([x1, y1, x2, y2], outline=color, width=max(3, img.width // 400))
+        width = max(3, img.width // 400)
+        if obj.box_source == "vlm_sam_fallback":
+            _dashed_rectangle(draw, x1, y1, x2, y2, color, width)
+        else:
+            draw.rectangle([x1, y1, x2, y2], outline=color, width=width)
         tag = f"{obj.object_id} · {obj.state}"
         tb = draw.textbbox((0, 0), tag, font=font)
         tw, th = tb[2] - tb[0], tb[3] - tb[1]
@@ -432,6 +554,27 @@ def render_overlay(image, result: PerceptionResult, out_path: str | Path) -> Non
     img.save(out_path)
 
 
+def _dashed_rectangle(draw, x1, y1, x2, y2, color, width, dash=14):
+    """Dashed box marks the vlm_sam_fallback path visually."""
+    def _dash_line(a, b):
+        (ax, ay), (bx, by) = a, b
+        length = ((bx - ax) ** 2 + (by - ay) ** 2) ** 0.5
+        if length == 0:
+            return
+        n = max(1, int(length // dash))
+        for i in range(0, n, 2):
+            t0, t1 = i / n, min((i + 1) / n, 1.0)
+            draw.line(
+                [ax + (bx - ax) * t0, ay + (by - ay) * t0,
+                 ax + (bx - ax) * t1, ay + (by - ay) * t1],
+                fill=color, width=width,
+            )
+    _dash_line((x1, y1), (x2, y1))
+    _dash_line((x2, y1), (x2, y2))
+    _dash_line((x2, y2), (x1, y2))
+    _dash_line((x1, y2), (x1, y1))
+
+
 # ── CLI ─────────────────────────────────────────────────────────────────
 
 
@@ -439,7 +582,7 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="CEE+ agentic Stage 1: perception.")
     p.add_argument("--image", required=True)
     p.add_argument("--caption", default="")
-    p.add_argument("--entities", help="JSON file of [{label, state, description}] "
+    p.add_argument("--entities", help="JSON file of [{label, state, description, bbox}] "
                                       "(stand-in mode, skips the VLM).")
     p.add_argument("--no-masks", action="store_true")
     p.add_argument("--out-dir", default=None)
@@ -460,8 +603,14 @@ def main(argv: list[str] | None = None) -> int:
           f"({len(result.unlocalized)} unlocalized) [{result.entity_source}]")
     for o in result.detected_objects:
         box = f"bbox={o.bbox}" if o.bbox else "NO BOX"
-        ext = " [vocab_extension]" if o.vocab_extension else ""
-        print(f"  {o.object_id:<22} {o.state:<12} conf={o.box_confidence:.2f} {box}{ext}")
+        flags = []
+        if o.vocab_extension:
+            flags.append("vocab_extension")
+        if o.family_name_as_label:
+            flags.append("family_name")
+        flag_txt = f" [{','.join(flags)}]" if flags else ""
+        print(f"  {o.object_id:<22} {o.state:<12} {o.box_source:<17} "
+              f"conf={o.box_confidence:.2f} {box}{flag_txt}")
     return 0
 
 
