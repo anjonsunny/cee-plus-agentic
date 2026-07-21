@@ -55,6 +55,18 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+# Preload shared heavy libraries in the MAIN thread, before any background
+# pipeline thread exists. Dash's JSON encoder touches pandas.NaT while
+# serializing responses; if a worker thread is importing the ML stack
+# (which pulls pandas in) at that same moment, the request sees a
+# partially initialized module ("pandas has no attribute 'NaT'", live run
+# 2026-07-21). Importing here serializes it once and forever.
+for _mod in ("pandas", "numpy", "PIL.Image"):
+    try:
+        __import__(_mod)
+    except ImportError:
+        pass
+
 SCENES_DIR = REPO_ROOT / "experiments" / "agentic_scenes"
 PERCEPTION_DIR = SCENES_DIR / "perception"
 STAGES = ["Perceive", "Repair", "Ground", "Bind", "Mask", "Assemble"]

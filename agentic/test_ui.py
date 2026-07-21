@@ -147,6 +147,17 @@ def test_inspector_close_button_uses_pattern_id():
     assert find_button(modal)
 
 
+def test_shared_heavy_modules_preloaded_in_main_thread():
+    """Import-race regression (pandas.NaT AttributeError, 2026-07-21):
+    modules Dash's serializer may touch must be fully imported by the time
+    the ui module is loaded, so no worker thread can race their import."""
+    import importlib.util
+    import sys
+    for mod in ("pandas", "numpy"):
+        if importlib.util.find_spec(mod) is not None:
+            assert mod in sys.modules, f"{mod} not preloaded"
+
+
 def test_malformed_model_boxes_never_crash_the_scene():
     """Live-run regression (2026-07-21): a raw mid-repair entity carried a
     one-element bbox and the chip renderer crashed. Every malformed shape
