@@ -480,7 +480,18 @@ def scene_component(d: dict[str, Any], image_src: str | None) -> list[Any]:
     final_by_id = {o["object_id"]: o for o in
                    (d["result"] or {}).get("detected_objects", [])}
     if size:
-        for a in d["anchors"]:
+        # Paint order: largest boxes first so smaller ones sit ON TOP and
+        # stay visible/clickable (Sunny: road_1 was burying spill_1).
+        def _area(a: dict[str, Any]) -> float:
+            oid = a.get("object_id")
+            fin = final_by_id.get(oid) or {}
+            bnd = d["bound"].get(oid) or {}
+            box = (fin.get("bbox") or bnd.get("bbox") or a.get("anchor_bbox"))
+            if not _valid_box(box):
+                return 0.0
+            return float((box[2] - box[0]) * (box[3] - box[1]))
+
+        for a in sorted(d["anchors"], key=_area, reverse=True):
             oid = a.get("object_id")
             bound = d["bound"].get(oid)
             final = final_by_id.get(oid)

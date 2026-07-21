@@ -183,6 +183,32 @@ def test_malformed_model_boxes_never_crash_the_scene():
     scene_component(d, "data:image/png;base64,x")   # must not raise
 
 
+def test_smaller_boxes_paint_on_top_of_larger_ones():
+    """Z-order regression (Sunny: road_1 buried spill_1): boxes render
+    largest-first, so later (topmost) children are the smaller boxes."""
+    result = {"image_size": [1000, 800], "detected_objects": [
+        {"object_id": "spill_1", "label": "spill", "state": "leaking",
+         "state_kind": "hazard_bearing", "description": "", "bbox": [400, 500, 600, 700],
+         "box_source": "dino_matched", "box_confidence": 0.5, "anchor_bbox": None,
+         "mask_path": None, "label_note": "", "vocab_extension": False,
+         "family_name_as_label": False},
+        {"object_id": "road_1", "label": "road", "state": "dry",
+         "state_kind": "normal", "description": "", "bbox": [0, 300, 1000, 800],
+         "box_source": "dino_matched", "box_confidence": 0.5, "anchor_bbox": None,
+         "mask_path": None, "label_note": "", "vocab_extension": False,
+         "family_name_as_label": False},
+    ]}
+    events = [{"type": "run_started", "image_size": [1000, 800]},
+              {"type": "anchors_ready", "entities": [
+                  {"object_id": "spill_1"}, {"object_id": "road_1"}]},
+              {"type": "assembled", "result": result}]
+    children = scene_component(derive(events), "data:image/png;base64,x")
+    order = [c.id["oid"] for c in children
+             if getattr(c, "id", None) and isinstance(c.id, dict)
+             and c.id.get("type") == "scene-box"]
+    assert order == ["road_1", "spill_1"]       # big first, small on top
+
+
 def test_upload_pick_shows_thumbnail_and_name():
     """After picking an image, the upload control shows what was picked."""
     from agentic.ui import cache_upload
