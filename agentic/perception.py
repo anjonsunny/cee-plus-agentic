@@ -95,6 +95,9 @@ class PerceptionResult(BaseModel):
     detected_objects: list[DetectedObject] = Field(default_factory=list)
     unlocalized: list[str] = Field(default_factory=list)   # ids with no box
     notes: list[str] = Field(default_factory=list)
+    # Loop 1 history (None = loop not run, e.g. stand-in mode without a
+    # repair function). See agentic/repair_loop.py for the full story.
+    repair_trace: Optional[dict[str, Any]] = None
 
 
 def state_kind(state: str) -> str:
@@ -169,8 +172,10 @@ def build_perception_prompt() -> str:
     return PERCEPTION_PROMPT_TEMPLATE.format(vocab_block=vocabulary_prompt_block())
 
 
-def query_vlm_entities(image_data_url: str, caption: str = "") -> list[dict[str, Any]]:
-    """Ask the VLM for labels + states + rough anchor boxes."""
+def _query_vlm_raw(text: str, image_data_url: str) -> list[dict[str, Any]]:
+    """One VLM call (text + image) returning the parsed entity list. Shared
+    by the first perception ask and by Loop 1's repair rounds, so both speak
+    to the model identically."""
     import requests
 
     from main import extract_json_block  # lazy: keeps offline import light
@@ -180,9 +185,6 @@ def query_vlm_entities(image_data_url: str, caption: str = "") -> list[dict[str,
     api_key = os.getenv("QWEN_API_KEY", "")
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-    text = build_perception_prompt()
-    if caption:
-        text += f"\n\nCaption:\n{caption}"
     payload = {
         "model": os.getenv("QWEN_MODEL_NAME", "qwen2.5vl:7b"),
         "messages": [{
@@ -203,6 +205,14 @@ def query_vlm_entities(image_data_url: str, caption: str = "") -> list[dict[str,
         content = "\n".join(p.get("text", "") for p in content if isinstance(p, dict))
     raw = extract_json_block(content)
     return list(raw.get("entities") or [])
+
+
+def query_vlm_entities(image_data_url: str, caption: str = "") -> list[dict[str, Any]]:
+    """Ask the VLM for labels + states + rough anchor boxes."""
+    text = build_perception_prompt()
+    if caption:
+        text += f"\n\nCaption:\n{caption}"
+    return _query_vlm_raw(text, image_data_url)
 
 
 # ── Grounding DINO candidate detection ──────────────────────────────────
@@ -418,8 +428,17 @@ def run_perception(
     entities: list[dict[str, Any]] | None = None,
     with_masks: bool = True,
     out_dir: str | Path | None = None,
+    repair: bool = True,
+    repair_query_fn: Any = None,
 ) -> PerceptionResult:
-    """Full Stage 1 on one image. `entities` supplied = stand-in mode."""
+    """Full Stage 1 on one image. `entities` supplied = stand-in mode.
+
+    Loop 1 (agentic/repair_loop.py) runs after the first VLM answer when
+    `repair` is True: violations of the interface contract (family names,
+    out-of-vocab words, missing anchors) are cited back to the model for a
+    bounded number of rounds. `repair_query_fn` overrides the live model
+    call for tests. The full loop history lands in result.repair_trace.
+    """
     import base64
     import mimetypes
 
@@ -431,14 +450,30 @@ def run_perception(
     out_dir.mkdir(parents=True, exist_ok=True)
     notes: list[str] = []
 
+    data_url: str | None = None
     if entities is None:
         mime = mimetypes.guess_type(str(image_path))[0] or "image/jpeg"
         b64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
-        entities = query_vlm_entities(f"data:{mime};base64,{b64}", caption)
+        data_url = f"data:{mime};base64,{b64}"
+        entities = query_vlm_entities(data_url, caption)
         source = "vlm"
     else:
         entities = [dict(e) for e in entities]
         source = "standin"
+
+    # ── Loop 1: evidence-triggered repair of the model's answer ─────────
+    repair_trace = None
+    if repair and (repair_query_fn is not None or source == "vlm"):
+        from agentic.repair_loop import repair_entities
+
+        if repair_query_fn is None:
+            # Live path: each repair round is one targeted VLM call that
+            # includes the image, so the model can re-look while fixing.
+            def repair_query_fn(prompt_text: str) -> list[dict[str, Any]]:  # noqa: F811
+                return _query_vlm_raw(prompt_text, data_url)
+
+        entities, trace = repair_entities(entities, repair_query_fn)
+        repair_trace = trace.model_dump()
 
     # Canonicalize labels; log drift; clamp anchor boxes.
     for e in entities:
@@ -499,6 +534,7 @@ def run_perception(
         detected_objects=objects,
         unlocalized=unlocalized,
         notes=notes,
+        repair_trace=repair_trace,
     )
     (out_dir / f"{image_path.stem}__perception.json").write_text(
         result.model_dump_json(indent=2)

@@ -1,0 +1,182 @@
+"""Hermetic tests for Loop 1 (agentic/repair_loop.py). No VLM: the model is
+played by fake query functions with scripted behavior.
+
+Covered: each violation kind fires correctly; the semantic boundary (legal
+but wrong states never trigger); the three stopping rules (clean, no_change
+oscillation guard, cap_reached); trace completeness; integration through
+run_perception with the loop's history in the run record.
+
+Run:  pytest agentic/test_repair_loop.py -q
+"""
+from __future__ import annotations
+
+import pytest
+
+PIL = pytest.importorskip("PIL")
+from PIL import Image  # noqa: E402
+
+from agentic import perception  # noqa: E402
+from agentic.repair_loop import (  # noqa: E402
+    MAX_REPAIR_ROUNDS,
+    build_repair_prompt,
+    detect_violations,
+    repair_entities,
+)
+
+# ── detect_violations: each rule, and the boundary ──────────────────────
+
+
+def test_family_name_violation_cites_members():
+    v = detect_violations([{"label": "vehicle", "state": "intact",
+                            "bbox": [0, 0, 10, 10]}])
+    assert len(v) == 1 and v[0].kind == "family_name_as_label"
+    assert "tanker_truck" in v[0].instruction        # members offered as choices
+
+
+def test_out_of_vocab_label_violation():
+    v = detect_violations([{"label": "zamboni", "state": "stationary",
+                            "bbox": [0, 0, 10, 10]}])
+    assert [x.kind for x in v] == ["label_out_of_vocab"]
+
+
+def test_deliberate_other_is_not_a_violation():
+    """'other' is the escape hatch; using it on purpose is legal."""
+    assert detect_violations([{"label": "other", "state": "intact",
+                               "description": "odd machine",
+                               "bbox": [0, 0, 10, 10]}]) == []
+
+
+def test_state_out_of_vocab_violation():
+    v = detect_violations([{"label": "person", "state": "floating",
+                            "bbox": [0, 0, 10, 10]}])
+    assert [x.kind for x in v] == ["state_out_of_vocab"]
+
+
+def test_missing_bbox_violation():
+    v = detect_violations([{"label": "smoke", "state": "billowing"}])
+    assert [x.kind for x in v] == ["missing_anchor_bbox"]
+
+
+def test_semantic_boundary_wrong_but_legal_state_never_fires():
+    """THE boundary: a drowning child mislabeled 'swimming' is a legal
+    state word. No rule fires. The loop must not coach perception."""
+    assert detect_violations([{"label": "child", "state": "swimming",
+                               "bbox": [0, 0, 10, 10]}]) == []
+
+
+def test_clean_entity_no_violations():
+    assert detect_violations([{"label": "house", "state": "burning",
+                               "bbox": [5, 5, 50, 50]}]) == []
+
+
+def test_prompt_quotes_entities_and_numbers_problems():
+    entities = [{"label": "vehicle", "state": "intact", "bbox": [0, 0, 9, 9]},
+                {"label": "person", "state": "floating", "bbox": [1, 1, 5, 5]}]
+    prompt = build_repair_prompt(entities, detect_violations(entities))
+    assert '"vehicle"' in prompt and "1." in prompt and "2." in prompt
+    assert "Fix ONLY the listed problems" in prompt
+
+
+# ── The loop: stopping rules and trace ──────────────────────────────────
+
+CLEAN = {"label": "house", "state": "burning", "bbox": [5, 5, 50, 50]}
+BROKEN = {"label": "vehicle", "state": "intact", "bbox": [0, 0, 9, 9]}
+FIXED = {"label": "tanker_truck", "state": "intact", "bbox": [0, 0, 9, 9]}
+
+
+def test_clean_on_arrival_no_model_call():
+    calls = []
+    fixed, trace = repair_entities([CLEAN], lambda p: calls.append(p) or [CLEAN])
+    assert trace.clean_on_arrival and trace.stopped_reason == "clean"
+    assert calls == []                       # a clean answer costs zero calls
+    assert fixed == [CLEAN]
+
+
+def test_one_round_fix():
+    fixed, trace = repair_entities([BROKEN], lambda p: [FIXED])
+    assert trace.stopped_reason == "clean"
+    assert len(trace.rounds) == 1 and trace.rounds[0].changed
+    assert fixed == [FIXED]
+
+
+def test_oscillation_guard_stops_on_identical_answer():
+    """A model that returns the same broken list twice ends the loop:
+    asking again would add confidence, not information."""
+    fixed, trace = repair_entities([BROKEN], lambda p: [dict(BROKEN)])
+    assert trace.stopped_reason == "no_change"
+    assert len(trace.rounds) == 1
+    # The violation is still visible downstream, not hidden.
+    assert detect_violations(fixed)
+
+
+def test_cap_reached_on_ever_changing_broken_answers():
+    """A model that keeps producing NEW broken answers hits the hard cap."""
+    counter = {"n": 0}
+
+    def churn(prompt):
+        counter["n"] += 1
+        return [{"label": "vehicle", "state": "intact",
+                 "bbox": [counter["n"], 0, counter["n"] + 9, 9]}]
+
+    fixed, trace = repair_entities([BROKEN], churn)
+    assert trace.stopped_reason == "cap_reached"
+    assert len(trace.rounds) == MAX_REPAIR_ROUNDS == counter["n"]
+
+
+def test_broken_model_answer_keeps_last_good_list():
+    fixed, trace = repair_entities([BROKEN], lambda p: [])
+    assert fixed == [BROKEN] and trace.stopped_reason == "no_change"
+
+
+# ── Integration through run_perception ──────────────────────────────────
+
+
+@pytest.fixture()
+def fake_geometry(monkeypatch):
+    def fake_detect(image, entities):
+        cands = {}
+        for i, e in enumerate(entities):
+            p = perception._detector_phrase(e["label"], e.get("description", ""))
+            e["_phrase"] = p
+            cands.setdefault(p, []).append(
+                {"score": 0.8, "bbox": [10 + i * 30, 10, 100 + i * 30, 120]}
+            )
+        return cands
+
+    monkeypatch.setattr(perception, "detect_candidates", fake_detect)
+    monkeypatch.setattr(perception, "mask_for_box",
+                        lambda image, bbox: Image.new("L", image.size, 255))
+
+
+def test_run_perception_records_repair_trace(tmp_path, fake_geometry):
+    img = tmp_path / "scene.jpg"
+    Image.new("RGB", (300, 200), "gray").save(img)
+
+    # The scripted model fixes its family-name violation when asked once.
+    result = perception.run_perception(
+        img,
+        entities=[{"label": "vehicle", "state": "intact",
+                   "description": "tanker", "bbox": [12, 12, 98, 118]}],
+        with_masks=False,
+        out_dir=tmp_path / "out",
+        repair_query_fn=lambda prompt: [
+            {"label": "tanker_truck", "state": "intact",
+             "description": "tanker", "bbox": [12, 12, 98, 118]}
+        ],
+    )
+    assert result.repair_trace is not None
+    assert result.repair_trace["stopped_reason"] == "clean"
+    assert result.detected_objects[0].object_id == "tanker_truck_1"
+    assert not result.detected_objects[0].family_name_as_label
+
+
+def test_run_perception_standin_without_repair_fn_skips_loop(tmp_path, fake_geometry):
+    img = tmp_path / "scene.jpg"
+    Image.new("RGB", (300, 200), "gray").save(img)
+    result = perception.run_perception(
+        img,
+        entities=[{"label": "house", "state": "burning", "bbox": [12, 12, 98, 118]}],
+        with_masks=False,
+        out_dir=tmp_path / "out",
+    )
+    assert result.repair_trace is None       # loop not run, honestly recorded
