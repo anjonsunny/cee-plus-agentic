@@ -381,6 +381,7 @@ def rail_component(d: dict[str, Any]) -> html.Div:
         st = d["stages"][s]
         cls = {"pending": "station", "active": "station active",
                "done": "station done"}[st["status"]]
+        cls += f" st-{s.lower()}"          # per-stage tint (shaded cards)
         secs = f"{st['seconds']:.1f}s" if st.get("seconds") else ""
         head = [html.Span(s, className="station-name"),
                 html.Span(secs, className="station-secs")]
@@ -701,7 +702,7 @@ app.index_string = """<!DOCTYPE html>
   .tile-label { font-size:10px; color:var(--faint); letter-spacing:1px; text-transform:uppercase; }
   .tile.amber .tile-value { color:#d97706; } .tile.green .tile-value { color:#16a34a; }
   .tile.gray .tile-value { color:var(--faint); }
-  .main { display:grid; grid-template-columns: 1fr 420px; gap:16px; }
+  .main { display:grid; grid-template-columns: 1fr 540px; gap:20px; }
   .scene { position:relative; border-radius:14px; overflow:hidden; background:#0f172a;
       box-shadow:var(--shadow-lift); }
   .scene-img { width:100%; display:block; }
@@ -721,24 +722,32 @@ app.index_string = """<!DOCTYPE html>
       animation: chipin .3s ease-out; box-shadow:0 2px 6px rgba(0,0,0,.35); }
   .chip.docked { position:static; display:inline-block; margin:6px; transform:none; }
   @keyframes chipin { from { opacity:0; transform:translateY(-160%);} to { opacity:1; transform:translateY(-120%);} }
-  .rail { background:var(--card); border:1px solid var(--line); border-radius:14px;
-      padding:14px; box-shadow:var(--shadow); }
-  .station { padding:8px 12px; border-radius:10px; margin:2px 0; border-left:4px solid var(--line); }
-  .station.active { border-left-color:var(--accent); background:#eff6ff;
-      animation: stpulse 1.2s ease-in-out infinite; }
-  .station.done { border-left-color:#16a34a; }
-  @keyframes stpulse { 0%,100% { background:#eff6ff; } 50% { background:#dbeafe; } }
-  .station-name { font-weight:bold; letter-spacing:1px; font-size:13px; }
-  .station-head { display:flex; align-items:baseline; gap:8px; }
+  .rail { background:transparent; border:none; padding:0; display:flex;
+      flex-direction:column; gap:12px; }
+  .station { padding:14px 18px; border-radius:14px; margin:0;
+      border:1px solid var(--line); border-left:5px solid var(--line);
+      background:var(--card); box-shadow:var(--shadow); opacity:.62; }
+  .station.active, .station.done { opacity:1; }
+  /* Per-stage tinted, shaded cards */
+  .st-perceive.active, .st-perceive.done { background:linear-gradient(135deg,#eff6ff,#ffffff); border-left-color:#3b82f6; }
+  .st-repair.active,   .st-repair.done   { background:linear-gradient(135deg,#fffbeb,#ffffff); border-left-color:#f59e0b; }
+  .st-ground.active,   .st-ground.done   { background:linear-gradient(135deg,#f5f3ff,#ffffff); border-left-color:#8b5cf6; }
+  .st-bind.active,     .st-bind.done     { background:linear-gradient(135deg,#ecfeff,#ffffff); border-left-color:#06b6d4; }
+  .st-mask.active,     .st-mask.done     { background:linear-gradient(135deg,#fdf2f8,#ffffff); border-left-color:#ec4899; }
+  .st-assemble.active, .st-assemble.done { background:linear-gradient(135deg,#f0fdf4,#ffffff); border-left-color:#16a34a; }
+  .station.active { animation: stlift 1.2s ease-in-out infinite; box-shadow:var(--shadow-lift); }
+  @keyframes stlift { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-1px); } }
+  .station-name { font-weight:bold; letter-spacing:1.5px; font-size:14px; }
+  .station-head { display:flex; align-items:baseline; gap:10px; margin-bottom:2px; }
   .station-secs { font-size:11px; color:var(--faint); }
-  .station-info, .station-loop { font-size:11px; color:var(--muted); }
-  .station-detail { font-size:11px; color:#475569; margin-top:2px; line-height:1.5; }
+  .station-info, .station-loop { font-size:12px; color:var(--muted); }
+  .station-detail { font-size:12px; color:#475569; margin-top:3px; line-height:1.6; }
   .station-detail.dim { color:var(--faint); }
-  .station-loop { color:#d97706; }
-  .rail-link { color:var(--line); margin-left:18px; line-height:6px; }
-  .tickets { margin-top:12px; max-height:340px; overflow-y:auto; }
+  .station-loop { color:#d97706; margin-top:3px; }
+  .rail-link { display:none; }
+  .tickets { margin-top:14px; max-height:420px; overflow-y:auto; }
   .ticket { background:var(--card); border:1px solid var(--line); border-radius:12px;
-      margin:8px 0; padding:8px 12px; box-shadow:var(--shadow); }
+      margin:10px 0; padding:11px 14px; box-shadow:var(--shadow); }
   .ticket.open { border-color:#f59e0b; animation: tkin .3s ease-out; }
   .ticket.fixed { opacity:.8; } .ticket.stood { border-color:#cbd5e1; }
   @keyframes tkin { from { opacity:0; transform:translateX(20px);} to { opacity:1; transform:none;} }
@@ -752,8 +761,8 @@ app.index_string = """<!DOCTYPE html>
       animation: fixpulse 1s ease-in-out infinite; }
   @keyframes fixpulse { 50% { background:#fde68a; } }
   .ticket.fixing { border-color:#f59e0b; }
-  .act-feed { margin-top:5px; border-left:2px solid var(--line); padding-left:9px; }
-  .act-line { font-size:11px; color:var(--muted); line-height:1.7; }
+  .act-feed { margin-top:8px; border-left:2px solid rgba(100,116,139,.25); padding-left:11px; }
+  .act-line { font-size:12px; color:var(--muted); line-height:1.8; }
   .act-line.dim { color:var(--faint); font-style:italic; }
   .act-line.now { color:var(--accent); font-weight:600;
       animation: nowpulse 1.1s ease-in-out infinite; }
