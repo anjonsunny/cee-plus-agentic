@@ -147,6 +147,31 @@ def test_inspector_close_button_uses_pattern_id():
     assert find_button(modal)
 
 
+def test_malformed_model_boxes_never_crash_the_scene():
+    """Live-run regression (2026-07-21): a raw mid-repair entity carried a
+    one-element bbox and the chip renderer crashed. Every malformed shape
+    must be skipped; valid-but-oversized boxes are clamped into frame."""
+    from agentic.ui import _pct_box, _valid_box
+
+    bad = [[5], None, "box", [1, 2, 3], ["a", "b", "c", "d"],
+           [10, 10, 10, 10], [50, 50, 10, 10], [1, 2, 3, 4, 5]]
+    for b in bad:
+        assert not _valid_box(b), b
+    assert _valid_box([0, 0, 10, 10]) and _valid_box([0.5, 1, 9.5, 12])
+
+    # Oversized box clamps to the frame instead of overflowing it.
+    style = _pct_box([-50, -50, 800, 600], [400, 300])
+    assert style["left"] == "0.00%" and style["top"] == "0.00%"
+    assert style["width"] == "100.00%" and style["height"] == "100.00%"
+
+    # A violation chip pointing at an entity with a broken bbox: no crash.
+    ev = EVENTS[:6] + [{"type": "repair_round_done", "round": 1, "changed": True,
+                        "entities": [{"label": "vehicle", "state": "intact",
+                                      "bbox": [5]}]}]
+    d = derive(ev)
+    scene_component(d, "data:image/png;base64,x")   # must not raise
+
+
 def test_upload_pick_shows_thumbnail_and_name():
     """After picking an image, the upload control shows what was picked."""
     from agentic.ui import cache_upload

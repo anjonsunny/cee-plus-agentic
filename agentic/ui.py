@@ -415,12 +415,33 @@ def instruments_component(d: dict[str, Any]) -> html.Div:
     ], className="instruments")
 
 
+def _valid_box(bbox: Any) -> bool:
+    """True only for a well-formed [x1, y1, x2, y2] with positive area.
+
+    Mid-repair entities are the model's RAW answer; a malformed bbox (one
+    element, strings, inverted corners) must be skipped by the renderer,
+    never crash it (live-run ValueError, 2026-07-21)."""
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+        return False
+    try:
+        x1, y1, x2, y2 = (float(v) for v in bbox)
+    except (TypeError, ValueError):
+        return False
+    return x2 > x1 and y2 > y1
+
+
 def _pct_box(bbox: list[int], size: list[int]) -> dict[str, str]:
+    """Percent-position a VALID box, clamped into the image frame (raw
+    model boxes may exceed the image; clamping keeps overlays inside)."""
     w, h = size
-    x1, y1, x2, y2 = bbox
-    return {"left": f"{100 * x1 / w:.2f}%", "top": f"{100 * y1 / h:.2f}%",
-            "width": f"{100 * (x2 - x1) / w:.2f}%",
-            "height": f"{100 * (y2 - y1) / h:.2f}%"}
+    x1, y1, x2, y2 = (float(v) for v in bbox)
+    left = min(max(100 * x1 / w, 0.0), 100.0)
+    top = min(max(100 * y1 / h, 0.0), 100.0)
+    right = min(max(100 * x2 / w, 0.0), 100.0)
+    bottom = min(max(100 * y2 / h, 0.0), 100.0)
+    return {"left": f"{left:.2f}%", "top": f"{top:.2f}%",
+            "width": f"{max(right - left, 0.0):.2f}%",
+            "height": f"{max(bottom - top, 0.0):.2f}%"}
 
 
 def scene_component(d: dict[str, Any], image_src: str | None) -> list[Any]:
@@ -452,6 +473,10 @@ def scene_component(d: dict[str, Any], image_src: str | None) -> list[Any]:
             bound = d["bound"].get(oid)
             final = final_by_id.get(oid)
             spot = " spotlight" if act.get("oid") == oid else ""
+            if final and not _valid_box(final.get("bbox")):
+                final = None
+            if bound and not _valid_box(bound.get("bbox")):
+                bound = None
             if final and final.get("bbox"):
                 color = STATE_KIND_CSS.get(final["state_kind"], "#94a3b8")
                 dashed = final["box_source"] == "vlm_sam_fallback"
@@ -471,7 +496,7 @@ def scene_component(d: dict[str, Any], image_src: str | None) -> list[Any]:
                     html.Span(oid, className="box-tag"),
                     id={"type": "scene-box", "oid": oid},
                     className=f"scene-box bound{spot}", style=style, n_clicks=0))
-            elif a.get("anchor_bbox"):
+            elif _valid_box(a.get("anchor_bbox")):
                 style = _pct_box(a["anchor_bbox"], size)
                 children.append(html.Div(className="scene-box anchor", style=style))
         # Amber chips for open violations that point at a listed entity.
@@ -483,7 +508,7 @@ def scene_component(d: dict[str, Any], image_src: str | None) -> list[Any]:
             chip_txt = f"{v['kind'].replace('_', ' ')}: '{v['raw_label']}'"
             if 0 <= idx < len(ents):
                 box = ents[idx].get("bbox") or ents[idx].get("anchor_bbox")
-                if box:
+                if _valid_box(box):
                     style = _pct_box(box, size)
                     children.append(html.Div(chip_txt, className="chip",
                                              style={"left": style["left"], "top": style["top"]}))
