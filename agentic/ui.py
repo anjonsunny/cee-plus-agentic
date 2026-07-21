@@ -391,6 +391,7 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
         "events": [],
         "image_src": f"data:{mime};base64,{base64.b64encode(image_bytes).decode()}",
         "done": False, "error": None,
+        "record_name": f"ui_{run_id}",     # how agent_tools will know this run
     }
     sink = make_event_sink(run_id, run_dir)
 
@@ -426,13 +427,15 @@ def start_replay(json_path: str) -> str:
             if image_src:
                 break
         RUNS[run_id] = {"events": events, "image_src": image_src,
-                        "done": True, "error": None}
+                        "done": True, "error": None,
+                        "record_name": path.parent.name}
         return run_id
     record = json.loads(path.read_text())
     RUNS[run_id] = {
         "events": build_replay_events(record),
         "image_src": image_src_for_record(path),
         "done": True, "error": None,
+        "record_name": path.name.replace("__perception.json", ""),
     }
     return run_id
 
@@ -926,6 +929,24 @@ app.index_string = """<!DOCTYPE html>
   .insp-desc { color:var(--muted); font-size:12px; margin:6px 0; }
   .insp-chain { font-size:12px; color:#334155; }
   .scrub { margin-top:10px; }
+  .agent-dock { background:var(--card); border:1px solid var(--line); border-radius:16px;
+      padding:14px 16px; margin-top:12px; box-shadow:var(--shadow); }
+  .agent-head { display:flex; align-items:baseline; gap:12px; margin-bottom:8px; }
+  .agent-title { font-weight:bold; letter-spacing:2px; font-size:13px; color:var(--accent); }
+  .agent-sub { font-size:11px; color:var(--faint); }
+  .agent-transcript { max-height:280px; overflow-y:auto; display:flex;
+      flex-direction:column; gap:8px; margin-bottom:10px; }
+  .bubble-user { align-self:flex-end; background:var(--accent); color:white;
+      border-radius:14px 14px 4px 14px; padding:8px 13px; font-size:13px; max-width:70%; }
+  .bubble-agent { align-self:flex-start; background:#f1f5f9; border:1px solid var(--line);
+      border-radius:14px 14px 14px 4px; padding:9px 13px; font-size:13px; max-width:85%; }
+  .bubble-agent-text { white-space:pre-wrap; }
+  .tool-chips { margin-top:6px; display:flex; gap:6px; flex-wrap:wrap; }
+  .tool-chip { font-family:monospace; font-size:10px; background:#e0e7ff; color:#3730a3;
+      border-radius:8px; padding:2px 8px; }
+  .agent-inputrow { display:flex; gap:8px; }
+  .agent-inputbox { flex:1; background:#fff; border:1px solid var(--line); color:var(--ink);
+      border-radius:10px; padding:9px 12px; }
 </style></head>
 <body>{%app_entry%}<footer>{%config%}{%scripts%}{%renderer%}</footer></body></html>"""
 
@@ -948,8 +969,22 @@ app.layout = html.Div([
                                       marks=None, updatemode="drag",
                                       tooltip={"placement": "bottom"}),
                            className="scrub"),
-                  # Reserved: the conversation agent docks here next.
-                  html.Div(id="agent-dock")]),
+                  # The conversation agent, docked under the scene.
+                  html.Div([
+                      html.Div([html.Span("ASK THE ANALYST", className="agent-title"),
+                                html.Span("answers come only from the run records",
+                                          className="agent-sub")],
+                               className="agent-head"),
+                      html.Div(id="agent-transcript", className="agent-transcript"),
+                      html.Div([
+                          dcc.Input(id="agent-input", type="text", debounce=True,
+                                    placeholder="ask about this run… "
+                                                "(why is child_1 at risk?)",
+                                    className="agent-inputbox", n_submit=0),
+                          html.Button("ASK", id="agent-send", className="go",
+                                      n_clicks=0),
+                      ], className="agent-inputrow"),
+                  ], className="agent-dock", id="agent-dock")]),
         # PHASE 0 · PERCEPTION: the whole live panel for this stage lives
         # under one collapsible phase card. Later stages (threats, graphs,
         # intervention) will stack their own phase cards below it.
@@ -994,6 +1029,46 @@ def start_run(_clicks, replay_path, cached, caption):
                               cached.get("filename") or "scene.jpg",
                               caption or "")
     return dash.no_update
+
+
+# Per-page-load agent transcripts, keyed by thread id (rendered turns).
+AGENT_LOGS: dict[str, list[dict[str, Any]]] = {}
+
+
+@app.callback(Output("agent-transcript", "children"),
+              Output("agent-input", "value"),
+              Input("agent-send", "n_clicks"), Input("agent-input", "n_submit"),
+              State("agent-input", "value"), State("run-id", "data"),
+              prevent_initial_call=True)
+def ask_agent(_clicks, _submit, question, run_id):
+    """One dialogue turn. Runs the LangGraph agent synchronously; the
+    answer's provenance (every tool call it made) renders as chips."""
+    if not question or not question.strip():
+        return dash.no_update, dash.no_update
+    run = RUNS.get(run_id or "")
+    focus = run.get("record_name") if run else None
+    thread = f"ui-{run_id or 'global'}"
+    log = AGENT_LOGS.setdefault(thread, [])
+    try:
+        from agentic.dialogue import respond
+        out = respond(thread, question.strip(), focus_run=focus)
+        log.append({"q": question.strip(), "a": out["answer"],
+                    "tools": [f"{t['tool']}({', '.join(map(str, t['args'].values()))})"
+                              for t in out["tool_trace"]]})
+    except Exception as exc:
+        log.append({"q": question.strip(),
+                    "a": f"agent unavailable: {exc}. Is Ollama running with "
+                         f"the dialogue model pulled (ollama pull qwen2.5:7b)?",
+                    "tools": []})
+    bubbles: list[Any] = []
+    for turn in log:
+        bubbles.append(html.Div(turn["q"], className="bubble-user"))
+        chips = [html.Span(t, className="tool-chip") for t in turn["tools"]]
+        bubbles.append(html.Div([html.Div(turn["a"], className="bubble-agent-text")]
+                                + ([html.Div(chips, className="tool-chips")]
+                                   if chips else []),
+                                className="bubble-agent"))
+    return bubbles, ""
 
 
 @app.callback(Output("selected", "data"),

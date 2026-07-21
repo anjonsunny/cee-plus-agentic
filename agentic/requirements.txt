@@ -4,3 +4,4 @@
 pydantic>=2.0
 torch>=2.2
 transformers>=4.44
+langgraph>=0.2      # dialogue agent (and the Stage 2 pipeline graph to come)

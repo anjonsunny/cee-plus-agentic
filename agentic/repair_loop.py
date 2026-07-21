@@ -55,6 +55,7 @@ if str(REPO_ROOT) not in sys.path:
 
 import re
 
+from agentic import rulebook  # noqa: E402
 from agentic.vocabulary import (  # noqa: E402
     LABEL_FAMILIES,
     OTHER_LABEL,
@@ -188,59 +189,51 @@ def detect_violations(
         raw_label = str(e.get("label", "")).strip()
         canon, note, in_vocab, is_family = canonicalize_label(raw_label)
 
-        # Rule 1: family names are not labels. Cite the family's members so
-        # the fix is a choice, not a guess.
+        # Rule P1: family names are not labels. The instruction text comes
+        # from the rulebook (rule + rationale + worked example); this code
+        # only supplies the evidence.
         if is_family:
             members = ", ".join(LABEL_FAMILIES[note.split(":", 1)[1]])
             violations.append(Violation(
                 entity_index=i, raw_label=raw_label,
                 kind="family_name_as_label",
-                instruction=(
-                    f"Entity {i}: '{raw_label}' is a family name, not a label. "
-                    f"Replace it with the specific noun that fits: {members}. "
-                    f"If none fits, use 'other'."
-                ),
+                instruction=rulebook.instruction_for(
+                    "family_name_as_label",
+                    index=i, raw_label=raw_label, members=members),
             ))
 
-        # Rule 2: label outside vocabulary and synonym map. The model may
+        # Rule P2: label outside vocabulary and synonym map. The model may
         # legitimately keep 'other' (the escape hatch), but it must do so
         # deliberately, not by accident.
         elif not in_vocab and canon == OTHER_LABEL and raw_label.lower() != OTHER_LABEL:
             violations.append(Violation(
                 entity_index=i, raw_label=raw_label,
                 kind="label_out_of_vocab",
-                instruction=(
-                    f"Entity {i}: '{raw_label}' is not in the allowed labels. "
-                    f"Pick the closest allowed label, or keep it as 'other' "
-                    f"with a clear description if nothing fits."
-                ),
+                instruction=rulebook.instruction_for(
+                    "label_out_of_vocab", index=i, raw_label=raw_label),
             ))
 
-        # Rule 3: state word outside the state vocabulary (after synonyms
+        # Rule P3: state word outside the state vocabulary (after synonyms
         # and extensions). We list the legal words; we NEVER suggest which
         # one is true for this entity - that would be coaching perception.
         if state_kind(e.get("state", "")) == "unknown":
             violations.append(Violation(
                 entity_index=i, raw_label=raw_label,
                 kind="state_out_of_vocab",
-                instruction=(
-                    f"Entity {i} ('{raw_label}'): state "
-                    f"'{e.get('state', '')}' is not a vocabulary state. "
-                    f"Choose the single word that matches what you see: "
-                    f"{_STATE_WORD_REMINDER}."
-                ),
+                instruction=rulebook.instruction_for(
+                    "state_out_of_vocab",
+                    index=i, raw_label=raw_label, state=e.get("state", ""),
+                    state_words=_STATE_WORD_REMINDER),
             ))
 
-        # Rule 4: every entity needs a rough anchor box; without one the
+        # Rule P4: every entity needs a rough anchor box; without one the
         # detector cannot be told WHICH instance the model meant.
         if not e.get("bbox") and not e.get("anchor_bbox"):
             violations.append(Violation(
                 entity_index=i, raw_label=raw_label,
                 kind="missing_anchor_bbox",
-                instruction=(
-                    f"Entity {i} ('{raw_label}'): missing bbox. Add a rough "
-                    f"pixel box [x1, y1, x2, y2] around it. Approximate is fine."
-                ),
+                instruction=rulebook.instruction_for(
+                    "missing_anchor_bbox", index=i, raw_label=raw_label),
             ))
 
     # Rule 5: completeness against the caption. The caption is given input;
@@ -255,12 +248,9 @@ def detect_violations(
             violations.append(Violation(
                 entity_index=-1, raw_label=wanted,
                 kind="caption_entity_missing",
-                instruction=(
-                    f"The caption mentions \"{raw_phrase}\" but your list has "
-                    f"no '{wanted}' entity. Look at the image again and add it "
-                    f"with its state and bbox. If you truly cannot see it in "
-                    f"the image, leave your list unchanged."
-                ),
+                instruction=rulebook.instruction_for(
+                    "caption_entity_missing",
+                    raw_phrase=raw_phrase, wanted=wanted),
             ))
     return violations
 
