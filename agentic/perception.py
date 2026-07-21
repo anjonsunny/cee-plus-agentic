@@ -552,6 +552,9 @@ def run_perception(
     for e in entities:
         mask_path = None
         if with_masks and e.get("bbox"):
+            # Per-entity event: SAM is the slow per-entity step, so the UI
+            # can spotlight exactly which entity is being worked on.
+            emit("masking_entity", object_id=e.get("object_id"))
             mask = mask_for_box(image, e["bbox"])
             if e["box_source"] == "vlm_sam_fallback":
                 refined = mask_bbox(mask)

@@ -86,6 +86,10 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
         "bound": {},               # object_id -> {bbox, box_source, confidence}
         "result": None,            # final PerceptionResult dict
         "repair_entities_latest": [],  # raw entity list during repair rounds
+        # The image narrates the run: `activity` is the latest thing
+        # happening, rendered as a ribbon ON the scene, with an optional
+        # spotlight target (the entity currently being worked on).
+        "activity": {"text": "", "oid": None, "busy": False},
     }
     for ev in events:
         t = ev.get("type")
@@ -135,6 +139,38 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
             d["result"] = ev.get("result")
         elif t == "run_error":
             d["error"] = ev.get("message", "unknown error")
+
+        # Activity ribbon: a one-liner for the scene, updated per event.
+        if t == "stage_started":
+            text = {"Perceive": "model reading the scene...",
+                    "Repair": "rulebook checking the answer...",
+                    "Ground": "detector searching for the named entities...",
+                    "Bind": "binding boxes to the model's anchors...",
+                    "Mask": "SAM tracing entity outlines...",
+                    "Assemble": "assembling the record..."}.get(ev.get("stage"), "")
+            d["activity"] = {"text": text, "oid": None,
+                             "busy": ev.get("stage") in ("Perceive", "Repair")}
+        elif t == "violation_found":
+            d["activity"] = {"text": f"violation: {ev.get('kind', '').replace('_', ' ')} "
+                                     f"('{ev.get('raw_label')}')", "oid": None, "busy": True}
+        elif t == "repair_round_started":
+            d["activity"] = {"text": f"repair round {ev.get('round')}: asking the model "
+                                     f"to fix {ev.get('open_violations')} problem(s)...",
+                             "oid": None, "busy": True}
+        elif t == "repair_stopped":
+            verdict = {"clean": "repair clean", "no_change": "model stood its ground",
+                       "cap_reached": "repair cap reached"}.get(ev.get("reason"), "")
+            d["activity"] = {"text": verdict, "oid": None, "busy": False}
+        elif t == "entity_bound":
+            src = "matched" if ev.get("box_source") == "dino_matched" else "SAM fallback"
+            d["activity"] = {"text": f"{ev.get('object_id')} bound ({src}, "
+                                     f"conf {ev.get('confidence', 0):.2f})",
+                             "oid": ev.get("object_id"), "busy": False}
+        elif t == "masking_entity":
+            d["activity"] = {"text": f"masking {ev.get('object_id')}...",
+                             "oid": ev.get("object_id"), "busy": True}
+        elif t == "assembled":
+            d["activity"] = {"text": "done", "oid": None, "busy": False}
     return d
 
 
@@ -352,6 +388,14 @@ def scene_component(d: dict[str, Any], image_src: str | None) -> list[Any]:
         return [html.Div("upload an image or pick a replay", className="scene-empty")]
     size = d["image_size"]
     children: list[Any] = [html.Img(src=image_src, className="scene-img")]
+    # The image narrates the run: activity ribbon + scanning sweep while a
+    # model is thinking, spotlight on the entity being worked on.
+    act = d.get("activity") or {}
+    if act.get("busy"):
+        children.append(html.Div(className="sweep"))
+    if act.get("text"):
+        children.append(html.Div(act["text"],
+                                 className="ribbon busy" if act.get("busy") else "ribbon"))
     final_by_id = {o["object_id"]: o for o in
                    (d["result"] or {}).get("detected_objects", [])}
     if size:
@@ -359,6 +403,7 @@ def scene_component(d: dict[str, Any], image_src: str | None) -> list[Any]:
             oid = a.get("object_id")
             bound = d["bound"].get(oid)
             final = final_by_id.get(oid)
+            spot = " spotlight" if act.get("oid") == oid else ""
             if final and final.get("bbox"):
                 color = STATE_KIND_CSS.get(final["state_kind"], "#94a3b8")
                 dashed = final["box_source"] == "vlm_sam_fallback"
@@ -370,13 +415,14 @@ def scene_component(d: dict[str, Any], image_src: str | None) -> list[Any]:
                     html.Span(f"{oid} · {final['state']}",
                               className="box-tag", style={"background": color}),
                     id={"type": "scene-box", "oid": oid},
-                    className=f"scene-box {final['state_kind']}", style=style, n_clicks=0))
+                    className=f"scene-box {final['state_kind']}{spot}",
+                    style=style, n_clicks=0))
             elif bound and bound.get("bbox"):
                 style = _pct_box(bound["bbox"], size)
                 children.append(html.Div(
                     html.Span(oid, className="box-tag"),
                     id={"type": "scene-box", "oid": oid},
-                    className="scene-box bound", style=style, n_clicks=0))
+                    className=f"scene-box bound{spot}", style=style, n_clicks=0))
             elif a.get("anchor_bbox"):
                 style = _pct_box(a["anchor_bbox"], size)
                 children.append(html.Div(className="scene-box anchor", style=style))
@@ -398,13 +444,16 @@ def scene_component(d: dict[str, Any], image_src: str | None) -> list[Any]:
     return children
 
 
-def inspector_component(d: dict[str, Any], selected: str | None) -> html.Div:
+def inspector_component(d: dict[str, Any], selected: str | None):
+    """Entity inspector as a modal popup (the space under the image is
+    reserved for the conversation agent). Returns None when nothing is
+    selected, which renders an empty modal container."""
     result = d["result"]
     if not selected or not result:
-        return html.Div("click a box to inspect an entity", className="inspector-empty")
+        return None
     obj = next((o for o in result["detected_objects"] if o["object_id"] == selected), None)
     if not obj:
-        return html.Div("entity not found", className="inspector-empty")
+        return None
     color = STATE_KIND_CSS.get(obj["state_kind"], "#94a3b8")
     chain = []
     if obj.get("label_note"):
@@ -417,18 +466,25 @@ def inspector_component(d: dict[str, Any], selected: str | None) -> html.Div:
                  + (f" (conf {obj['box_confidence']:.2f})" if obj.get("box_confidence") else ""))
     if obj.get("anchor_bbox") and obj.get("bbox") and obj["anchor_bbox"] != obj["bbox"]:
         chain.append(f"anchor {obj['anchor_bbox']} -> final {obj['bbox']}")
-    return html.Div([
-        html.Div([html.Span(obj["object_id"], className="insp-id"),
-                  html.Span(obj["state"], className="insp-state",
-                            style={"background": color})], className="insp-head"),
-        html.Div(obj.get("description", ""), className="insp-desc"),
-        html.Ul([html.Li(c) for c in chain], className="insp-chain"),
-    ], className="inspector")
+    return html.Div(
+        html.Div([
+            html.Div([html.Span(obj["object_id"], className="insp-id"),
+                      html.Span(obj["state"], className="insp-state",
+                                style={"background": color}),
+                      html.Button("×", id="insp-close", className="insp-close",
+                                  n_clicks=0)], className="insp-head"),
+            html.Div(obj.get("description", ""), className="insp-desc"),
+            html.Ul([html.Li(c) for c in chain], className="insp-chain"),
+        ], className="modal"),
+        className="modal-backdrop")
 
 
 # ── App assembly ────────────────────────────────────────────────────────
 
-app = dash.Dash(__name__, title="CEE+ Agentic — Perception")
+# suppress_callback_exceptions: the inspector modal's close button only
+# exists while the modal is open; Dash must tolerate its absence otherwise.
+app = dash.Dash(__name__, title="CEE+ Agentic — Perception",
+                suppress_callback_exceptions=True)
 
 app.index_string = """<!DOCTYPE html>
 <html><head>{%metas%}<title>{%title%}</title>{%favicon%}{%css%}
@@ -492,7 +548,23 @@ app.index_string = """<!DOCTYPE html>
   .speaker { font-size:10px; letter-spacing:2px; color:#64748b; }
   .bubble { background:#0b1220; border:1px solid #1e293b; border-radius:8px; padding:8px;
       font-family:monospace; font-size:12px; white-space:pre-wrap; }
-  .inspector { background:#111a2e; border:1px solid #1e293b; border-radius:10px; padding:10px; margin-top:10px; }
+  .ribbon { position:absolute; top:10px; left:10px; z-index:6; background:#0b1220dd;
+      border:1px solid #334155; border-radius:8px; padding:5px 12px; font-size:12px;
+      letter-spacing:1px; color:#cbd5e1; }
+  .ribbon.busy::before { content:"● "; color:#3b82f6; animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity:.2; } }
+  .sweep { position:absolute; top:0; bottom:0; width:34%; left:-34%; z-index:4; pointer-events:none;
+      background:linear-gradient(100deg, transparent 0%, #93c5fd1e 50%, transparent 100%);
+      animation: sweepmove 2.6s linear infinite; }
+  @keyframes sweepmove { from { left:-34%; } to { left:110%; } }
+  .scene-box.spotlight { animation: spotpulse .7s ease-in-out infinite !important; }
+  @keyframes spotpulse { 0%,100% { box-shadow:0 0 8px 2px #fbbf24aa; } 50% { box-shadow:0 0 22px 7px #fbbf24; } }
+  .modal-backdrop { position:fixed; inset:0; background:#000000aa; z-index:50;
+      display:flex; align-items:center; justify-content:center; }
+  .modal { background:#111a2e; border:1px solid #334155; border-radius:14px;
+      padding:18px 20px; width:440px; box-shadow:0 20px 60px #000c; }
+  .insp-close { margin-left:auto; background:none; border:none; color:#64748b;
+      font-size:20px; cursor:pointer; }
   .insp-head { display:flex; gap:10px; align-items:center; }
   .insp-id { font-family:monospace; font-weight:bold; font-size:14px; }
   .insp-state { color:white; font-size:11px; padding:2px 8px; border-radius:10px; }
@@ -521,9 +593,11 @@ app.layout = html.Div([
                                       marks=None, updatemode="drag",
                                       tooltip={"placement": "bottom"}),
                            className="scrub"),
-                  html.Div(id="inspector")]),
+                  # Reserved: the conversation agent docks here next.
+                  html.Div(id="agent-dock")]),
         html.Div([html.Div(id="rail"), html.Div(id="tickets")]),
     ], className="main"),
+    html.Div(id="inspector-modal"),
     dcc.Store(id="run-id"), dcc.Store(id="selected"),
     dcc.Store(id="upload-cache"),
     dcc.Interval(id="tick", interval=700),
@@ -554,10 +628,13 @@ def start_run(_clicks, replay_path, cached, caption):
 
 @app.callback(Output("selected", "data"),
               Input({"type": "scene-box", "oid": ALL}, "n_clicks"),
+              Input("insp-close", "n_clicks"),
               prevent_initial_call=True)
-def select_entity(_clicks):
+def select_entity(box_clicks, _close):
     trig = ctx.triggered_id
-    if isinstance(trig, dict) and any(_clicks):
+    if trig == "insp-close":
+        return None
+    if isinstance(trig, dict) and any(box_clicks):
         return trig.get("oid")
     return dash.no_update
 
@@ -565,7 +642,7 @@ def select_entity(_clicks):
 @app.callback(
     Output("rail", "children"), Output("tickets", "children"),
     Output("instruments", "children"), Output("scene", "children"),
-    Output("inspector", "children"),
+    Output("inspector-modal", "children"),
     Output("scrub", "max"), Output("scrub", "value"),
     Input("tick", "n_intervals"), Input("scrub", "value"),
     State("run-id", "data"), State("selected", "data"), State("scrub", "max"))

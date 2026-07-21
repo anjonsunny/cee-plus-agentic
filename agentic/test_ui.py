@@ -111,6 +111,35 @@ def test_scene_returns_children_for_the_positioned_container():
                 assert 0.0 <= float(str(style[key]).rstrip("%")) <= 100.0
 
 
+def test_activity_ribbon_follows_events():
+    """The scene narrates the run: ribbon text and spotlight target derive
+    from the latest event."""
+    d = derive(EVENTS[:2])
+    assert d["activity"]["text"] == "model reading the scene..."
+    assert d["activity"]["busy"]                    # sweep shows while thinking
+    d = derive(EVENTS[:5])
+    assert "violation" in d["activity"]["text"]
+    d = derive(EVENTS + [{"type": "masking_entity", "object_id": "tanker_truck_1"}])
+    assert d["activity"]["oid"] == "tanker_truck_1"  # spotlight target
+    assert "masking" in d["activity"]["text"]
+
+
+def test_inspector_is_modal_and_optional():
+    from agentic.ui import inspector_component
+    d = derive(EVENTS)
+    assert inspector_component(d, None) is None      # no selection: no modal
+    d_final = derive(EVENTS + [{"type": "assembled", "result": {
+        "image_size": [400, 300],
+        "detected_objects": [{"object_id": "tanker_truck_1", "label": "tanker_truck",
+                              "state": "stationary", "state_kind": "normal",
+                              "description": "d", "bbox": [1, 1, 9, 9],
+                              "box_source": "dino_matched", "box_confidence": 0.9,
+                              "anchor_bbox": None, "mask_path": None, "label_note": "",
+                              "vocab_extension": False, "family_name_as_label": False}]}}])
+    modal = inspector_component(d_final, "tanker_truck_1")
+    assert modal is not None and modal.className == "modal-backdrop"
+
+
 def test_replay_builder_roundtrip():
     record = {
         "image_path": "/x/B_pool.jpg", "image_size": [1679, 941], "caption": "cap",
