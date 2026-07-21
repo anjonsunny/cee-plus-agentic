@@ -88,6 +88,29 @@ def test_components_render_at_every_prefix():
         scene_component(d, "data:image/png;base64,x")
 
 
+def test_scene_returns_children_for_the_positioned_container():
+    """Regression (Sunny's screenshot, 2026-07-21): boxes anchored to the
+    page because the wrapper's .scene class was lost. scene_component now
+    returns children destined for the layout's positioned container, and
+    every box style must stay inside 0-100% of it."""
+    d = derive(EVENTS + [{"type": "assembled", "result": {
+        "image_size": [400, 300],
+        "detected_objects": [{"object_id": "tanker_truck_1", "label": "tanker_truck",
+                              "state": "stationary", "state_kind": "normal",
+                              "description": "", "bbox": [12, 11, 195, 148],
+                              "box_source": "dino_matched", "box_confidence": 0.9,
+                              "anchor_bbox": [10, 10, 200, 150], "mask_path": None,
+                              "label_note": "", "vocab_extension": False,
+                              "family_name_as_label": False}]}}])
+    children = scene_component(d, "data:image/png;base64,x")
+    assert isinstance(children, list)
+    for child in children:
+        style = getattr(child, "style", None) or {}
+        for key in ("left", "top", "width", "height"):
+            if key in style and str(style[key]).endswith("%"):
+                assert 0.0 <= float(str(style[key]).rstrip("%")) <= 100.0
+
+
 def test_replay_builder_roundtrip():
     record = {
         "image_path": "/x/B_pool.jpg", "image_size": [1679, 941], "caption": "cap",

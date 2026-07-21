@@ -339,11 +339,17 @@ def _pct_box(bbox: list[int], size: list[int]) -> dict[str, str]:
             "height": f"{100 * (y2 - y1) / h:.2f}%"}
 
 
-def scene_component(d: dict[str, Any], image_src: str | None) -> html.Div:
+def scene_component(d: dict[str, Any], image_src: str | None) -> list[Any]:
     """The image with live overlays: dashed anchors, snapped final boxes,
-    amber chips for open violations. Boxes are clickable (inspector)."""
+    amber chips for open violations. Boxes are clickable (inspector).
+
+    Returns the CHILDREN for the layout's .scene container. The container
+    itself (id="scene", className="scene") lives in the layout and carries
+    position:relative + overflow:hidden; the percentage-positioned boxes
+    are meaningless outside it (v0 bug: rendering these children into a
+    classless div anchored the boxes to the page)."""
     if not image_src:
-        return html.Div("upload an image or pick a replay", className="scene-empty")
+        return [html.Div("upload an image or pick a replay", className="scene-empty")]
     size = d["image_size"]
     children: list[Any] = [html.Img(src=image_src, className="scene-img")]
     final_by_id = {o["object_id"]: o for o in
@@ -389,7 +395,7 @@ def scene_component(d: dict[str, Any], image_src: str | None) -> html.Div:
                                              style={"left": style["left"], "top": style["top"]}))
                     continue
             children.append(html.Div(chip_txt, className="chip docked"))
-    return html.Div(children, className="scene")
+    return children
 
 
 def inspector_component(d: dict[str, Any], selected: str | None) -> html.Div:
@@ -510,7 +516,7 @@ app.layout = html.Div([
     ], className="controls"),
     html.Div(id="instruments"),
     html.Div([
-        html.Div([html.Div(id="scene"),
+        html.Div([html.Div(id="scene", className="scene"),
                   html.Div(dcc.Slider(id="scrub", min=0, max=1, step=1, value=1,
                                       marks=None, updatemode="drag",
                                       tooltip={"placement": "bottom"}),
@@ -569,7 +575,7 @@ def render(_n, scrub_value, run_id, selected, scrub_max):
         empty = derive([])
         return (rail_component(empty), tickets_component(empty),
                 instruments_component(empty),
-                scene_component(empty, None).children,
+                scene_component(empty, None),
                 inspector_component(empty, None), 1, 1)
     events = run["events"]
     total = max(1, len(events))
@@ -578,9 +584,9 @@ def render(_n, scrub_value, run_id, selected, scrub_max):
     following = scrub_value is None or scrub_max is None or scrub_value >= scrub_max
     k = total if (following or ctx.triggered_id != "scrub") and following else min(scrub_value, total)
     d = derive(events[:k])
-    scene = scene_component(d, run.get("image_src"))
     return (rail_component(d), tickets_component(d), instruments_component(d),
-            scene.children, inspector_component(d, selected),
+            scene_component(d, run.get("image_src")),
+            inspector_component(d, selected),
             total, total if following else k)
 
 
