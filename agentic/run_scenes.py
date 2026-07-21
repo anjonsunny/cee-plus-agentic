@@ -50,6 +50,16 @@ def find_scene(name: str) -> Path | None:
     return None
 
 
+def resolve_caption(image_path: Path) -> str:
+    """Sidecar caption: <scene>.txt next to the image. CEE+'s input has
+    always been image + caption; the captions are authored with Sunny and
+    versioned alongside the scenes. Empty string when no sidecar exists."""
+    sidecar = image_path.with_suffix(".txt")
+    if sidecar.exists():
+        return sidecar.read_text(encoding="utf-8").strip()
+    return ""
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Run perception on the worked-example scenes.")
     p.add_argument("--only", help="Run a single scene by name (e.g. B_pool).")
@@ -70,10 +80,13 @@ def main(argv: list[str] | None = None) -> int:
         path = find_scene(name)
         if path is None:
             continue
+        caption = resolve_caption(path)
         print(f"\n=== {name} ({path.name}) ===", flush=True)
+        print(f"  caption: {caption!r}" if caption else "  caption: (none)", flush=True)
         t0 = time.perf_counter()
         try:
-            result = run_perception(path, with_masks=not args.no_masks, out_dir=out_dir)
+            result = run_perception(path, caption=caption,
+                                    with_masks=not args.no_masks, out_dir=out_dir)
         except Exception as exc:
             print(f"  FAILED: {exc}", file=sys.stderr, flush=True)
             rc = 1
