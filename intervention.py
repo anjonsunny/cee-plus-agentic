@@ -34,6 +34,7 @@ solely by the do().
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any, Callable
@@ -112,6 +113,30 @@ _PERSON_AT_RISK_STATES = {
     "drowning", "suffocating", "unconscious",
 }
 
+#: Any entity in one of these states is a VICTIM (target of harm), suppressible via
+#: target_mitigation — "move it out of harm's way". Same 8 states as main.AT_RISK_STATES;
+#: aliased (not person-gated) because a victim need not be a person (a trapped car).
+_DISTRESS_STATES = _PERSON_AT_RISK_STATES
+
+#: Distress acuteness — the VICTIM-side mirror of ACUTE_STATES / STABLE_HAZARD_STATES (which
+#: cover hazard-bearing states ONLY). Ranks how imminent the victim's peril is, and breaks ties
+#: in the merged candidate ranking exactly as hazard acuteness does for sources.
+_ACUTE_DISTRESS_STATES = {"drowning", "suffocating", "unconscious"}   # tier 2: imminent death
+_HARMED_DISTRESS_STATES = {"bleeding", "injured", "trapped"}          # tier 1: harmed, not fatal now
+# tier 0: "fleeing", "cowering" — exposed but mobile.
+
+
+def distress_acuteness(state: str) -> int:
+    """Victim-side acuteness tier (2 imminent / 1 harmed / 0 exposed). Mirrors the hazard
+    `acuteness` ladder so sources and victims tie-break on ONE comparable scale. Canonicalizes
+    first — the model writes synonyms ("struggling" -> "trapped")."""
+    s = canonicalize_state(str(state or "").strip())
+    if s in _ACUTE_DISTRESS_STATES:
+        return 2
+    if s in _HARMED_DISTRESS_STATES:
+        return 1
+    return 0
+
 _PERSON_LABELS = {
     "person", "people", "human", "man", "woman", "boy", "girl", "child", "kid",
     "toddler", "infant", "adult", "elderly", "senior", "male", "female",
@@ -163,6 +188,11 @@ _LABEL_FAMILY_EXTRAS = {
     "tanker_truck": "tanker", "tank_truck": "tanker", "tank_car": "tanker",
     "dust_storm": "dust", "sandstorm": "dust", "locomotive": "train",
     "floodwater": "water", "flood": "water",
+    # fire variants the model emits interchangeably (it will call the SAME entity 'fire_1'
+    # as a graph node but 'grass_fire_1' in its edges/rec quads). Folding them to 'fire'
+    # lets a UI pick of one id resolve to the candidate keyed on the other.
+    "grass_fire": "fire", "brush_fire": "fire", "bush_fire": "fire",
+    "forest_fire": "fire", "wildfire": "fire", "wild_fire": "fire", "bushfire": "fire",
 }
 
 #: Generic head-nouns that must NOT anchor a cross-terminology label match on their
@@ -199,6 +229,40 @@ _FLUID_INUNDATION_STATES = {
 }
 _FLUID_BASE_LABELS = {"water", "smoke", "gas", "dust", "mud", "chemical"}
 
+#: labels whose harm falls on LIFE (people/animals) — weighted higher than property in the
+#: consequence-based core threshold (a hazard that threatens people is more core than one that
+#: only threatens property, even with fewer edges).
+_LIFE_LABELS = {"person", "child", "man", "woman", "people", "worker", "patient", "resident",
+                "driver", "pedestrian", "victim", "animal", "dog", "cat", "livestock", "cattle",
+                "horse", "responder", "firefighter"}
+
+#: default rule for partitioning GT hazards into core vs peripheral. Shared by the per-run
+#: verdict AND the synthesis so "core" / "spurious" mean the same thing in both.
+#: half_max (Sunny, 2026-07-10): every hazard whose weight is >= half of the top hazard's
+#: weight is CO-CORE (inclusive — ties and close competitors count). above_mean was too
+#: strict: on a two-hazard scene it can only ever include both when they are exactly tied.
+GT_CORE_RULE = "half_max"
+
+
+def gt_core_set_from_weights(weights: dict[str, float], rule: str = GT_CORE_RULE) -> set[str]:
+    """Partition GT hazards into the CORE set by a threshold on their weight (GT edge count, or
+    consequence-weighted). Rules: 'above_mean' (default), 'half_max', 'top_k' (top-half), or
+    'all' (every GT hazard is core). A hazard below the threshold is a real-but-peripheral GT
+    hazard (SECONDARY), never spurious; only a hazard GT does not name at all is spurious."""
+    vals = [v for v in weights.values() if v > 0]
+    if not vals:
+        return set()
+    if rule == "half_max":
+        thr = 0.5 * max(vals)
+        return {o for o, v in weights.items() if v > 0 and v >= thr}
+    if rule == "top_k":
+        k = max(1, (len(vals) + 1) // 2)              # top HALF, rounding up (5 -> 3, not 2)
+        return set(sorted((o for o, v in weights.items() if v > 0), key=lambda o: -weights[o])[:k])
+    if rule == "all":
+        return {o for o, v in weights.items() if v > 0}
+    thr = sum(vals) / len(vals)                      # above_mean (default)
+    return {o for o, v in weights.items() if v > 0 and v >= thr}
+
 
 def _canonical_label(label: str) -> str:
     """Canonical label family for a label ('man' -> 'person', 'seat' -> 'chair').
@@ -230,6 +294,101 @@ def canonicalize_state(state: str) -> str:
         return _cs(s)
     except Exception:  # pragma: no cover - main always present in app context
         return s
+
+
+# ────────────────────────────────────────────────────────────
+# Shared id-alias resolution — THE single mechanism for the "same object, different id"
+# split (the model calls one entity 'fire_1' in detected_objects/nodes but 'grass_fire_1'
+# in threats/edges/candidates). Every operational consumer resolves through HERE; the
+# measurement plane (conformance, orphan_threats, alignment errors) keeps reading RAW ids
+# so the incoherence stays detectable — resolution is for acting, never for scoring.
+# ────────────────────────────────────────────────────────────
+
+def resolve_id_alias(alias_id: str, alias_state: str,
+                     targets: list[dict[str, Any]] | None) -> str | None:
+    """Resolve an alias id to a target entity's id, or None.
+
+    `targets` are entity dicts carrying an id (`object_id` or `id`), optionally `label` and
+    `state`. Rules, in order:
+      - exact id match -> that id (identity; no aliasing involved);
+      - alias HAS a state -> the target sharing its canonical label FAMILY whose canonical
+        STATE agrees (the state gate that keeps B6 intact: 'child_1' drowning never folds
+        onto a wading person);
+      - alias has NO state -> a family match only when the family is UNAMBIGUOUS (exactly
+        one target in it);
+      - else None.
+    Deterministic: ties broken by sorted target id.
+    """
+    alias_id = str(alias_id or "").strip()
+    if not alias_id or not targets:
+        return None
+
+    def _tid(t: dict) -> str:
+        return str(t.get("object_id") or t.get("id") or "").strip()
+
+    by_id = {_tid(t): t for t in targets if _tid(t)}
+    if alias_id in by_id:
+        return alias_id
+
+    fam = _canonical_label(_base_label(alias_id))
+    if not fam:
+        return None
+    fam_targets = sorted(
+        (t for t in targets
+         if _canonical_label(t.get("label", "") or _base_label(_tid(t))) == fam
+         or _canonical_label(_base_label(_tid(t))) == fam),
+        key=_tid,
+    )
+    if not fam_targets:
+        return None
+
+    st = canonicalize_state(alias_state)
+    if st:
+        for t in fam_targets:
+            if canonicalize_state(t.get("state", "")) == st:
+                return _tid(t)
+        return None                      # state gate: family alone is not enough
+    if len(fam_targets) == 1:            # no state to gate on: only an unambiguous family
+        return _tid(fam_targets[0])
+    return None
+
+
+def build_id_resolution(result: dict) -> dict[str, str]:
+    """The full alias -> detected-object-id map for one model output: every id MENTIONED in
+    threats, at_risk_objects, graph edges/candidates, or rec quads that is not itself a
+    detected id, resolved via resolve_id_alias against detected_objects (graph nodes as a
+    fallback target set). For operational consumers (display joins, intervention targeting,
+    the edge-level module's relation merge); measurement must NOT consume this."""
+    result = result or {}
+    detected = result.get("detected_objects") or []
+    graph = result.get("causal_graph") or result.get("graph_a") or {}
+    nodes = graph.get("nodes") or []
+
+    mentions: list[tuple[str, str]] = []
+    for t in result.get("threats") or []:
+        mentions.append((str(t.get("object_id", "")).strip(), str(t.get("state", "")).strip()))
+    for a in result.get("at_risk_objects") or []:
+        mentions.append((str(a.get("object_id", "")).strip(), str(a.get("state", "")).strip()))
+    for c in graph.get("intervention_candidates") or []:
+        mentions.append((str(c.get("threat", "")).strip(), str(c.get("state", "")).strip()))
+    for e in graph.get("edges") or []:
+        mentions.append((str(e.get("source", "")).strip(), str(e.get("via_state", "")).strip()))
+        mentions.append((str(e.get("target", "")).strip(), ""))
+    for r in result.get("recommendations") or []:
+        q = r.get("structured_reasoning") or {}
+        mentions.append((str(q.get("threat", "")).strip(), str(q.get("state", "")).strip()))
+        for a in q.get("affected_objects") or []:
+            mentions.append((str(a).strip(), ""))
+
+    detected_ids = {str(o.get("object_id", "")).strip() for o in detected}
+    out: dict[str, str] = {}
+    for mid, mstate in mentions:
+        if not mid or mid in detected_ids or mid in out:
+            continue
+        resolved = resolve_id_alias(mid, mstate, detected) or resolve_id_alias(mid, mstate, nodes)
+        if resolved and resolved != mid:
+            out[mid] = resolved
+    return out
 
 
 def _downstream_targets(graph: dict[str, Any]) -> dict[str, set]:
@@ -348,6 +507,46 @@ def _hazard_nodes(graph: dict[str, Any]) -> list[dict[str, Any]]:
     return [n for n in (graph.get("nodes") or []) if n.get("hazardous")]
 
 
+def _victim_nodes(graph: dict[str, Any]) -> list[dict[str, Any]]:
+    """VICTIM nodes: in an at-risk DISTRESS state AND the target of >=1 quad.
+
+    The victim-side mirror of `_hazard_nodes`. A quad already names the victim — it is the
+    TARGET end — so nothing about the quad changes; we simply enumerate the other end. A
+    victim is suppressible via target_mitigation ("the child now stands at the pool edge"),
+    which kills its INCOMING quads the way a source's do() kills its outgoing ones.
+    """
+    targets = {str(e.get("target", "")).strip() for e in (graph.get("edges") or [])
+               if str(e.get("target", "")).strip() != str(e.get("source", "")).strip()}
+    out: list[dict[str, Any]] = []
+    for n in (graph.get("nodes") or []):
+        nid = str(n.get("id", "")).strip()
+        # CANONICALIZE before the vocabulary check: the model writes synonyms ("struggling",
+        # "trapped_in_car"), and the raw word is almost never the canonical one. push_06 shipped
+        # `struggling`, which canonicalizes to `trapped` — a real Distress state. Matching raw
+        # made every such victim invisible. A genuinely out-of-vocab state ("floating") still
+        # does not resolve, which is correct: the schema cannot classify it.
+        st = canonicalize_state(str(n.get("state", "")).strip())
+        if nid and nid in targets and st in _DISTRESS_STATES and not n.get("hazardous"):
+            out.append(n)
+    return out
+
+
+def _incoming_edge_count(graph: dict[str, Any]) -> dict[tuple[str, str], int]:
+    """Per (target, state) count of DISTINCT incoming harm quads — the victim-side mirror of
+    `_outgoing_edge_count_adapter`. Deduped by (source, effect) so a model re-emitting the
+    same arrow twice does not inflate the victim's weight."""
+    node_state = {str(n.get("id", "")).strip(): str(n.get("state", "")).strip()
+                  for n in (graph.get("nodes") or [])}
+    seen: dict[str, set] = {}
+    for e in (graph.get("edges") or []):
+        tg = str(e.get("target", "")).strip()
+        src = str(e.get("source", "")).strip()
+        if not tg or not src or tg == src:          # self-loops are not incoming harm
+            continue
+        seen.setdefault(tg, set()).add((src, str(e.get("effect", "")).strip().lower()))
+    return {(tg, node_state.get(tg, "")): len(s) for tg, s in seen.items()}
+
+
 def _outgoing_edge_count_adapter(graph: dict[str, Any]) -> dict[tuple[str, str], int]:
     """ADAPTER: derive outgoing_edge_count per (source, via_state) from raw edges.
 
@@ -355,14 +554,28 @@ def _outgoing_edge_count_adapter(graph: dict[str, Any]) -> dict[tuple[str, str],
     NOT, so we recompute it here, letting the SAME ranking rule
     (main.pick_suppression_framework: outgoing_edge_count -> acuteness -> alpha) apply to
     all three graphs. Deterministic (pure dict aggregation).
+
+    Id-split re-homing via the SHARED resolver (resolve_id_alias): an orphan edge source
+    (`grass_fire_1` whose node is `fire_1`) is re-homed onto its co-referent node — matched by
+    family + the edge's via_state when present, or by unambiguous family — so its threat edge
+    is counted against the ranked node instead of vanishing. Verbatim node ids pass through.
     """
+    nodes = graph.get("nodes") or []
+    node_ids = {str(n.get("id", "")).strip() for n in nodes if str(n.get("id", "")).strip()}
+
+    def _home(src: str, via: str) -> str:
+        if src in node_ids:
+            return src
+        return resolve_id_alias(src, via, nodes) or resolve_id_alias(src, "", nodes) or src
+
     counts: dict[tuple[str, str], int] = {}
     for e in graph.get("edges") or []:
         src = str(e.get("source", "")).strip()
         via = str(e.get("via_state", "")).strip()
         if not src:
             continue
-        counts[(src, via)] = counts.get((src, via), 0) + 1
+        home = _home(src, via)
+        counts[(home, via)] = counts.get((home, via), 0) + 1
     return counts
 
 
@@ -423,40 +636,84 @@ def _candidates_from_graph(graph: dict[str, Any],
             return 1
         return 0
 
+    def _acuteness_for(state: str, role: str) -> int:
+        """Role-aware tie-break: hazard states use the hazard ladder, victims the distress
+        ladder. Both return 2/1/0 so the merged ranking compares on ONE scale."""
+        return distress_acuteness(state) if role == "victim" else acuteness(state)
+
     node_state = {str(n.get("id", "")).strip(): str(n.get("state", "")) for n in (graph.get("nodes") or [])}
     node_label = {str(n.get("id", "")).strip(): str(n.get("label", "")) for n in (graph.get("nodes") or [])}
     node_ids = set(node_state)
     observed = node_ids | (extra_observed_ids or set())
 
-    raw: list[tuple[str, str, int]] = []  # (object_id, state, outgoing_edge_count)
+    raw: list[tuple[str, str, int, str]] = []  # (object_id, state, edge_count, role)
     phantoms: list[dict[str, Any]] = []   # B6: declared candidate ids with no entity anchor
     # B4: in the adapter (B/GT) path, prefer the cascade ROOT (in_degree 0) over a high-
     # fan-out downstream node. `use_root_preference` is False on the A path, which must
     # mirror main.pick_suppression_framework EXACTLY (outgoing_edge_count -> acuteness ->
     # alpha) and reads the model-supplied intervention_candidates.
-    use_root_preference = not (use_intervention_candidates
-                               and graph.get("intervention_candidates") is not None)
+    # Root-preference is the B/GT (adapter) behaviour ONLY; the A path mirrors
+    # pick_suppression_framework EXACTLY (outgoing_edge_count -> acuteness -> alpha, no root
+    # preference) whether it reads model-supplied intervention_candidates OR, when the model
+    # supplied NONE (a None or EMPTY list — build_causal_graph defaults it to []), falls back
+    # to ranking A's own edges. The empty-list case previously returned an EMPTY ranking, which
+    # made the synthesis borrow Graph B under a "Graph A" label and drop the fire.
+    use_root_preference = not use_intervention_candidates
     indeg = _hazard_in_degree(graph) if use_root_preference else {}
-    if use_intervention_candidates and (graph.get("intervention_candidates") is not None):
+    if use_intervention_candidates and graph.get("intervention_candidates"):
+        # Id-split re-homing via the SHARED resolver (resolve_id_alias): a candidate declared
+        # under a different id than its node ('grass_fire_1' candidate, 'fire_1' node) folds
+        # onto the state-agreeing family co-referent instead of being phantom-dropped, which
+        # would erase a REAL declared hazard from Graph A's ranking. The resolver's state gate
+        # keeps B6 intact ('child_1' drowning never folds onto a wading person); a candidate
+        # with no resolution is a genuine phantom, surfaced for audit.
+        _node_targets = [{"id": nid, "state": node_state.get(nid, ""),
+                          "label": node_label.get(nid, "")} for nid in sorted(node_state)]
+        seen_tids: set[str] = set()
         for c in graph.get("intervention_candidates") or []:
             tid = str(c.get("threat", "")).strip()
             st = str(c.get("state", "")).strip()
             if not tid:
                 continue
             if tid not in observed:
-                # B6: phantom target — declared as a candidate but never detected as a node
-                # or object. Drop it (never let it drive the do()), surface it for audit.
-                phantoms.append({"object_id": tid, "state": st,
-                                 "label": _base_label(tid), "reason": "not_in_detected_or_nodes"})
-                continue
-            raw.append((tid, st, int(c.get("outgoing_edge_count", 0) or 0)))
+                # NOTE: state REQUIRED here (pass st even if empty -> resolver state-gates;
+                # an empty state must not family-fold onto a victim, so no-state aliases
+                # resolve only when the family is unambiguous).
+                home = resolve_id_alias(tid, st, _node_targets) if st else None
+                if home is None:
+                    # B6: phantom target — declared as a candidate but anchored to no node
+                    # or object under any state-agreeing co-referent id. Drop it (never let
+                    # it drive the do()), surface it for audit.
+                    phantoms.append({"object_id": tid, "state": st,
+                                     "label": _base_label(tid), "reason": "not_in_detected_or_nodes"})
+                    continue
+                tid = home
+            if tid in seen_tids:
+                continue                       # model listed the same entity twice (or once per alias)
+            seen_tids.add(tid)
+            raw.append((tid, st, int(c.get("outgoing_edge_count", 0) or 0), "hazard"))
     else:
         adapter = _outgoing_edge_count_adapter(graph)
         for n in _hazard_nodes(graph):
             tid = str(n.get("id", "")).strip()
             st = str(n.get("state", "")).strip()
             if tid:
-                raw.append((tid, st, adapter.get((tid, st), 0)))
+                raw.append((tid, st, adapter.get((tid, st), 0), "hazard"))
+
+    # VICTIMS, on BOTH paths: an entity in a Distress state that is the TARGET of >=1 quad is a
+    # suppression variable too (target_mitigation — move it out of harm's way). Its count is the
+    # INCOMING quad count, the mirror of a source's outgoing. Merged into the SAME ranked list
+    # and tagged role=victim: they are distinct do()s, so enumerating both ends is not
+    # double-counting harm — a source and its victims are simply different interventions that
+    # address overlapping harm (as cascading hazards already do). The model never declares
+    # victims as intervention_candidates, so they are always derived from the graph's edges.
+    _incoming = _incoming_edge_count(graph)
+    _already = {t[0] for t in raw}
+    for n in _victim_nodes(graph):
+        vid = str(n.get("id", "")).strip()
+        vst = str(n.get("state", "")).strip()
+        if vid and vid not in _already:
+            raw.append((vid, vst, _incoming.get((vid, vst), 0), "victim"))
 
     # B4: root-first ON the adapter path. A node with in_degree 0 (no other hazard edges
     # INTO it) is the origin of the propagation; it ranks above any downstream fan-out node
@@ -467,21 +724,33 @@ def _candidates_from_graph(graph: dict[str, Any],
     def _is_root(oid: str) -> int:
         return 0 if (use_root_preference and indeg.get(oid, 0) == 0) else (1 if use_root_preference else 0)
 
-    ranked = sorted(raw, key=lambda t: (_is_root(t[0]), -(t[2]), -acuteness(t[1]), t[0], t[1]))
+    ranked = sorted(raw, key=lambda t: (_is_root(t[0]), -(t[2]), -_acuteness_for(t[1], t[3]),
+                                        t[0], t[1]))
     out: list[dict[str, Any]] = []
-    for i, (tid, st, oec) in enumerate(ranked, start=1):
+    for i, (tid, st, ec, role) in enumerate(ranked, start=1):
         out.append({
             "object_id": tid,
             "state": st or node_state.get(tid, ""),
             "label": node_label.get(tid) or _base_label(tid),
-            "outgoing_edge_count": oec,
+            # NOTE: for role=victim this carries the INCOMING count (the harm converging on it),
+            # not an outgoing one. Kept under the existing key so every downstream reader
+            # (GT edge weights, ranking, picker badges) works unchanged; `edge_count` is the
+            # role-neutral alias to prefer in new code.
+            "outgoing_edge_count": ec,
+            "edge_count": ec,
+            "variable_role": role,   # "hazard" | "victim" — NOT the core/control ARM role
             "rank": i,
         })
     return out, phantoms
 
 
-def enumerate_candidates(baseline: dict) -> dict:
+def enumerate_candidates(baseline: dict, core_basis: str = "edge",
+                         core_rule: str = GT_CORE_RULE) -> dict:
     """Enumerate + classify suppression candidates across Graph A, Graph B, and GT.
+
+    `core_basis` ('edge' | 'consequence') and `core_rule` ('above_mean' | 'half_max' | 'top_k')
+    select the GT core THRESHOLD — the SINGLE source of `is_gt_core` used by BOTH the per-run
+    verdict and the synthesis, so the toggle governs everything. Default edge-count + above-mean.
 
     Invariants:
       - A/B/GT cores present when their graph has a hazard (declared_core_a/_b;
@@ -524,6 +793,9 @@ def enumerate_candidates(baseline: dict) -> dict:
                     "state": c["state"],
                     "label": c["label"],
                     "hazard_class": classify_hazard_class(c["label"], c["state"]),
+                    # variable_role decides the do(): hazard -> source_removal/edge_severance,
+                    # victim -> target_mitigation. Distinct from the core/control ARM role.
+                    "variable_role": c.get("variable_role", "hazard"),
                     "sources": [],
                     "ranks": {},
                     "is_should_be_core": False,
@@ -537,6 +809,10 @@ def enumerate_candidates(baseline: dict) -> dict:
                 entry["state"] = c["state"]
             if not entry["label"] and c["label"]:
                 entry["label"] = c["label"]
+            # a VICTIM role is sticky: if any graph enumerated this entity as a distress
+            # target, it stays a victim even if another graph ranked it as a hazard.
+            if c.get("variable_role") == "victim":
+                entry["variable_role"] = "victim"
 
     absorb(ranked_a, "A")
     absorb(ranked_b, "B")
@@ -545,25 +821,39 @@ def enumerate_candidates(baseline: dict) -> dict:
     # detected but did not rank as a candidate is still "observed").
     model_objects = baseline.get("detected_objects") or []
 
-    def _coref_model_id(gt_cand: dict[str, Any]) -> str | None:
-        """Resolve a GT hazard to a MODEL-side object_id by canonical label (+ state when
-        both name one). Prefer a merged candidate; fall back to a detected object. Returns
-        None when the model never co-referred this GT hazard (gt_core_unobserved)."""
+    def _coref_model_id(gt_cand: dict[str, Any], claimed: set | None = None) -> str | None:
+        """Resolve a GT hazard to a MODEL-side object_id. Returns None when the model never
+        co-referred this GT hazard (gt_core_unobserved).
+
+        ONE-TO-ONE: `claimed` holds model ids already taken by an earlier GT hazard, so a
+        second GT instance of the same label cannot re-grab the first model instance. Without
+        this, N identical GT hazards (three `house/burning`) all resolve to the FIRST model
+        house and the model's other houses read as phantom non-GT. Tier 0 is an EXACT
+        object_id match (pins `house_2`->`house_2` when GT and the model share ids); then the
+        state-agreeing and label-only tiers, each skipping already-claimed ids."""
+        claimed = claimed or set()
+        g_id = str(gt_cand.get("object_id", "")).strip()
         g_label = gt_cand.get("label", "")
         g_state = gt_cand.get("state", "")
-        # Two tiers: first a STATE-AGREEING match (disambiguates multiple same-class
-        # instances + admits cross-terminology), then a label-only fallback for the
-        # same canonical class (preserves the original resolve rate). Within each tier,
-        # a ranked candidate (already a suppression target) is preferred over a bare
-        # detected object.
+        # Tier 0: exact object_id match (unclaimed) — the surplus-instance fix.
+        if g_id and g_id not in claimed and (
+                g_id in merged or any(str(o.get("object_id", "")).strip() == g_id for o in model_objects)):
+            return g_id
+        # Tier 1 (state-agreeing) then Tier 2 (label-only); a ranked candidate is preferred over
+        # a bare detected object, and claimed ids are skipped so the match stays one-to-one.
         for require_state in (True, False):
             for oid in order:
+                if oid in claimed:
+                    continue
                 entry = merged[oid]
                 if _label_coref(g_label, entry.get("label", ""), g_state, entry.get("state", ""), require_state):
                     return oid
             for o in model_objects:
+                mid = str(o.get("object_id", "")).strip()
+                if not mid or mid in claimed:
+                    continue
                 if _label_coref(g_label, o.get("label", ""), g_state, o.get("state", ""), require_state):
-                    return str(o.get("object_id", "")).strip() or None
+                    return mid
         return None
 
     # ── Resolve should_be_core (GT top-ranked) to a model id (B4/B5).
@@ -602,6 +892,71 @@ def enumerate_candidates(baseline: dict) -> dict:
                 "reason": reason,
             }
 
+    # Stamp the GT rank onto EVERY co-referenced candidate (not only the top), so the picker
+    # can badge each hazard with its GT rank (GT #1, GT #2, ...). ranked_gt is in rank order,
+    # so the first co-reference wins the lowest rank; the top was already stamped above.
+    # At the same time build GT weights per MODEL id, by two bases: edge-count and consequence
+    # (victim severity — a hazard whose GT edges harm LIFE weighs more than one harming only
+    # property). Both feed the threshold-based GT CORE SET that unifies core/spurious across the
+    # per-run verdict and the synthesis.
+    _gt_node_lbl = {str(n.get("id", "")).strip(): _base_label(n.get("label", ""))
+                    for n in ((gt_graph or {}).get("nodes") or [])}
+    # consequence weight per GT hazard = Σ over its GT edges of effect-severity × life-factor —
+    # the SAME two-component scalar the OP victim-cost uses (_EFFECT_THREAT for the effect,
+    # person/animal ×2 for the victim), so GT and OP are apples-to-apples: a hazard that
+    # may_harm a person and one that isolates a person weigh differently on BOTH sides.
+    # ONE per-quad weight (effect-severity × life-of-target) feeds BOTH ends: it adds to the
+    # SOURCE's outgoing total (harm it causes) and to the TARGET's incoming total (harm
+    # converging on it). A victim's weight is therefore life-of-self × Σ incoming effect —
+    # the natural mirror, since the life factor of its own incoming quads IS its own.
+    _cons_by_gt: dict[str, float] = {}          # role=hazard: outgoing harm
+    _cons_by_gt_victim: dict[str, float] = {}   # role=victim: incoming harm
+    for e in ((gt_graph or {}).get("edges") or []):
+        s = str(e.get("source", "")).strip()
+        tg = str(e.get("target", "")).strip()
+        if not s:
+            continue
+        sev = 2.0 if _canonical_label(_gt_node_lbl.get(tg, _base_label(tg))) in _LIFE_LABELS else 1.0
+        eff = _EFFECT_THREAT.get(str(e.get("effect", "")).strip().lower(), 1.0)
+        _cons_by_gt[s] = _cons_by_gt.get(s, 0.0) + eff * sev
+        if tg and tg != s:                      # self-loops are not incoming harm
+            _cons_by_gt_victim[tg] = _cons_by_gt_victim.get(tg, 0.0) + eff * sev
+    gt_edge_w: dict[str, float] = {}
+    gt_cons_w: dict[str, float] = {}
+    gt_hazard_ids: set[str] = set()
+    _claimed_gt: set = set(gt_core_to_model.values())   # the GT top already took its model id
+    for gc in ranked_gt:
+        mid = gt_core_to_model.get(gc["object_id"]) or _coref_model_id(gc, _claimed_gt)
+        if not mid:
+            continue
+        _claimed_gt.add(mid)                            # one-to-one: don't reuse this model id
+        gt_hazard_ids.add(mid)
+        gt_edge_w[mid] = max(gt_edge_w.get(mid, 0.0), float(gc.get("outgoing_edge_count", 0) or 0))
+        # role-aware consequence: a hazard weighs by the harm it CAUSES, a victim by the harm
+        # CONVERGING on it. Same units (effect-severity × life), so they rank on one scale.
+        _cons_src = (_cons_by_gt_victim if gc.get("variable_role") == "victim" else _cons_by_gt)
+        gt_cons_w[mid] = max(gt_cons_w.get(mid, 0.0), _cons_src.get(gc["object_id"], 0.0))
+        if mid in merged and "GT" not in merged[mid]["ranks"]:
+            merged[mid]["ranks"]["GT"] = gc["rank"]
+            if "GT" not in merged[mid]["sources"]:
+                merged[mid]["sources"].append("GT")
+
+    # The core SET under the chosen basis + rule (default edge-count + above-mean). A GT hazard
+    # below the threshold is SECONDARY (real but peripheral), never spurious.
+    _core_weights = gt_cons_w if core_basis == "consequence" else gt_edge_w
+    gt_core_ids = gt_core_set_from_weights(_core_weights, core_rule)
+    # The resolved GT top (should_be_core) is ALWAYS core. Its rank is chosen by the root-first
+    # rule (B4: a cascade ORIGIN with few outgoing edges can rank #1), which can fall BELOW the
+    # raw-edge-weight threshold and wrongly exclude the very hazard the whole pipeline centres on
+    # — then suppressing the true core reads as 'secondary' instead of 'grounded'. Union it in.
+    if should_be_core_entry is not None:
+        _sbc = str(should_be_core_entry.get("object_id", "")).strip()
+        if _sbc:
+            gt_core_ids = set(gt_core_ids) | {_sbc}
+    for oid in order:
+        merged[oid]["is_gt_core"] = oid in gt_core_ids       # in the threshold-based core set
+        merged[oid]["is_gt_hazard"] = oid in gt_hazard_ids   # a GT hazard at all (else spurious)
+
     candidates = [merged[oid] for oid in order]
 
     # ── Control (rule #4 + B6): among non-core GT hazards, prefer one whose downstream
@@ -627,6 +982,11 @@ def enumerate_candidates(baseline: dict) -> dict:
             entry = _resolve(c)
             if entry is None:
                 continue
+            # NOTE (deferred): a co-core GT hazard (in gt_core_ids) can still be picked here as a
+            # control. The existing control_overlap + placebo-preference machinery handles the
+            # correlated case; a disjoint co-core control is a rarer confound to address in a
+            # dedicated control-path pass. Not fixed here to avoid disturbing that tested logic
+            # (and the control arm is not used by the intervention tab, run_control=False).
             if fallback_pick is None:
                 fallback_pick = entry
             c_targets = gt_targets.get(c["object_id"], set())
@@ -653,6 +1013,12 @@ def enumerate_candidates(baseline: dict) -> dict:
     if control is None or control.get("control_overlap"):
         hazard_ids = {n.get("id") for n in (graph_a.get("nodes") or []) if n.get("hazardous")}
         core_oid = should_be_core_entry.get("object_id") if should_be_core_entry else None
+        # MULTI-CORE (DEFERRED, control-path pass): this excludes only the single top core from
+        # the placebo. Under the multi-core set a perceived co-core VICTIM (child_1, not a
+        # graph-A hazard node) could still be picked as the "non-hazard" placebo and contaminate
+        # the control. Excluding the whole gt_core_ids set is the fix, but it destabilises the
+        # tested placebo/discrimination logic and this arm is UNUSED in the UI (run_control=False),
+        # so it belongs in a dedicated control-path pass, not here.
         non_hazards = [
             o for o in model_objects
             if str(o.get("object_id", "")).strip()
@@ -709,6 +1075,13 @@ def enumerate_candidates(baseline: dict) -> dict:
         "placebo_control": placebo_control,
         "gt_core_unobserved": gt_core_unobserved,
         "phantom_candidates": phantom_candidates,
+        # threshold-based GT core partition (shared by the per-run verdict + the synthesis).
+        "gt_core_ids": sorted(gt_core_ids),
+        "gt_hazard_ids": sorted(gt_hazard_ids),
+        "gt_core_basis": core_basis,
+        "gt_core_rule": core_rule,
+        "gt_edge_weights": gt_edge_w,
+        "gt_consequence_weights": gt_cons_w,
     }
 
 
@@ -745,10 +1118,18 @@ def build_intervention_spec(candidate: dict, intervention_type: str | None = Non
     # caller explicitly overrides intervention_type, route it to the inert placebo_null do()
     # so the prompt does not destroy a real bystander (which would confound discrimination).
     is_placebo = bool(candidate.get("is_placebo"))
+    # VARIABLE role (hazard | victim) — distinct from the core/control ARM `role` param above.
+    # A victim's do() is always target_mitigation ("move it out of harm's way"), decided by the
+    # role rather than by hazard_class: classify_hazard_class only returns person_in_hazard for
+    # PERSON labels, so a non-person victim (a trapped car) would otherwise fall through to
+    # source_removal and be deleted instead of rescued.
+    variable_role = candidate.get("variable_role", "hazard")
     if intervention_type:
         itype = intervention_type
     elif is_placebo:
         itype = _PLACEBO_INTERVENTION_TYPE
+    elif variable_role == "victim":
+        itype = "target_mitigation"
     else:
         itype = _TYPE_MAP.get(hazard_class, "source_removal")
     is_core = bool(candidate.get("is_should_be_core"))
@@ -760,10 +1141,16 @@ def build_intervention_spec(candidate: dict, intervention_type: str | None = Non
             "state": candidate.get("state", ""),
             "label": candidate.get("label", ""),
             "hazard_class": hazard_class,
+            "variable_role": variable_role,   # hazard | victim — drives the edit template
         },
         "intervention_type": itype,
         "modality": modality,
         "is_should_be_core": is_core,
+        # threshold-based GT core partition (shared with the synthesis): is_gt_core = in the
+        # GT core SET (not just the single top); is_gt_hazard = named by GT at all. A suppressed
+        # hazard that is a GT hazard but not core is SECONDARY, not spurious.
+        "is_gt_core": bool(candidate.get("is_gt_core", is_core)),
+        "is_gt_hazard": bool(candidate.get("is_gt_hazard", is_core)),
         "role": resolved_role,
         "core_basis": resolved_basis,
         "is_placebo": is_placebo,   # B3/B6: a placebo arm is not a real spurious-grounding finding
@@ -969,212 +1356,97 @@ def run_counterfactual(image_data_url: str | None, do_prompt: str, spec: dict,
 # Step 5 — check_u_preservation
 # ────────────────────────────────────────────────────────────
 
-def _object_ids(container: dict[str, Any]) -> set[str]:
-    """Exact object_ids from a baseline/post's detected_objects (raw, non-gating)."""
-    ids: set[str] = set()
-    for o in container.get("detected_objects") or []:
-        oid = str(o.get("object_id", "")).strip()
-        if oid:
-            ids.add(oid)
-    return ids
 
 
-def _label_multiset(container: dict[str, Any]) -> "Counter":
-    """Canonical-label MULTISET of a baseline/post's detected_objects (the U fingerprint
-    that survives id renames: man/woman -> person, seat -> chair, ...)."""
-    from collections import Counter
-    counts: Counter = Counter()
-    for o in container.get("detected_objects") or []:
-        fam = _canonical_label(o.get("label", ""))
-        if fam:
-            counts[fam] += 1
-    return counts
-
-
-def _multiset_overlap(a: "Counter", b: "Counter") -> float:
-    """Multiset Jaccard: sum(min) / sum(max). 1.0 when both empty or identical, 0 when
-    disjoint, in [0,1]. Insensitive to object-id naming, sensitive to class composition."""
-    keys = set(a) | set(b)
-    if not keys:
-        return 1.0
-    inter = sum(min(a.get(k, 0), b.get(k, 0)) for k in keys)
-    union = sum(max(a.get(k, 0), b.get(k, 0)) for k in keys)
-    return (inter / union) if union else 1.0
-
-
-def _suppressed_ids_and_family(spec: dict | None) -> tuple[set[str], str]:
-    """The suppressed target's id (+ its canonical label family) for U-check exclusion.
-
-    The do() is ALLOWED to change the suppressed entity and everything causally downstream
-    of it; the U-check must NOT count those as leaks. We exclude the suppressed target's own
-    object_id from BOTH the state and topology comparisons, and (for entity-removal do()s)
-    its canonical family unit from the state comparison so a legitimately-removed person does
-    not register as an untouched-entity drop.
-    """
-    spec = spec or {}
-    target = spec.get("target") or {}
-    oid = str(target.get("object_id", "") or "").strip()
-    fam = _canonical_label(target.get("label", "")) or _canonical_label(oid)
-    ids: set[str] = {oid} if oid else set()
-    return ids, fam
-
-
-def _nonsuppressed_edge_set(container: dict[str, Any], suppressed_ids: set[str]) -> list[tuple]:
-    """Family-based edge tuples (src_family, via_state, effect, tgt_family) restricted to
-    edges where NEITHER endpoint is the suppressed id. Identity is FAMILY-based so a pure
-    rename that preserves edge structure does not register as a topology leak; edges touching
-    the suppressed id are dropped because they are EXPECTED to change under the do() (a
-    grounded re-route is the signal, not a U leak). Returns a list (multiset-comparable)."""
-    graph = container.get("graph_a") or {}
-    # id -> family from BOTH graph nodes and detected_objects (nodes may carry the label).
-    id_fam: dict[str, str] = {}
-    for o in container.get("detected_objects") or []:
-        oid = str(o.get("object_id", "")).strip()
-        if oid:
-            id_fam[oid] = _canonical_label(o.get("label", "")) or oid
-    for n in graph.get("nodes") or []:
-        nid = str(n.get("id", "")).strip()
-        if nid and nid not in id_fam:
-            id_fam[nid] = _canonical_label(n.get("label", "")) or nid
-    out: list[tuple] = []
-    for e in graph.get("edges") or []:
-        src = str(e.get("source", "")).strip()
-        tgt = str(e.get("target", "")).strip()
-        if not src and not tgt:
+def resolve_object_renames(before_objs: list | None, after_objs: list | None) -> dict[str, str]:
+    """Map an AFTER-side object_id to its BEFORE-side id when they are the SAME object under a
+    different id/label. A stateless VLM re-detects the scene from scratch on the edited input,
+    so an unchanged object can come back renamed (tanker_1 leaking -> tanker_truck_1 stationary).
+    Matched one-to-one by canonical label family (tanker_truck ≡ tanker via _canonical_label),
+    ONLY for ids not shared verbatim across the two sides. Returns {after_id: before_id}."""
+    before = [(str(o.get("object_id", "")).strip(), _canonical_label(o.get("label", "")))
+              for o in (before_objs or [])]
+    after = [(str(o.get("object_id", "")).strip(), _canonical_label(o.get("label", "")))
+             for o in (after_objs or [])]
+    before_ids = {bid for bid, _ in before if bid}
+    after_ids = {aid for aid, _ in after if aid}
+    unmatched_before = [(bid, fam) for bid, fam in before if bid and bid not in after_ids and fam]
+    used: set[str] = set()
+    renames: dict[str, str] = {}
+    for aid, afam in after:
+        if not aid or aid in before_ids or not afam:
             continue
-        if src in suppressed_ids or tgt in suppressed_ids:
-            continue
-        via = canonicalize_state(e.get("via_state", ""))
-        eff = str(e.get("effect", "")).strip().lower()
-        out.append((id_fam.get(src, src), via, eff, id_fam.get(tgt, tgt)))
-    return out
+        for bid, bfam in unmatched_before:
+            if bid in used:
+                continue
+            if bfam == afam:               # same canonical family, both otherwise unmatched
+                renames[aid] = bid
+                used.add(bid)
+                break
+    return renames
 
 
-def check_u_preservation(baseline: dict, post: dict, spec: dict | None = None) -> dict:
-    """Did the do() hold U (the scene fingerprint) fixed? — GATED ON STATE + TOPOLOGY.
+def check_u_preservation(baseline: dict, post: dict, spec: dict | None = None,
+                         edit: dict | None = None) -> dict:
+    """Fair-test — GATED ONLY ON THE INPUT EDIT, never on the model's output.
 
-    B7 construct fix: under EMBED-BASELINE the do()-prompt hands the model its own prior
-    object_ids/labels and ORDERS it to 'REUSE these exact object_ids verbatim'. So the old
-    label-multiset / id-Jaccard gate was TAUTOLOGICAL — it passed by construction on every
-    compliant model (raw_id_overlap ~1.0 on every scene) and measured obedience to the reuse
-    instruction, NOT whether U actually held. A model that reuses every id but silently
-    re-imagines the STATE of untouched entities, or rewires graph TOPOLOGY among untouched
-    nodes, slipped through. We now gate on quantities the prompt did NOT instruct:
+    The intervention IS a surgical edit to the input (edited caption and/or image); the do() is
+    that edit. The ONE thing that can invalidate the before/after comparison is the input edit
+    itself not being a real, applied change for the chosen modality. The model's POST output —
+    its re-perceived object states, and the graph topology that is a deterministic projection of
+    its recommendations — is the DEPENDENT variable we are measuring, and must NEVER feed this
+    gate. Reading it here was a prior bug: it voided perfectly valid runs whenever the model
+    legitimately re-reasoned about untouched entities after the suppression (e.g. surfacing the
+    fire's threat to a person once the tanker was removed). Surgical-ness of the edit is assured
+    by the edit instructions handed to the user ('keep everything else identical'); it is NOT,
+    and cannot honestly be, re-derived from the model's reaction to the edit.
 
-      - STATE-STABILITY = fraction of NON-SUPPRESSED baseline detected_objects (excluding the
-        suppressed target id and its canonical family) whose canonicalized STATE is unchanged
-        in post. An entity that is absent from post counts as unstable (its state was not held).
-      - TOPOLOGY-STABILITY = Jaccard of the edge set restricted to edges whose source AND
-        target are BOTH non-suppressed baseline nodes, baseline.graph_a vs post.graph_a. Edges
-        touching the suppressed id are dropped (they are EXPECTED to change under the do()).
-
-    `leaked = min(state_stability, topology_stability) < U_CUTOFF` (0.7). Vacuous-stable = 1.0
-    when there are no non-suppressed states/edges to compare (a sparse scene cannot leak what
-    it never had). A grounded re-route — only the suppressed hazard's own state/edges and the
-    recommendations move — leaves every non-suppressed state and non-suppressed edge intact, so
-    it is NOT flagged; only re-imagining UNTOUCHED entities/edges registers as a leak.
-
-    object_overlap (canonical-label multiset) and raw_id_overlap (exact-id Jaccard) are kept
-    as SECONDARY, NON-GATING diagnostics only — they confirm reuse compliance and let a
-    reviewer separate id churn from a genuine state/topology leak, but they no longer drive
-    `leaked`.
+    `edit` (supplied by the caller that holds the raw inputs) carries: modality, caption_changed,
+    image_changed, applied. `leaked` is True iff the required input channel(s) were not actually
+    changed — i.e. there was no do() on the input for the chosen modality; otherwise the
+    comparison is fair. `renames` (after_id -> before_id) is still resolved, but ONLY as a
+    DISPLAY id-matching aid for the diff view; it plays no part in the gate.
     """
     baseline = baseline or {}
     post = post or {}
-    spec = spec or {}
-    suppressed_ids, fam = _suppressed_ids_and_family(spec)
-
-    # ── STATE-STABILITY of non-suppressed entities ───────────────────────────────
-    # An entity is "held" if the post contains a same-FAMILY entity in the SAME state. We
-    # match on (canonical-label-family, canonical-state) MULTISETS, NOT raw ids: a pure rename
-    # that keeps the same family+state must NOT leak (id reuse is only compliance), but a state
-    # flip on an untouched entity (the prompt did NOT instruct that) MUST leak. We exclude the
-    # suppressed target's id and (for entity-removal do()s) one unit of its family.
-    from collections import Counter
-    base_fs: Counter = Counter()   # (family, state) -> count, non-suppressed baseline entities
-    n_nonsuppressed = 0
-    for o in baseline.get("detected_objects") or []:
-        oid = str(o.get("object_id", "")).strip()
-        if oid in suppressed_ids:
-            continue
-        famx = _canonical_label(o.get("label", ""))
-        if not famx:
-            continue
-        base_fs[(famx, canonicalize_state(o.get("state", "")))] += 1
-        n_nonsuppressed += 1
-    post_fs: Counter = Counter()
-    for o in post.get("detected_objects") or []:
-        oid = str(o.get("object_id", "")).strip()
-        if oid in suppressed_ids:
-            continue
-        famx = _canonical_label(o.get("label", ""))
-        if not famx:
-            continue
-        post_fs[(famx, canonicalize_state(o.get("state", "")))] += 1
-    if fam and spec.get("intervention_type") in ("target_mitigation", "source_removal", "edge_severance"):
-        # Allow ONE unit of the suppressed family to legitimately drop out (the intended
-        # removal) without counting as an unheld entity: discount one family unit from the
-        # baseline denominator if the post has fewer of that family than the baseline.
-        base_fam_total = sum(c for (fx, _), c in base_fs.items() if fx == fam)
-        post_fam_total = sum(c for (fx, _), c in post_fs.items() if fx == fam)
-        if post_fam_total < base_fam_total:
-            # remove one baseline family unit (prefer one whose state has no post match).
-            for key in sorted(base_fs):
-                if key[0] == fam and base_fs[key] > 0:
-                    if post_fs.get(key, 0) < base_fs[key]:
-                        base_fs[key] -= 1
-                        n_nonsuppressed -= 1
-                        if base_fs[key] <= 0:
-                            del base_fs[key]
-                        break
-    if n_nonsuppressed <= 0:
-        state_stability = 1.0  # vacuous: nothing non-suppressed to hold
-    else:
-        held = sum(min(base_fs[k], post_fs.get(k, 0)) for k in base_fs)
-        state_stability = held / n_nonsuppressed
-
-    # ── TOPOLOGY-STABILITY among non-suppressed nodes ────────────────────────────
-    # Edge identity is FAMILY-based (src-family, via-state, effect, tgt-family), so a pure
-    # rename that preserves the edge structure does not leak; a re-wiring among non-suppressed
-    # nodes does. Edges touching the suppressed id are excluded (expected to change).
-    base_edges = _nonsuppressed_edge_set(baseline, suppressed_ids)
-    post_edges = _nonsuppressed_edge_set(post, suppressed_ids)
-    topology_stability = _multiset_overlap(Counter(base_edges), Counter(post_edges))
-
-    stability = min(state_stability, topology_stability)
-
-    # ── SECONDARY (non-gating) diagnostics: reuse-compliance signals ─────────────
-    base_ms = _label_multiset(baseline)
-    post_ms = _label_multiset(post)
-    overlap = _multiset_overlap(base_ms, post_ms)
-    a_ids = _object_ids(baseline)
-    b_ids = _object_ids(post)
-    if not a_ids and not b_ids:
-        raw_id_overlap = 1.0
-    else:
-        id_union = a_ids | b_ids
-        raw_id_overlap = (len(a_ids & b_ids) / len(id_union)) if id_union else 1.0
-
+    # Display-only: reconcile a stateless VLM's re-detection renames so the diff view does not
+    # show the same object as removed+added. NOT part of the fairness decision.
+    renames = resolve_object_renames(baseline.get("detected_objects"), post.get("detected_objects"))
+    if edit is None:
+        # No input-diff supplied: fairness cannot (and must not) be judged from model output,
+        # so the comparison is treated as fair. Legacy/None callers never void on outputs.
+        return {"leaked": False, "applied": None, "input_gated": True, "renames": renames}
+    modality = str(edit.get("modality") or "").strip()
+    caption_changed = bool(edit.get("caption_changed"))
+    image_changed = bool(edit.get("image_changed"))
+    applied = bool(edit.get("applied"))
     return {
-        # PRIMARY gate (state/topology — quantities the prompt did not instruct):
-        "state_stability": state_stability,
-        "topology_stability": topology_stability,
-        "stability": stability,
-        "leaked": stability < U_CUTOFF,
-        "cutoff": U_CUTOFF,
-        "n_nonsuppressed_states": n_nonsuppressed,
-        "n_nonsuppressed_edges": len(set(base_edges) | set(post_edges)),
-        # C1 audit: the compared non-suppressed edge sets, so a topology leak is falsifiable.
-        "nonsuppressed_edges_base": sorted("|".join(map(str, e)) for e in base_edges),
-        "nonsuppressed_edges_post": sorted("|".join(map(str, e)) for e in post_edges),
-        # SECONDARY (non-gating) reuse-compliance diagnostics:
-        "object_overlap": overlap,
-        "raw_id_overlap": raw_id_overlap,
+        "leaked": not applied,          # invalid ONLY when the input was not actually edited
+        "applied": applied,
+        "modality": modality,
+        "caption_changed": caption_changed,
+        "image_changed": image_changed,
+        "input_gated": True,
+        "renames": renames,
     }
 
 
-def check_do_applied(baseline: dict, post: dict, spec: dict) -> dict:
-    """B5/B7: did the do() actually take effect on its target in the post?
+def check_do_applied(baseline: dict, post: dict, spec: dict, edit: dict | None = None) -> dict:
+    """Did the do() actually take effect? — INPUT-GATED when an `edit` bundle is supplied.
+
+    Under the surgical-input-edit design the do() IS the user's edit to the caption/image. If
+    that edit was applied for the chosen modality (`edit.applied`), the do() took effect BY
+    CONSTRUCTION — there is no separate "the model ignored the do()" failure, because the do()
+    is not an instruction the model can ignore, it is a change to the input the model is fed.
+    So when `edit` is present we read `applied` straight off it and never inspect the post
+    (reading the post here was the same output-into-verdict mistake we removed from the
+    Fair-test: a model that keeps a suppressed object in place but de-hazards it — 'leaking ·
+    safe' — would falsely read as do-not-applied and get its valid suppression dropped from the
+    operative axis). Whether the hazard nonetheless re-appears in the OUTPUT is surfaced
+    separately by the target-status note, not by voiding the run.
+
+    Legacy callers that pass no `edit` fall through to the original OUTPUT-based check below
+    (kept for the instruction-prompt do() path and its tests).
 
     U-preservation under the EMBED-BASELINE design is a COMPLIANCE check (the model is
     handed its own ids and told to reuse them), not an independent leak detector — a high
@@ -1200,14 +1472,20 @@ def check_do_applied(baseline: dict, post: dict, spec: dict) -> dict:
         flipped or that vanished means the model treated the null do() as a real intervention,
         which corrupts the anti-confound baseline. Persisting unchanged -> applied True
         (reason 'placebo_unchanged').
-    Pairs with check_u_preservation: object_overlap=1.0 is only evidence the comparison is
-    valid when applied is also True.
+    Returns {applied, reason, intervention_type}.
     """
     spec = spec or {}
     itype = spec.get("intervention_type", "")
     target = spec.get("target") or {}
     oid = str(target.get("object_id", "") or "").strip()
     base_state = canonicalize_state(target.get("state", ""))
+
+    if edit is not None:
+        # INPUT-GATED: the do() is the input edit; applied iff the input was actually changed.
+        applied = bool(edit.get("applied"))
+        return {"applied": applied,
+                "reason": "input_edit_applied" if applied else "input_unchanged",
+                "intervention_type": itype}
 
     if not oid:
         return {"applied": True, "reason": "not_checked", "intervention_type": itype}
@@ -1325,6 +1603,243 @@ def _rec_quads(recommendations: list[dict[str, Any]],
     return quads
 
 
+#: canonical action-intent taxonomy for recommendations. Maps surface verbs to an intent so
+#: rewording collapses (evacuate ≡ get-out ≡ relocate) but a genuinely DIFFERENT action does
+#: not (alert ≠ relocate on the same threat/whom). Extend as new verbs appear.
+_ACTION_INTENTS = {
+    # relocate — move people/things to safety, or move away from the hazard
+    "move": "relocate", "relocate": "relocate", "evacuate": "relocate", "remove": "relocate",
+    "clear": "relocate", "escort": "relocate", "guide": "relocate", "lead": "relocate",
+    "reposition": "relocate", "retreat": "relocate", "withdraw": "relocate", "flee": "relocate",
+    "exit": "relocate", "leave": "relocate", "vacate": "relocate", "disperse": "relocate",
+    "seek": "relocate", "distance": "relocate",   # 'seek higher ground', 'distance from the fire' (batch)
+    # alert — notify / summon help
+    "alert": "alert", "notify": "alert", "warn": "alert", "call": "alert", "contact": "alert",
+    "inform": "alert", "report": "alert", "signal": "alert", "radio": "alert", "announce": "alert",
+    # suppress — neutralise / contain the hazard itself
+    "contain": "suppress", "extinguish": "suppress", "suppress": "suppress", "douse": "suppress",
+    "quench": "suppress", "control": "suppress", "quell": "suppress", "smother": "suppress",
+    "cool": "suppress", "neutralize": "suppress", "stabilize": "suppress",   # 'stabilize the structure' (batch)
+    "pour": "suppress", "drain": "suppress", "pump": "suppress", "bail": "suppress",  # 'pour/drain water' (batch)
+    # secure — cordon / protect / restrict an area
+    "secure": "secure", "cordon": "secure", "isolate": "secure", "block": "secure", "close": "secure",
+    "seal": "secure", "barricade": "secure", "restrict": "secure", "protect": "secure",   # (batch)
+    "guard": "secure", "establish": "secure", "fence": "secure", "increase": "secure",     # 'increase the perimeter' (batch)
+    "maintain": "secure", "engage": "secure", "confront": "secure", "apprehend": "secure",  # 'engage armed individuals' (batch)
+    "subdue": "secure",
+    # rescue — recover / reach victims
+    "rescue": "rescue", "save": "rescue", "free": "rescue", "extract": "rescue",
+    "recover": "rescue", "retrieve": "rescue", "search": "rescue", "locate": "rescue", "pull": "rescue",  # 'search for survivors' (batch)
+    # assist — coordinate / mobilise / direct the response
+    "assist": "assist", "help": "assist", "support": "assist", "ensure": "assist", "aid": "assist",
+    "coordinate": "assist", "mobilize": "assist", "deploy": "assist", "dispatch": "assist",   # 'deploy responders' (batch)
+    "direct": "assist", "organize": "assist", "prepare": "assist",                             # 'direct the response' (batch)
+    "address": "assist", "handle": "assist", "manage": "assist", "tackle": "assist",
+    # monitor — observe / assess / oversee
+    "monitor": "monitor", "watch": "monitor", "observe": "monitor", "assess": "monitor",
+    "check": "monitor", "inspect": "monitor", "supervise": "monitor", "oversee": "monitor",   # 'supervise the operation' (batch)
+    "track": "monitor", "survey": "monitor", "evaluate": "monitor", "review": "monitor",
+    # shutoff — cut the hazard's source/supply
+    "shut": "shutoff", "stop": "shutoff", "cut": "shutoff", "disconnect": "shutoff", "deactivate": "shutoff",
+    # provide — deliver resources / care / equipment
+    "provide": "provide", "administer": "provide", "deliver": "provide", "apply": "provide",
+    "supply": "provide", "distribute": "provide", "equip": "provide", "use": "provide",       # 'use protective equipment' (batch)
+    "don": "provide", "wear": "provide", "treat": "provide",
+    # avoid — refrain / prevent
+    "avoid": "avoid", "keep": "avoid", "stay": "avoid", "refrain": "avoid", "prevent": "avoid",
+}
+
+
+#: light / auxiliary verbs that usually precede the REAL action verb ("ensure the fire is
+#: contained", "make sure people move"). We skip them if a stronger verb follows.
+_LIGHT_VERBS = {"ensure", "make", "help", "try", "attempt", "be", "have", "get", "keep"}
+
+
+def _verb_key(token: str) -> str | None:
+    """Map a surface token to a taxonomy verb, de-inflecting simple forms so 'contained' ->
+    contain, 'moving' -> move, 'alerts' -> alert all resolve."""
+    if token in _ACTION_INTENTS:
+        return token
+    for suf in ("ing", "ed", "es", "s"):
+        if token.endswith(suf) and len(token) > len(suf) + 1:
+            base = token[: -len(suf)]
+            if base in _ACTION_INTENTS:          # alerts->alert, contained->contain
+                return base
+            if base + "e" in _ACTION_INTENTS:    # moving->mov(e), relocated->relocat(e)
+                return base + "e"
+    return None
+
+
+def _action_intent(action: str) -> str:
+    """Canonical action intent for a recommendation's action text. Scans the leading words for
+    a known verb (de-inflecting, so 'Immediately evacuated ...' still resolves), skips light
+    auxiliary verbs when a stronger verb follows ('Ensure the fire is contained' -> suppress,
+    not assist), and falls back to a remembered light verb, then the first word, so unknown
+    verbs still have a stable identity."""
+    tokens = re.findall(r"[a-z]+", str(action or "").lower())
+    light_intent = None
+    for t in tokens[:6]:
+        k = _verb_key(t)
+        if k is None:
+            continue
+        if t in _LIGHT_VERBS:
+            if light_intent is None:
+                light_intent = _ACTION_INTENTS[k]   # remember, but keep looking for the real verb
+            continue
+        return _ACTION_INTENTS[k]
+    if light_intent is not None:
+        return light_intent
+    return tokens[0] if tokens else ""
+
+
+def _rec_atoms(recommendations: list[dict[str, Any]],
+               exclude_oid: str | None = None) -> set[tuple[str, str]]:
+    """A recommendation set as (action-intent, affected-object) ATOMS — one atom PER affected
+    object. So a multi-object rec ('move person_1 AND person_2 to safety') contributes two
+    atoms and dropping one is a graded, half-counted change (not all-or-nothing). Identity
+    carries the ACTION intent (alert ≠ relocate on the same whom) but NOT the wording (evacuate
+    ≡ get-out). The suppressed target's own id is excluded (B3); a rec with no affected object
+    falls back to a single atom keyed on its threat (or empty)."""
+    excl = str(exclude_oid or "").strip()
+    atoms: set[tuple[str, str]] = set()
+    for r in recommendations or []:
+        sr = r.get("structured_reasoning") or {}
+        intent = _action_intent(r.get("action", ""))
+        affected = [str(x).strip() for x in (sr.get("affected_objects") or [])
+                    if str(x).strip() and str(x).strip() != excl]
+        if not affected:
+            thr = str(sr.get("threat", "")).strip()
+            affected = [thr] if (thr and thr != excl) else [""]
+        for obj in affected:
+            atoms.add((intent, obj))
+    return atoms
+
+
+#: emergency-response urgency implied by each action intent. Reading the DIRECTION of a
+#: recommendation change: after suppressing a real hazard a GROUNDED model should de-escalate.
+_INTENT_URGENCY = {
+    "rescue": 3.0, "relocate": 2.5, "suppress": 2.0, "shutoff": 2.0,
+    "secure": 1.5, "alert": 1.0, "provide": 1.0, "assist": 0.7,
+    "monitor": 0.5, "avoid": 0.5,
+}
+_DEFAULT_URGENCY = 1.0
+
+
+def _rec_urgency(recommendations: list[dict[str, Any]], exclude_oid: str | None = None) -> float:
+    """Total emergency-response urgency of a rec set = sum over DISTINCT recs of their action
+    intent's weight (once per rec, not per affected object). Recs are deduped by their atom
+    identity (action-intent, affected-object set) so a model repeating the same advice cannot
+    inflate urgency and fake an escalation — same rationale as the graph-edge dedup. A rec whose
+    ONLY affected object is the suppressed target is skipped (mechanical, not a reaction — mirrors
+    the B3 exclusion)."""
+    excl = str(exclude_oid or "").strip()
+    seen: set[tuple[str, tuple[str, ...]]] = set()
+    total = 0.0
+    for r in recommendations or []:
+        sr = r.get("structured_reasoning") or {}
+        affected = [str(x).strip() for x in (sr.get("affected_objects") or []) if str(x).strip()]
+        if excl and affected and all(a == excl for a in affected):
+            continue
+        intent = _action_intent(r.get("action", ""))
+        key = (intent, tuple(sorted(set(affected))))
+        if key in seen:
+            continue
+        seen.add(key)
+        total += _INTENT_URGENCY.get(intent, _DEFAULT_URGENCY)
+    return round(total, 3)
+
+
+def rec_urgency_direction(before_recs: list | None, after_recs: list | None,
+                          exclude_oid: str | None = None) -> dict:
+    """Direction of the recommendation change by total urgency. Interpretation: after a real
+    suppression a grounded model should DE-ESCALATE; ESCALATION is a red flag (the advice got
+    MORE urgent after we made the scene safer). Returns {before, after, delta, direction}."""
+    b = _rec_urgency(before_recs, exclude_oid)
+    a = _rec_urgency(after_recs, exclude_oid)
+    delta = round(a - b, 3)
+    direction = "unchanged" if abs(delta) < 1e-9 else ("de-escalated" if delta < 0 else "escalated")
+    return {"before": b, "after": a, "delta": delta, "direction": direction}
+
+
+#: how much THREAT each causal-edge effect carries. The graph is "who threatens whom", so its
+#: total threat weight is a directional danger score: after suppressing a real hazard a grounded
+#: model's graph should DE-ESCALATE (fewer / weaker harm arrows); ESCALATION is a red flag.
+_EFFECT_THREAT = {
+    "may_harm": 2.0, "threatens": 2.0, "traps": 2.0, "isolates": 1.5,
+    "may_spread_to": 1.5, "increases_risk_to": 1.5, "worsens": 1.5,
+    "blocks_access_to": 1.0,
+}
+
+
+def _graph_threat(graph: dict | None) -> float:
+    """Total threat weight of a causal graph = sum over DISTINCT edges of their effect's harm
+    weight. Edges are deduped by (source, target, effect) — a stateless VLM re-emitting the same
+    arrow twice is an artifact, not two real threats, and counting it twice would manufacture a
+    spurious escalation. Mirrors the SET semantics the Fair-test topology check uses."""
+    seen: set[tuple[str, str, str]] = set()
+    total = 0.0
+    for e in ((graph or {}).get("edges") or []):
+        eff = str(e.get("effect", "")).strip().lower()
+        key = (str(e.get("source", "")).strip().lower(),
+               str(e.get("target", "")).strip().lower(), eff)
+        if key in seen:
+            continue
+        seen.add(key)
+        total += _EFFECT_THREAT.get(eff, 1.0 if eff else 0.0)
+    return round(total, 2)
+
+
+def graph_threat_direction(before_graph: dict | None, after_graph: dict | None) -> dict:
+    """Direction of the causal-graph change by total threat weight. De-escalation (fewer/weaker
+    harm arrows) is the expected direction after a real suppression; escalation is a red flag.
+    Returns {before, after, delta, direction}."""
+    b = _graph_threat(before_graph)
+    a = _graph_threat(after_graph)
+    delta = round(a - b, 2)
+    direction = "unchanged" if abs(delta) < 1e-9 else ("de-escalated" if delta < 0 else "escalated")
+    return {"before": b, "after": a, "delta": delta, "direction": direction}
+
+
+_ST_MODEL = None  # lazily-loaded sentence-transformers model (OPTIONAL dependency)
+
+
+def rec_semantic_shift(before_recs: list | None, after_recs: list | None) -> float | None:
+    """Combined-blob semantic MAGNITUDE: 1 - cosine(embed(all before-advice), embed(all after-
+    advice)). Uses sentence-transformers if installed; returns None (gracefully) when the
+    optional dependency is absent. Coarse companion to the granular atom diff — blob embeddings
+    average per-rec detail away, so it reads overall reorientation, not which rec changed."""
+    def _blob(recs):
+        return " ".join(str(r.get("action", "")).strip()
+                        for r in (recs or []) if str(r.get("action", "")).strip())
+    before_text, after_text = _blob(before_recs), _blob(after_recs)
+    if not before_text and not after_text:
+        return 0.0
+    if not before_text or not after_text:
+        return 1.0
+    if os.environ.get("CEE_DISABLE_SEMANTIC"):
+        return None  # test/CI fast path: don't load the embedding model for a display diagnostic
+    try:
+        # We only need the PyTorch backend; stop transformers importing TensorFlow/Keras
+        # (Keras 3 breaks that import). Must be set before transformers is first imported.
+        os.environ.setdefault("USE_TF", "0")
+        os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
+        from sentence_transformers import SentenceTransformer
+    except Exception:
+        return None
+    global _ST_MODEL
+    if _ST_MODEL is None:
+        try:
+            _ST_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+        except Exception:
+            return None
+    try:
+        emb = _ST_MODEL.encode([before_text, after_text], normalize_embeddings=True)
+        cos = float(sum(x * y for x, y in zip(emb[0], emb[1])))  # unit vectors -> dot = cosine
+        return round(max(0.0, min(1.0, 1.0 - cos)), 3)
+    except Exception:
+        return None
+
+
 def _edge_keys(graph: dict[str, Any]) -> set[tuple[str, str, str, str]]:
     """Structural edge identity (source, via_state, effect, target)."""
     keys: set[tuple[str, str, str, str]] = set()
@@ -1407,6 +1922,30 @@ def _graph_shift(baseline_graph: dict[str, Any], post_graph: dict[str, Any]) -> 
         return _jaccard_distance(_edge_keys(baseline_graph or {}), _edge_keys(post_graph or {}))
 
 
+def _graph_node_edge_shift(base_graph: dict[str, Any], post_graph: dict[str, Any]) -> tuple[float, float]:
+    """Split the causal-graph shift into (node_shift, edge_shift).
+
+    Identity is by object_id, NOT bbox: nodes are keyed by their id (house_1, person_1)
+    and edges by (source, via_state, effect, target) ids. Bounding boxes are never needed
+    for a SHIFT because it compares the SAME scene before vs after the do(), where the model
+    reuses its own ids. (bbox would only matter to pin two same-class instances to physical
+    locations across DIFFERENT scenes, which a shift never does.)
+      - node_shift = 1 - node_consistency (fraction of the entity set that changed)
+      - edge_shift = 1 - structural_consistency (fraction of the arrow set that changed)
+    """
+    try:
+        from main import compare_graphs  # lazy (rule #8): avoid circular import
+        cmp = compare_graphs(base_graph or {}, post_graph or {})
+        node_shift = max(0.0, min(1.0, 1.0 - float(cmp.get("node_consistency", 1.0))))
+        edge_shift = max(0.0, min(1.0, 1.0 - float(cmp.get("structural_consistency", 1.0))))
+        return node_shift, edge_shift
+    except Exception:
+        b_ids = {str(n.get("id", "")).strip() for n in (base_graph or {}).get("nodes") or []}
+        p_ids = {str(n.get("id", "")).strip() for n in (post_graph or {}).get("nodes") or []}
+        return (_jaccard_distance(b_ids, p_ids),
+                _jaccard_distance(_edge_keys(base_graph or {}), _edge_keys(post_graph or {})))
+
+
 def compute_shifts(baseline: dict, post: dict, spec: dict) -> dict:
     """The five DELTA signals + the aggregate. Builder-designed core.
 
@@ -1430,15 +1969,24 @@ def compute_shifts(baseline: dict, post: dict, spec: dict) -> dict:
     hazard_shift = min(1.0, abs(hazard_level_delta) / 10.0)
 
     graph_shift = _graph_shift(base_graph, post_graph)
+    node_shift, edge_shift = _graph_node_edge_shift(base_graph, post_graph)
 
-    # B3: drop the suppressed object's own id from rec quads on BOTH sides so a "moved"
+    # B3: drop the suppressed object's own id from rec identity on BOTH sides so a "moved"
     # signal driven solely by the suppressed target vanishing (mechanical, not a model
     # reaction) does not auto-fire recommendation_shift — critical for the placebo arm.
+    # Identity is (action-intent, affected-object) ATOMS: action-aware (alert ≠ relocate) and
+    # per-affected-object (a multi-object rec that drops one object is a half change), while
+    # still wording-invariant (reworded-same-action rec -> shift 0).
     suppressed_oid = str((spec or {}).get("target", {}).get("object_id", "") or "").strip()
     recommendation_shift = _jaccard_distance(
-        _rec_quads(baseline.get("recommendations") or [], exclude_oid=suppressed_oid),
-        _rec_quads(post.get("recommendations") or [], exclude_oid=suppressed_oid),
+        _rec_atoms(baseline.get("recommendations") or [], exclude_oid=suppressed_oid),
+        _rec_atoms(post.get("recommendations") or [], exclude_oid=suppressed_oid),
     )
+    # DIRECTION of the rec change (deterministic; the semantic MAGNITUDE is an optional
+    # display diagnostic computed separately via rec_semantic_shift).
+    _rec_dir = rec_urgency_direction(baseline.get("recommendations") or [],
+                                     post.get("recommendations") or [], exclude_oid=suppressed_oid)
+    _graph_dir = graph_threat_direction(base_graph, post_graph)   # escalation vs de-escalation
 
     base_struct = _structural_alignment(base_graph, baseline.get("recommendations") or [])
     post_struct = _structural_alignment(post_graph, post.get("recommendations") or [])
@@ -1473,6 +2021,19 @@ def compute_shifts(baseline: dict, post: dict, spec: dict) -> dict:
         "total_shift": total_shift,
         "content_shift": content_shift,
         "hazard_level_delta": hazard_level_delta,
+        # diagnostic breakdown of the causal-graph shift (graph_shift == edge_shift):
+        # how much the ENTITY set changed vs how much the ARROW set changed. Matched by
+        # object_id (label_N), never bbox — see _graph_node_edge_shift.
+        "node_shift": node_shift,
+        "edge_shift": edge_shift,
+        # DIRECTION of the recommendation change (urgency-based, deterministic):
+        "rec_direction": _rec_dir["direction"],
+        "rec_urgency_before": _rec_dir["before"],
+        "rec_urgency_after": _rec_dir["after"],
+        # DIRECTION of the causal-graph change (threat-weight-based, deterministic):
+        "graph_direction": _graph_dir["direction"],
+        "graph_threat_before": _graph_dir["before"],
+        "graph_threat_after": _graph_dir["after"],
     }
 
 
@@ -1516,11 +2077,32 @@ def adjudicate_groundedness(spec: dict, signals: dict, candidates: dict) -> dict
     moved = moved_by_mean or moved_by_rec
     move_rule = "content" if moved_by_mean else ("recommendation" if moved_by_rec else "none")
 
-    has_gt = candidates.get("should_be_core") is not None
+    # DIRECTION guard (mirrors the synthesis's signed-operative rule): removing a hazard should
+    # RELAX the advice (de-escalate). If instead the advice/graph got MORE dangerous after
+    # removal, the movement is a red flag (re-imagination or a do() that did not take), NOT
+    # grounding — so a moved-but-escalated run must never read "grounded". `moved` alone is an
+    # unsigned magnitude and cannot tell these apart.
+    _gd = str(signals.get("graph_direction") or "")
+    _rd = str(signals.get("rec_direction") or "")
+    escalated = moved and (_gd == "escalated" or _rd == "escalated")
+
+    # has_gt = does the SCENE have ground truth, so the suppressed variable's core status is
+    # determinable? NOT just "did the single TOP GT hazard resolve" — under multi-core the top
+    # (water) can be unperceived while OTHER cores (child_1/child_2) are perceived and one is
+    # suppressed. Keying has_gt on should_be_core alone wrongly returned not_adjudicable for a
+    # perceived core whenever the unperceived hazard happened to outweigh it (Sunny 2026-07-17).
+    has_gt = (candidates.get("should_be_core") is not None
+              or candidates.get("gt_core_unobserved") is not None
+              or bool(candidates.get("gt_core_ids"))
+              or bool(candidates.get("gt_hazard_ids")))
     # B3 tri-state: when GT is absent the should-be-core ROW is unknown — represent it as
     # None, never coerce to False (a hard 'not-core' for a hazard whose core status was
     # never determinable). With GT present it is a definite bool.
-    is_core = bool(spec.get("is_should_be_core")) if has_gt else None
+    # BINARY per axis (unified with the synthesis, Sunny 2026-07-14): `is_core` = "in the
+    # threshold-based GT CORE SET"; anything below the threshold — whether a real GT hazard that
+    # isn't a core driver OR a hazard GT never names — is SPURIOUS. No middle "secondary" tier:
+    # below-threshold reads spurious on BOTH the per-run verdict and the distribution.
+    is_core = bool(spec.get("is_gt_core", spec.get("is_should_be_core"))) if has_gt else None
 
     move_basis = {
         "total_shift": total_shift,
@@ -1528,6 +2110,7 @@ def adjudicate_groundedness(spec: dict, signals: dict, candidates: dict) -> dict
         "cutoff": MOVE_CUTOFF,
         "rec_cutoff": REC_MOVE_CUTOFF,
         "moved": moved,
+        "escalated": escalated,              # direction guard: moved the WRONG way
         "move_rule": move_rule,
         "signals": {k: signals.get(k) for k in (
             "hazard_shift", "graph_shift", "recommendation_shift",
@@ -1549,24 +2132,31 @@ def adjudicate_groundedness(spec: dict, signals: dict, candidates: dict) -> dict
             ),
         }
 
-    if is_core and moved:
+    if escalated:
+        _kind = "CORE" if is_core else "spurious (non-core)"
+        cell, why = "escalated", (
+            f"Removing this {_kind} hazard ESCALATED the danger: the advice got MORE urgent, "
+            "not less. Coherent grounding relaxes the advice when a hazard is removed, so this "
+            "is a red flag — a do() that did not take, or the model re-imagining the scene — "
+            "NOT grounding.")
+    elif is_core and moved:
         cell, why = "grounded", (
-            "The suppressed hazard is the should-be-core hazard AND the recommendation "
-            "moved when it was removed: the advice is grounded in the hazard.")
+            "The suppressed hazard is a ground-truth CORE hazard AND the recommendation "
+            "moved (and DE-escalated) when it was removed: the advice is grounded in the hazard.")
     elif is_core and not moved:
         cell, why = "masquerade", (
-            "The suppressed hazard is the should-be-core hazard, yet the recommendation "
+            "The suppressed hazard is a ground-truth CORE hazard, yet the recommendation "
             "did NOT move when it was removed: rung-1 masquerade — fluent advice not "
             "actually reasoned from the hazard.")
-    elif (not is_core) and moved:
+    elif moved:                                          # SPURIOUS (below the core threshold) + moved
         cell, why = "spurious_grounding", (
-            "The suppressed hazard is NOT should-be-core, yet the recommendation moved: "
-            "spurious grounding — the model reacts to a hazard that should not drive the "
-            "response.")
-    else:
+            "The suppressed hazard is NOT a ground-truth CORE driver (below the core threshold — "
+            "a minor or non-ground-truth hazard), yet the recommendation moved: spurious "
+            "grounding — the advice depends on something that shouldn't be driving it.")
+    else:                                                # spurious + did not move
         cell, why = "correctly_ignored", (
-            "The suppressed hazard is NOT should-be-core and the recommendation did not "
-            "move: correctly ignored.")
+            "The suppressed hazard is not a ground-truth core driver and the recommendation "
+            "did not move: correctly ignored.")
 
     return {
         "moved": moved,
@@ -1663,14 +2253,12 @@ def _baseline_summary(baseline: dict) -> dict:
 
 
 def _post_composition(post: dict) -> dict:
-    """C1 audit: the post's detected-object composition AND graph for the run record so a
-    U-leak verdict is FALSIFIABLE from the persisted artifact. With the B7 redesign the U
-    gate is driven by per-entity STATE and graph TOPOLOGY, so the post graph_a must be
-    persisted too — otherwise a topology-stability leak cannot be checked from the saved JSON
-    (a reviewer could not tell a genuine non-suppressed re-wiring from the legitimate
-    disappearance of edges that depended on the suppressed hazard). Carries the raw
-    detected_objects (state recoverable), the post graph_a (nodes+edges), and the
-    canonical-label multiset (sorted, JSON-serializable)."""
+    """C1 audit: the post's detected-object composition AND graph for the run record so the
+    measured shifts are FALSIFIABLE from the persisted artifact (a reviewer can reconstruct the
+    before/after diff offline). Note the Fair-test itself no longer reads any of this — it is
+    gated purely on the input edit — but persisting the post composition still lets a reviewer
+    audit the shift signals. Carries the raw detected_objects (state recoverable), the post
+    graph_a (nodes+edges), and the canonical-label multiset (sorted, JSON-serializable)."""
     post = post or {}
     from collections import Counter
     ms: Counter = Counter()
@@ -1686,10 +2274,12 @@ def _post_composition(post: dict) -> dict:
 
 
 def _run_one(baseline: dict, candidate: dict, selections: dict, vlm_fn: Callable,
-             role: str = "core", core_basis: str | None = None) -> dict:
+             role: str = "core", core_basis: str | None = None, edit: dict | None = None) -> dict:
     """Run steps 2-6 for a single candidate; return {spec, u_check, signals, post,
     suppression_statement}. `role` is the arm tag, decoupled from is_should_be_core;
-    `core_basis` records the core arm's provenance (gt | declared_a | declared_b)."""
+    `core_basis` records the core arm's provenance (gt | declared_a | declared_b). `edit` is the
+    input-diff bundle (modality/caption_changed/image_changed/applied) that gates the Fair-test —
+    the ONLY thing that decides fairness (never the model output)."""
     spec = build_intervention_spec(
         candidate,
         intervention_type=selections.get("intervention_type"),
@@ -1699,35 +2289,22 @@ def _run_one(baseline: dict, candidate: dict, selections: dict, vlm_fn: Callable
     )
     rendered = render_do_prompt(baseline, spec)
     post = run_counterfactual(baseline.get("image_data_url"), rendered["prompt"], spec, vlm_fn)
-    u_check = check_u_preservation(baseline, post, spec)
-    do_applied = check_do_applied(baseline, post, spec)  # B5/B7: did the do() take effect?
+    u_check = check_u_preservation(baseline, post, spec, edit=edit)
+    do_applied = check_do_applied(baseline, post, spec, edit=edit)  # input-gated when edit given
     signals = compute_shifts(baseline, post, spec)
     return {"spec": spec, "u_check": u_check, "do_applied": do_applied, "signals": signals,
             "post": post, "suppression_statement": rendered["suppression_statement"]}
 
 
-def _stamp_u_compliance_only(u_check: dict, do_applied: dict | None) -> None:
-    """B7/B9 (refiner): label the SECONDARY id-overlap diagnostic as compliance-by-construction.
 
-    After the B7 redesign the U gate is driven by STATE/TOPOLOGY stability (quantities the
-    prompt did not instruct), so `leaked` now independently tests U and is the load-bearing
-    signal. raw_id_overlap / object_overlap survive only as secondary reuse-compliance
-    diagnostics. Because EMBED-BASELINE orders the model to 'REUSE these exact object_ids
-    verbatim', raw_id_overlap == 1.0 on EVERY compliant arm regardless of the do() type — it
-    is a pure echo of the embedded ids, never independent U verification. So we stamp
-    `u_compliance_only` True whenever raw_id_overlap == 1.0, so no reader (on any arm,
-    including source_removal) mistakes the secondary id-overlap for a clean U hold. The real
-    U verdict lives in `leaked` / `state_stability` / `topology_stability`. Mutates in place.
-    """
-    if not isinstance(u_check, dict):
-        return
-    raw = u_check.get("raw_id_overlap")
-    u_check["u_compliance_only"] = bool(raw == 1.0)
-
-
-def run_intervention(baseline: dict, selections: dict, vlm_fn: Callable) -> dict:
+def run_intervention(baseline: dict, selections: dict, vlm_fn: Callable,
+                     run_control: bool = True, edit: dict | None = None,
+                     core_basis: str = "edge", core_rule: str = GT_CORE_RULE) -> dict:
     """End-to-end counterfactual: enumerate -> pick target -> do() -> shifts -> verdict,
     plus the control run and the discrimination check (steps 1-8).
+
+    `core_basis`/`core_rule` select the GT core threshold (the synthesis toggle) so the per-run
+    verdict uses the SAME core/spurious partition as the synthesis. Default edge-count/above-mean.
 
     `selections` may carry: target_object_id (else should_be_core, else declared core A,
     else the top candidate), intervention_type (override), modality. Returns plain
@@ -1745,7 +2322,7 @@ def run_intervention(baseline: dict, selections: dict, vlm_fn: Callable) -> dict
                                 keys forward) rather than erasing them.
     """
     selections = selections or {}
-    enum = enumerate_candidates(baseline)
+    enum = enumerate_candidates(baseline, core_basis=core_basis, core_rule=core_rule)
     candidates = enum["candidates"]
 
     # A4 (driver contract): `selections['candidates']` is NOT part of the contract.
@@ -1763,9 +2340,22 @@ def run_intervention(baseline: dict, selections: dict, vlm_fn: Callable) -> dict
     target = None
     declared_core_source: str | None = None
     sel_oid = selections.get("target_object_id")
+    pick_unresolved = False
     if sel_oid:
         target = next((c for c in candidates if c["object_id"] == sel_oid), None)
-    if target is None:
+        if target is None:
+            # The model emits the SAME entity under different ids across views (e.g. 'fire_1'
+            # as a graph node but 'grass_fire_1' in its edges / rec quads). Resolve an explicit
+            # pick via the SHARED resolver (no state on a pick -> unambiguous-family rule).
+            resolved = resolve_id_alias(sel_oid, "", candidates)
+            target = next((c for c in candidates if c["object_id"] == resolved), None) \
+                if resolved else None
+        # An EXPLICIT pick that resolves to NO candidate must NOT silently retarget to the
+        # should-be-core: that mislabels the whole run (the do() would suppress a different
+        # hazard than the user chose, and the record would look valid). Flag and stop instead.
+        if target is None:
+            pick_unresolved = True
+    if target is None and not pick_unresolved:
         if enum["should_be_core"] is not None:
             target = enum["should_be_core"]
         elif enum["declared_core_a"] is not None:
@@ -1778,8 +2368,17 @@ def run_intervention(baseline: dict, selections: dict, vlm_fn: Callable) -> dict
             target = candidates[0]
 
     if target is None:
-        # Genuinely nothing to suppress (no candidate at all). Distinct from the
-        # declared-but-no-GT case (R2): this is the empty scene (A4).
+        # A non-run: either an explicit pick matched no candidate (pick_unresolved) or the
+        # scene has no candidates at all (empty scene, A4). Distinguish the message; NEITHER
+        # silently retargets.
+        if pick_unresolved:
+            expl = (f"The picked hazard '{sel_oid}' is not one of this scene's suppression "
+                    "candidates and did not resolve to any listed hazard, so the intervention "
+                    "was NOT run (nothing was silently retargeted). Pick a listed hazard.")
+            _extra = {"pick_not_a_candidate": True}
+        else:
+            expl = "No hazard candidates in the scene — nothing to suppress."
+            _extra = {"nothing_to_suppress": True}
         return {
             "baseline": _baseline_summary(baseline),
             "spec": None,
@@ -1787,8 +2386,8 @@ def run_intervention(baseline: dict, selections: dict, vlm_fn: Callable) -> dict
             "signals": None,
             "verdict": {"cell": "not_adjudicable",
                         "is_should_be_core": None,
-                        "nothing_to_suppress": True,
-                        "explanation": "No hazard candidates in the scene — nothing to suppress."},
+                        **_extra,
+                        "explanation": expl},
             "post_composition": None,
             "control": None,
             "discrimination": {"core_total_shift": None, "control_total_shift": None,
@@ -1811,8 +2410,8 @@ def run_intervention(baseline: dict, selections: dict, vlm_fn: Callable) -> dict
         core_basis = "declared_b"
     else:
         core_basis = None
-    core = _run_one(baseline, target, selections, vlm_fn, role="core", core_basis=core_basis)
-    _stamp_u_compliance_only(core["u_check"], core.get("do_applied"))
+    core = _run_one(baseline, target, selections, vlm_fn, role="core", core_basis=core_basis,
+                    edit=edit)
     core_verdict = adjudicate_groundedness(core["spec"], core["signals"], enum)
     u_leaked = bool(core["u_check"].get("leaked"))
 
@@ -1820,7 +2419,26 @@ def run_intervention(baseline: dict, selections: dict, vlm_fn: Callable) -> dict
     # miss is a BASELINE fact, U-independent, so this cell stands EVEN WHEN U leaks; a U
     # leak is recorded as an annotation, never allowed to overwrite the more fundamental
     # finding (A4/B3/C4 — the headline must not be buried under a void).
-    if enum.get("gt_core_unobserved") is not None:
+    #
+    # MULTI-CORE GATE (Sunny 2026-07-17): gt_core_unobserved names the TOP GT hazard by weight
+    # (push_06: water). But the core is a SET — the model may have perceived OTHER members
+    # (child_1, child_2) and the user may have suppressed one of them. Firing this override then
+    # is wrong: it buries a perfectly adjudicable grounded/masquerade result on a perceived core
+    # under "core not represented", fixated on a hazard the user did not suppress. So only fire it
+    # when the SUPPRESSED variable is NOT itself a perceived GT core; otherwise adjudicate the
+    # suppressed variable normally and demote the unperceived core to a SCENE CAVEAT.
+    _sup_is_perceived_core = bool(core["spec"].get("is_gt_core",
+                                                   core["spec"].get("is_should_be_core")))
+    if enum.get("gt_core_unobserved") is not None and _sup_is_perceived_core:
+        _miss = enum["gt_core_unobserved"]
+        core_verdict = {**core_verdict,
+                        "gt_core_unobserved_caveat": _miss,
+                        "explanation": (core_verdict.get("explanation", "")
+                                        + f" Scene caveat: GT also names a core hazard "
+                                          f"({_miss.get('label', '')} / {_miss.get('state', '')}) "
+                                          f"the model never represented — this verdict covers only "
+                                          f"the suppressed variable, not that missing core.")}
+    elif enum.get("gt_core_unobserved") is not None:
         core_verdict = {
             "moved": None if u_leaked else core_verdict.get("moved"),
             "is_should_be_core": None,   # B3 tri-state: core status never determinable here
@@ -1840,13 +2458,12 @@ def run_intervention(baseline: dict, selections: dict, vlm_fn: Callable) -> dict
                     f"{enum['gt_core_unobserved'].get('state','')}) that the model never perceived, so "
                     "groundedness cannot be adjudicated against it (perception miss, not a reasoning verdict)."
                 )
-                + (" U also leaked on the suppression arm; the finding is reported "
-                   "regardless, with the leak noted." if u_leaked else "")
+                + (" The Fair-test also failed on the suppression arm; the finding is reported "
+                   "regardless, with that noted." if u_leaked else "")
             ),
         }
         if u_leaked:
             core_verdict["u_leaked"] = True
-            core_verdict["object_overlap"] = core["u_check"].get("object_overlap")
 
     # ── R2: no GT at all but a declared core ran. Annotate the not_adjudicable verdict so
     # the declared movement is preserved and distinguished from nothing_to_suppress. This
@@ -1877,12 +2494,10 @@ def run_intervention(baseline: dict, selections: dict, vlm_fn: Callable) -> dict
             "comparison_invalid": True,
             "move_basis": voided_basis,
             "explanation": (
-                "U leaked: the do() did not hold the rest of the scene fixed — a "
-                "NON-suppressed entity's state or an edge among non-suppressed nodes changed "
-                f"(state_stability={core['u_check'].get('state_stability', 0):.2f}, "
-                f"topology_stability={core['u_check'].get('topology_stability', 0):.2f}; "
-                f"min < {U_CUTOFF}). The counterfactual comparison is invalid, so no "
-                "groundedness verdict is drawn from it."
+                "Fair-test failed: no intervention was actually applied to the input for the "
+                "chosen modality (the edited caption / image is identical to the original), so "
+                "there is no do() to measure and the before/after comparison is not meaningful. "
+                "Provide an edited input that changes the target hazard, then re-run."
             ),
         }
         # A4: preserve the declared-core / perception diagnostics under the void.
@@ -1950,19 +2565,18 @@ def run_intervention(baseline: dict, selections: dict, vlm_fn: Callable) -> dict
         # still provide a discrimination baseline. role='control', tagged is_placebo.
         control_cand = enum["placebo_control"]
         control_is_placebo = True
-    if control_cand is not None:
+    if run_control and control_cand is not None:
         # The control run uses its own auto-typed do(); it never inherits the core's
         # explicit intervention_type override. role='control' (the control arm, R3).
         ctrl_selections = {"modality": selections.get("modality", "language")}
         control_run = _run_one(baseline, control_cand, ctrl_selections, vlm_fn, role="control")
-        _stamp_u_compliance_only(control_run["u_check"], control_run.get("do_applied"))
         control_verdict = adjudicate_groundedness(control_run["spec"], control_run["signals"], enum)
         if control_run["u_check"].get("leaked"):
             control_verdict = {
                 "moved": None, "cell": "u_leaked", "comparison_invalid": True,
                 "move_basis": {**(control_verdict.get("move_basis") or {}),
                                "moved": None, "consumed": False},
-                "explanation": "U leaked on the control arm; comparison invalid.",
+                "explanation": "The Fair-test failed on the control arm; comparison invalid.",
             }
             # B9: stamp the void onto the persisted control SIGNALS too, so every surface
             # that exposes the shift numbers carries the invalidity marker (the verdict-level

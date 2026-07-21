@@ -33,3 +33,7 @@ venv/
 *.pt
 *.bin
 *.safetensors
+_to_delete/
+sessions/
+scratch_live_rerun.py
+.pytest_cache/

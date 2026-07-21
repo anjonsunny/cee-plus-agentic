@@ -15,10 +15,12 @@ export const meta = {
 
 // mode: "cold" generates from the frozen contract; "warm" refines the existing intervention.py.
 const mode = (args && args.mode) || 'cold'
+const SCENE = (args && args.scene) || 'push_06_drowning_pool'        // live experiment scene
+const DIRECTIVES = (args && args.directives) || ''                    // extra refine directives this round
 const SCRATCH = '/private/tmp/claude-501/-Users-sunny-Documents-CEE-/c97ec532-4800-4911-b105-0989381f984b/scratchpad'
 const DOCS = 'Read INTERVENTION_PLAN.md and INTERVENTION_WORKFLOW.md (plan = intent; workflow = frozen contract + fixed rules + rubric + role prompts).'
 const PYTEST = 'source ~/miniconda3/etc/profile.d/conda.sh && conda activate clip_dash && pytest -c tests/pytest.ini tests/test_intervention.py -q'
-const DRIVER = `source ~/miniconda3/etc/profile.d/conda.sh && conda activate clip_dash && python ${SCRATCH}/run_push06_intervention.py 2>&1 | tail -45`
+const DRIVER = `source ~/miniconda3/etc/profile.d/conda.sh && conda activate clip_dash && SCENE=${SCENE} python ${SCRATCH}/run_scene_intervention.py 2>&1 | tail -45`
 
 const FINDINGS_SCHEMA = {
   type: 'object',
@@ -33,8 +35,8 @@ const critique = (lensList, livePhase) => parallel(lensList.map(L => () =>
   agent(`${DOCS} Read intervention.py and tests/test_intervention.py.${L.extra || ''} You are the ${L.lens.toUpperCase()} CRITIC. Rubric slice: ${L.slice}. Walk every item, score pass/minor/major, return STRICT JSON findings (rubric_id, severity, step, problem, evidence, fix). Adversarial; no invented issues.`,
     { label: `critic:${L.lens}`, phase: livePhase, schema: FINDINGS_SCHEMA })))
 const collect = (rs) => rs.filter(Boolean).flatMap(r => (r && r.findings) ? r.findings : [])
-const refineWith = (accepted, ph) => agent(
-  `${DOCS} You are the REFINER. Apply ONLY these accepted findings to intervention.py and tests/test_intervention.py (minimal change each, no over-refactor); extend tests to lock each fix:\n${JSON.stringify(accepted, null, 2)}\nUse Edit/Write. Return the diffs + state final MOVE_CUTOFF / U-check rule / role logic.`,
+const refineWith = (accepted, ph, extra = '') => agent(
+  `${DOCS} You are the REFINER. Apply these accepted findings to intervention.py and tests/test_intervention.py (minimal change each, no over-refactor); extend tests to lock each fix:\n${JSON.stringify(accepted, null, 2)}\n${extra}\nUse Edit/Write. Return the diffs + state final MOVE_CUTOFF / U-check rule / role logic.`,
   { label: 'refiner', phase: ph })
 
 // ---- Phase 1: BUILD (cold only) ----
@@ -70,7 +72,7 @@ phase('Live')
 const live1 = await agent(`Run the live experiment and return FULL stdout, do not edit:\n${DRIVER}`, { label: 'live', phase: 'Live' })
 
 phase('Reflect-live')
-const liveExtra = ` Also read the live driver ${SCRATCH}/run_push06_intervention.py and the saved result ${SCRATCH}/push06_intervention.json. Live stdout:\n<<<\n${live1}\n>>>\nScore your slice AGAINST THE LIVE BEHAVIOR (does the measure hold up on a real stateless VLM?).`
+const liveExtra = ` Also read the live driver ${SCRATCH}/run_scene_intervention.py and the saved result ${SCRATCH}/${SCENE}_intervention.json. Live stdout:\n<<<\n${live1}\n>>>\nScore your slice AGAINST THE LIVE BEHAVIOR (does the measure hold up on a real stateless VLM?).${DIRECTIVES ? '\nDIRECTIVES for this round (confirm against the live output and ensure they are addressed):\n' + DIRECTIVES : ''}`
 const lFindings = collect(await critique([
   { lens: 'confound', slice: 'B5,B6,B7 + Section C (esp. C1 U held under a stateless VLM that does not preserve ids)', extra: liveExtra },
   { lens: 'construct', slice: 'B1,B2,B3,B4,B8,B9 against live behavior', extra: liveExtra },
@@ -79,7 +81,9 @@ const lFindings = collect(await critique([
 const lAccepted = lFindings.filter(f => f.severity === 'high' || f.severity === 'med')
 log(`Live critics: ${lFindings.length} finding(s), accepting ${lAccepted.length}.`)
 phase('Refine-live')
-const lRefine = lAccepted.length ? await refineWith(lAccepted, 'Refine-live') : 'no live refine needed'
+const lRefine = (lAccepted.length || DIRECTIVES)
+  ? await refineWith(lAccepted, 'Refine-live', DIRECTIVES ? ('Round directives that MUST be addressed:\n' + DIRECTIVES) : '')
+  : 'no live refine needed'
 
 // ---- Phase 8: re-verify (hermetic + live) ----
 phase('Verify')

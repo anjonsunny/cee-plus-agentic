@@ -8,38 +8,12 @@
   "entity_source": "vlm",
   "detected_objects": [
     {
-      "object_id": "fire_1",
-      "label": "fire",
-      "family": "hazard_media",
-      "state": "burning",
-      "state_kind": "hazard_bearing",
-      "description": "brush fire burning in the distance",
-      "bbox": [
-        538,
-        342,
-        639,
-        621
-      ],
-      "box_source": "vlm_sam_fallback",
-      "box_confidence": 0.0,
-      "anchor_bbox": [
-        538,
-        346,
-        642,
-        629
-      ],
-      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/C_tanker_fire__fire_1_mask.png",
-      "label_note": "",
-      "vocab_extension": false,
-      "family_name_as_label": false
-    },
-    {
       "object_id": "tanker_truck_1",
       "label": "tanker_truck",
       "family": "vehicle",
-      "state": "stationary",
-      "state_kind": "normal",
-      "description": "water tanker truck with hose spraying water on the road",
+      "state": "leaking",
+      "state_kind": "hazard_bearing",
+      "description": "silver tanker truck with fuel leaking from rear",
       "bbox": [
         679,
         42,
@@ -47,8 +21,13 @@
         731
       ],
       "box_source": "dino_matched",
-      "box_confidence": 0.8923249840736389,
-      "anchor_bbox": null,
+      "box_confidence": 0.8922320604324341,
+      "anchor_bbox": [
+        708,
+        49,
+        1593,
+        726
+      ],
       "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/C_tanker_fire__tanker_truck_1_mask.png",
       "label_note": "",
       "vocab_extension": false,
@@ -60,7 +39,7 @@
       "family": "hazard_media",
       "state": "leaking",
       "state_kind": "hazard_bearing",
-      "description": "water spill from tanker truck onto the road",
+      "description": "fuel spill on the road near tanker truck",
       "bbox": [
         862,
         734,
@@ -68,31 +47,41 @@
         939
       ],
       "box_source": "dino_matched",
-      "box_confidence": 0.4775850176811218,
-      "anchor_bbox": null,
+      "box_confidence": 0.4776255488395691,
+      "anchor_bbox": [
+        838,
+        708,
+        1548,
+        941
+      ],
       "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/C_tanker_fire__spill_1_mask.png",
       "label_note": "",
       "vocab_extension": false,
       "family_name_as_label": false
     },
     {
-      "object_id": "road_1",
-      "label": "road",
-      "family": "infrastructure",
-      "state": "dry",
-      "state_kind": "normal",
-      "description": "asphalt road with a water spill on it",
+      "object_id": "fire_1",
+      "label": "fire",
+      "family": "hazard_media",
+      "state": "spreading",
+      "state_kind": "hazard_bearing",
+      "description": "flames and smoke in the distance",
       "bbox": [
-        2,
-        467,
-        1671,
-        939
+        314,
+        385,
+        461,
+        478
       ],
       "box_source": "dino_matched",
-      "box_confidence": 0.3884579539299011,
-      "anchor_bbox": null,
-      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/C_tanker_fire__road_1_mask.png",
-      "label_note": "",
+      "box_confidence": 0.6070120334625244,
+      "anchor_bbox": [
+        317,
+        408,
+        425,
+        497
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/C_tanker_fire__fire_1_mask.png",
+      "label_note": "synonym:brush_fire->fire",
       "vocab_extension": false,
       "family_name_as_label": false
     },
@@ -102,7 +91,7 @@
       "family": "person",
       "state": "standing",
       "state_kind": "normal",
-      "description": "man standing on the side of the road holding a phone",
+      "description": "man wearing dark shirt and jeans standing on road",
       "bbox": [
         535,
         340,
@@ -110,27 +99,54 @@
         621
       ],
       "box_source": "dino_matched",
-      "box_confidence": 0.8798177242279053,
-      "anchor_bbox": null,
+      "box_confidence": 0.8797188997268677,
+      "anchor_bbox": [
+        536,
+        346,
+        643,
+        628
+      ],
       "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/C_tanker_fire__person_1_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "road_1",
+      "label": "road",
+      "family": "infrastructure",
+      "state": "damaged",
+      "state_kind": "unknown",
+      "description": "road with fuel spill and leaking tanker truck",
+      "bbox": [
+        2,
+        467,
+        1671,
+        939
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.3884715437889099,
+      "anchor_bbox": [
+        0,
+        475,
+        1651,
+        941
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/C_tanker_fire__road_1_mask.png",
       "label_note": "",
       "vocab_extension": false,
       "family_name_as_label": false
     }
   ],
   "unlocalized": [],
-  "notes": [],
+  "notes": [
+    "label 'brush_fire': synonym:brush_fire->fire"
+  ],
   "repair_trace": {
     "rounds": [
       {
         "round_number": 1,
         "violations": [
-          {
-            "entity_index": -1,
-            "raw_label": "tanker_truck",
-            "kind": "caption_entity_missing",
-            "instruction": "The caption mentions \"tanker truck\" but your list has no 'tanker_truck' entity. Look at the image again and add it with its state and bbox. If you truly cannot see it in the image, leave your list unchanged."
-          },
           {
             "entity_index": -1,
             "raw_label": "spill",
@@ -142,76 +158,51 @@
             "raw_label": "road",
             "kind": "caption_entity_missing",
             "instruction": "The caption mentions \"road\" but your list has no 'road' entity. Look at the image again and add it with its state and bbox. If you truly cannot see it in the image, leave your list unchanged."
-          },
-          {
-            "entity_index": -1,
-            "raw_label": "person",
-            "kind": "caption_entity_missing",
-            "instruction": "The caption mentions \"driver\" but your list has no 'person' entity. Look at the image again and add it with its state and bbox. If you truly cannot see it in the image, leave your list unchanged."
           }
         ],
         "entities_after": [
           {
-            "label": "fire",
-            "state": "burning",
-            "description": "brush fire burning in the distance",
-            "bbox": [
-              538,
-              346,
-              642,
-              629
-            ]
-          },
-          {
             "label": "tanker_truck",
-            "state": "operating",
-            "description": "water tanker truck with hose spraying water on the road",
+            "state": "leaking",
+            "description": "silver tanker truck with fuel leaking from rear",
             "bbox": [
-              [
-                708,
-                51,
-                1593,
-                726
-              ]
+              708,
+              49,
+              1593,
+              726
             ]
           },
           {
             "label": "spill",
             "state": "active",
-            "description": "water spill from tanker truck onto the road",
+            "description": "fuel spill on the road near tanker truck",
             "bbox": [
-              [
-                840,
-                720,
-                1593,
-                952
-              ]
+              838,
+              708,
+              1548,
+              952
             ]
           },
           {
-            "label": "road",
-            "state": "dry",
-            "description": "asphalt road with a water spill on it",
+            "label": "brush_fire",
+            "state": "spreading",
+            "description": "flames and smoke in the distance",
             "bbox": [
-              [
-                0,
-                468,
-                878,
-                952
-              ]
+              317,
+              408,
+              425,
+              497
             ]
           },
           {
             "label": "person",
             "state": "standing",
-            "description": "man standing on the side of the road holding a phone",
+            "description": "man wearing dark shirt and jeans standing on road",
             "bbox": [
-              [
-                538,
-                346,
-                642,
-                629
-              ]
+              536,
+              346,
+              643,
+              628
             ]
           }
         ],
@@ -221,74 +212,72 @@
         "round_number": 2,
         "violations": [
           {
-            "entity_index": 2,
+            "entity_index": 1,
             "raw_label": "spill",
             "kind": "state_out_of_vocab",
-            "instruction": "Entity 2 ('spill'): state 'active' is not a vocabulary state. Choose the single word that matches what you see: hazard-bearing: burning, burnt, collapsed, collapsing, fallen, crushed, flooded, leaking, spreading, billowing, rising, seeping, engulfing / at-risk: injured, bleeding, fleeing, trapped, cowering, drowning, suffocating, unconscious / normal: intact, standing, upright, dry, sealed, stationary, resting, healthy, stable, swimming, walking, running."
+            "instruction": "Entity 1 ('spill'): state 'active' is not a vocabulary state. Choose the single word that matches what you see: hazard-bearing: burning, burnt, collapsed, collapsing, fallen, crushed, flooded, leaking, spreading, billowing, rising, seeping, engulfing / at-risk: injured, bleeding, fleeing, trapped, cowering, drowning, suffocating, unconscious / normal: intact, standing, upright, dry, sealed, stationary, resting, healthy, stable, swimming, walking, running."
+          },
+          {
+            "entity_index": -1,
+            "raw_label": "road",
+            "kind": "caption_entity_missing",
+            "instruction": "The caption mentions \"road\" but your list has no 'road' entity. Look at the image again and add it with its state and bbox. If you truly cannot see it in the image, leave your list unchanged."
           }
         ],
         "entities_after": [
           {
-            "label": "fire",
-            "state": "burning",
-            "description": "brush fire burning in the distance",
-            "bbox": [
-              538,
-              346,
-              642,
-              629
-            ]
-          },
-          {
             "label": "tanker_truck",
-            "state": "operating",
-            "description": "water tanker truck with hose spraying water on the road",
+            "state": "leaking",
+            "description": "silver tanker truck with fuel leaking from rear",
             "bbox": [
-              [
-                708,
-                51,
-                1593,
-                726
-              ]
+              708,
+              49,
+              1593,
+              726
             ]
           },
           {
             "label": "spill",
             "state": "leaking",
-            "description": "water spill from tanker truck onto the road",
+            "description": "fuel spill on the road near tanker truck",
             "bbox": [
-              [
-                840,
-                720,
-                1593,
-                952
-              ]
+              838,
+              708,
+              1548,
+              952
             ]
           },
           {
-            "label": "road",
-            "state": "dry",
-            "description": "asphalt road with a water spill on it",
+            "label": "brush_fire",
+            "state": "spreading",
+            "description": "flames and smoke in the distance",
             "bbox": [
-              [
-                0,
-                468,
-                878,
-                952
-              ]
+              317,
+              408,
+              425,
+              497
             ]
           },
           {
             "label": "person",
             "state": "standing",
-            "description": "man standing on the side of the road holding a phone",
+            "description": "man wearing dark shirt and jeans standing on road",
             "bbox": [
-              [
-                538,
-                346,
-                642,
-                629
-              ]
+              536,
+              346,
+              643,
+              628
+            ]
+          },
+          {
+            "label": "road",
+            "state": "damaged",
+            "description": "road with fuel spill and leaking tanker truck",
+            "bbox": [
+              0,
+              475,
+              1651,
+              952
             ]
           }
         ],
@@ -296,6 +285,6 @@
       }
     ],
     "clean_on_arrival": false,
-    "stopped_reason": "clean"
+    "stopped_reason": "cap_reached"
   }
 }

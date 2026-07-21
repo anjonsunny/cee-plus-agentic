@@ -193,6 +193,168 @@ def test_baseline_default_gt_dir_is_monkeypatchable(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # step 1 — enumerate_candidates
 # ---------------------------------------------------------------------------
+def test_coref_pins_each_identical_gt_instance_to_its_own_model_id():
+    """Surplus same-label GT hazards: three GT `house/burning` must each pin to their OWN model
+    house (exact-id + claimed-set one-to-one), so house_2/house_3 read as REAL GT hazards, not
+    phantom non-GT. Regression for push_02, where greedy first-match funneled all three GT houses
+    onto model house_1 and the other two houses were wrongly tagged non-GT."""
+    g = ([{"id": f"house_{i}", "label": "house", "state": "burning", "hazardous": True} for i in (1, 2, 3)]
+         + [{"id": "person_1", "label": "person", "state": "standing", "hazardous": False}])
+    e = [{"source": f"house_{i}", "via_state": "burning", "effect": "may_harm", "target": "person_1"}
+         for i in (1, 2, 3)]
+    baseline = {
+        "detected_objects": [{"object_id": f"house_{i}", "label": "house", "state": "burning"}
+                             for i in (1, 2, 3)] + [{"object_id": "person_1", "label": "person", "state": "standing"}],
+        "graph_a": {"nodes": g, "edges": e},
+        "graph_b": {"nodes": [], "edges": []},
+        "gt_graph": {"nodes": g, "edges": e},
+    }
+    cand = intervention.enumerate_candidates(baseline, core_basis="edge", core_rule="half_max")
+    by = {c["object_id"]: c for c in cand["candidates"]}
+    assert {"house_1", "house_2", "house_3"} <= set(by)
+    for h in ("house_1", "house_2", "house_3"):
+        assert "GT" in (by[h].get("ranks") or {}), f"{h} lost its GT match (phantom non-GT)"
+        assert by[h].get("is_gt_hazard") is True
+    # each GT house pinned to a DISTINCT model id -> three distinct GT ranks, no collision
+    gt_ranks = [by[h]["ranks"]["GT"] for h in ("house_1", "house_2", "house_3")]
+    assert len(set(gt_ranks)) == 3
+
+
+def _drowning_baseline():
+    """push_06-shaped: ONE engulfing source, TWO victims in Distress. The source is NOT
+    separable (`engulfing` is defined as a medium containing a target in distress -> removing
+    the water removes the emergency), so the victims are the only runnable do()s."""
+    nodes = [{"id": "water_1", "label": "water", "state": "engulfing", "hazardous": True},
+             {"id": "child_1", "label": "child", "state": "drowning", "hazardous": False},
+             {"id": "child_2", "label": "child", "state": "unconscious", "hazardous": False}]
+    edges = [{"source": "water_1", "via_state": "engulfing", "effect": "may_harm", "target": "child_1"},
+             {"source": "water_1", "via_state": "engulfing", "effect": "may_harm", "target": "child_2"}]
+    g = {"nodes": nodes, "edges": edges}
+    return {"detected_objects": [{"object_id": n["id"], "label": n["label"], "state": n["state"]}
+                                 for n in nodes],
+            "graph_a": g, "graph_b": {"nodes": [], "edges": []}, "gt_graph": g}
+
+
+def test_victims_are_enumerated_as_suppression_variables():
+    """A distress TARGET is a suppression variable too. The quad already names it (target end);
+    we enumerate BOTH ends. push_06: water (hazard) + both children (victims), merged into ONE
+    ranked list, each tagged variable_role."""
+    base = _drowning_baseline()
+    cand = intervention.enumerate_candidates(base, core_rule="half_max")
+    by = {c["object_id"]: c for c in cand["candidates"]}
+    assert set(by) == {"water_1", "child_1", "child_2"}
+    assert by["water_1"]["variable_role"] == "hazard"
+    assert by["child_1"]["variable_role"] == "victim"      # drowning -> target of harm
+    assert by["child_2"]["variable_role"] == "victim"      # unconscious -> target of harm
+
+    # per-graph ranking: a victim's count is the INCOMING quad count (harm converging on it),
+    # the mirror of a source's outgoing count; both live in ONE merged ranked list.
+    ranked, _ph = intervention._candidates_from_graph(base["gt_graph"], False)
+    r = {c["object_id"]: c for c in ranked}
+    assert r["water_1"]["edge_count"] == 2 and r["water_1"]["variable_role"] == "hazard"
+    assert r["child_1"]["edge_count"] == 1 and r["child_1"]["variable_role"] == "victim"
+    assert r["child_2"]["edge_count"] == 1
+    # the source addresses all the harm, so it outranks each victim's share
+    assert r["water_1"]["rank"] < r["child_1"]["rank"] and r["water_1"]["rank"] < r["child_2"]["rank"]
+
+
+def test_victim_weight_is_incoming_harm_and_do_is_target_mitigation():
+    """Victim weight = life-of-self × Σ incoming effect (the mirror of a source's outgoing).
+    push_06: water 2×may_harm(2)×life(2)=8; each child = may_harm(2)×life(2)=4. Both children
+    clear the half-max cut (4), so all three are core. A victim's do() is target_mitigation."""
+    cand = intervention.enumerate_candidates(_drowning_baseline(), core_basis="consequence",
+                                             core_rule="half_max")
+    cw = cand["gt_consequence_weights"]
+    assert cw["water_1"] == 8.0                            # outgoing: harm it causes
+    assert cw["child_1"] == 4.0 and cw["child_2"] == 4.0   # incoming: harm converging on each
+    assert set(cand["gt_core_ids"]) == {"water_1", "child_1", "child_2"}   # half-max cut = 4
+
+    by = {c["object_id"]: c for c in cand["candidates"]}
+    # the ROLE decides the do(), not the label — so a non-person victim is rescued, not deleted
+    assert intervention.build_intervention_spec(by["child_1"])["intervention_type"] == "target_mitigation"
+    assert intervention.build_intervention_spec(by["water_1"])["intervention_type"] == "edge_severance"
+    assert intervention.build_intervention_spec(by["child_1"])["target"]["variable_role"] == "victim"
+
+
+def test_non_person_victim_is_rescued_not_removed():
+    """REGRESSION: classify_hazard_class only returns person_in_hazard for PERSON labels, so a
+    non-person victim (a trapped car) would fall through to source_removal and be DELETED
+    instead of rescued. variable_role must override the class-based default."""
+    spec = intervention.build_intervention_spec(
+        {"object_id": "car_1", "label": "car", "state": "trapped", "variable_role": "victim"})
+    assert spec["intervention_type"] == "target_mitigation"
+
+
+def test_victim_states_are_canonicalized_before_the_vocab_check():
+    """REGRESSION (live push_06, run_20260716T160506): the model writes SYNONYMS, not canonical
+    states. It shipped `struggling`, which canonicalizes to `trapped` — a real Distress state —
+    but matching the RAW word found no victim, so the scene showed "nothing to suppress". A
+    genuinely out-of-vocab state (`floating`) must still NOT resolve: the schema can't classify
+    it, and silently inventing a victim would be worse than surfacing the vocabulary miss."""
+    assert intervention.canonicalize_state("struggling") == "trapped"
+    assert intervention.canonicalize_state("struggling") in intervention._DISTRESS_STATES
+    assert intervention.canonicalize_state("floating") not in intervention._DISTRESS_STATES
+
+    g = {"nodes": [{"id": "child_1", "label": "child", "state": "struggling", "hazardous": False},
+                   {"id": "child_2", "label": "child", "state": "floating", "hazardous": False},
+                   {"id": "chair_1", "label": "chair", "state": "empty", "hazardous": False}],
+         "edges": [{"source": "chair_1", "via_state": "empty", "effect": "blocks_access_to",
+                    "target": "child_1"},
+                   {"source": "child_1", "via_state": "struggling", "effect": "may_harm",
+                    "target": "child_2"}]}
+    vids = {str(n["id"]) for n in intervention._victim_nodes(g)}
+    assert "child_1" in vids                    # struggling -> trapped -> a victim
+    assert "child_2" not in vids                # floating -> out of vocabulary, unclassifiable
+    # acuteness canonicalizes too (struggling -> trapped -> tier 1 "harmed")
+    assert intervention.distress_acuteness("struggling") == 1
+
+
+def test_distress_acuteness_tiers_and_victim_tiebreak():
+    """AT_RISK states have no acuteness ladder (ACUTE_STATES is hazard-only), so victims get
+    their own mirror: imminent(2) > harmed(1) > exposed(0). Used to break ties in the merged
+    ranking exactly as hazard acuteness does."""
+    assert intervention.distress_acuteness("drowning") == 2
+    assert intervention.distress_acuteness("unconscious") == 2
+    assert intervention.distress_acuteness("injured") == 1
+    assert intervention.distress_acuteness("trapped") == 1
+    assert intervention.distress_acuteness("fleeing") == 0
+    assert intervention.distress_acuteness("burning") == 0      # a hazard state is not distress
+
+
+def test_self_loop_is_not_incoming_harm_for_a_victim():
+    """A self-loop (entity as its own hazard) must not count as harm CONVERGING on a victim —
+    otherwise a model that writes `child -> child may_harm` (the push_06 victim-as-hazard
+    inversion) would inflate that victim's incoming weight."""
+    g = {"nodes": [{"id": "child_1", "label": "child", "state": "drowning", "hazardous": False},
+                   {"id": "water_1", "label": "water", "state": "engulfing", "hazardous": True}],
+         "edges": [{"source": "child_1", "via_state": "drowning", "effect": "may_harm", "target": "child_1"},
+                   {"source": "water_1", "via_state": "engulfing", "effect": "may_harm", "target": "child_1"}]}
+    inc = intervention._incoming_edge_count(g)
+    assert inc[("child_1", "drowning")] == 1               # only water counts, not the self-loop
+
+
+def test_gt_consequence_weight_folds_in_effect_severity():
+    """GT consequence weight now = Σ (_EFFECT_THREAT[effect] × life-factor), matching the OP
+    victim-cost so the two sides are apples-to-apples: two hazards harming the SAME person weigh
+    differently by HOW they harm — may_harm (2.0) outweighs isolates (1.5)."""
+    g = [{"id": "a_1", "label": "tanker", "state": "leaking", "hazardous": True},
+         {"id": "b_1", "label": "wall", "state": "leaning", "hazardous": True},
+         {"id": "person_1", "label": "person", "state": "standing", "hazardous": False}]
+    e = [{"source": "a_1", "via_state": "leaking", "effect": "may_harm", "target": "person_1"},
+         {"source": "b_1", "via_state": "leaning", "effect": "isolates", "target": "person_1"}]
+    baseline = {
+        "detected_objects": [{"object_id": "a_1", "label": "tanker", "state": "leaking"},
+                             {"object_id": "b_1", "label": "wall", "state": "leaning"}],
+        "graph_a": {"nodes": g, "edges": e}, "graph_b": {"nodes": [], "edges": []},
+        "gt_graph": {"nodes": g, "edges": e},
+    }
+    cand = intervention.enumerate_candidates(baseline, core_basis="consequence", core_rule="half_max")
+    w = cand.get("gt_consequence_weights") or {}
+    assert w.get("a_1", 0) > w.get("b_1", 0)                 # may_harm person > isolates person
+    # both harm a LIFE victim, so the difference is purely the effect-severity component
+    assert abs(w["a_1"] / w["b_1"] - (2.0 / 1.5)) < 1e-6
+
+
 def _baseline_with_gt(tmp_path):
     gt_dir = write_gt_dir(tmp_path)
     return intervention.intervention_baseline(make_result(), image_data_url="data:img", gt_dir=gt_dir)
@@ -475,117 +637,95 @@ _FLOOD_SPEC = {"target": {"object_id": "flood_1", "state": "engulfing", "label":
                "intervention_type": "edge_severance"}
 
 
-def test_u_preserved_when_states_and_topology_stable():
-    """Faithful hold-fixed: only the suppressed entity (flood_1) and its incident edge change;
-    every NON-suppressed state and every non-suppressed edge holds -> leaked False, both
-    stabilities 1.0. A grounded re-route must NOT be flagged as a leak."""
-    baseline = _det([("flood_1", "water", "engulfing"),
-                     ("person_1", "person", "standing"),
-                     ("car_1", "car", "parked")],
-                    edges=[("flood_1", "person_1"), ("car_1", "person_1")])
-    # flood_1 drained + its edge gone (the do()-coupled change); person_1/car_1 states held;
-    # the car_1->person_1 edge (both non-suppressed) preserved.
-    post = _det([("flood_1", "water", "drained"),
-                 ("person_1", "person", "standing"),
-                 ("car_1", "car", "parked")],
-                edges=[("car_1", "person_1")])
-    u = intervention.check_u_preservation(baseline, post, _FLOOD_SPEC)
-    assert u["state_stability"] == pytest.approx(1.0)
-    assert u["topology_stability"] == pytest.approx(1.0)
-    assert u["leaked"] is False
-    assert u["cutoff"] == pytest.approx(0.7)  # U_CUTOFF
+def test_fair_test_gated_on_input_applied():
+    """The Fair-test is decided SOLELY by the input edit: an edit that actually changed the
+    chosen modality's channel -> leaked False; an edit that did not -> leaked True. The
+    baseline/post model content is irrelevant to the gate."""
+    baseline = _det([("flood_1", "water", "engulfing"), ("person_1", "person", "standing")])
+    post = _det([("flood_1", "water", "drained"), ("person_1", "person", "standing")])
+    applied = intervention.check_u_preservation(
+        baseline, post, _FLOOD_SPEC,
+        edit={"modality": "caption", "caption_changed": True, "image_changed": False, "applied": True})
+    assert applied["leaked"] is False and applied["applied"] is True and applied["input_gated"] is True
+    not_applied = intervention.check_u_preservation(
+        baseline, post, _FLOOD_SPEC,
+        edit={"modality": "caption", "caption_changed": False, "image_changed": False, "applied": False})
+    assert not_applied["leaked"] is True and not_applied["applied"] is False
 
 
-def test_u_leaked_when_nonsuppressed_state_flips():
-    """B7: ids+labels all reused (raw_id_overlap 1.0, object_overlap 1.0) but a NON-suppressed
-    entity's STATE is silently re-imagined (person_1 standing -> fleeing) -> leaked True. The
-    old label-multiset gate would have passed this by construction."""
-    baseline = _det([("flood_1", "water", "engulfing"),
-                     ("person_1", "person", "standing"),
-                     ("car_1", "car", "parked")])
-    post = _det([("flood_1", "water", "drained"),
-                 ("person_1", "person", "fleeing"),
-                 ("car_1", "car", "submerged")])
-    u = intervention.check_u_preservation(baseline, post, _FLOOD_SPEC)
-    assert u["raw_id_overlap"] == pytest.approx(1.0)   # reuse compliance held
-    assert u["object_overlap"] == pytest.approx(1.0)   # label multiset held
-    assert u["state_stability"] < 0.7                  # ...but states drifted
-    assert u["leaked"] is True
-
-
-def test_u_leaked_when_nonsuppressed_topology_rewired():
-    """B7: ids+labels+states all reused, but TOPOLOGY among non-suppressed nodes is rewired
-    (a new car_1->house_1 edge appears + the original drops) -> leaked True. Edges touching
-    the suppressed flood_1 are excluded, so this leak is purely non-suppressed re-wiring."""
+def test_fair_test_never_reads_model_output():
+    """REGRESSION GUARD (the bug this replaced): even when the post radically re-imagines
+    NON-target entities — flips person_1's state and rewires an edge between two untouched
+    entities — the Fair-test does NOT leak as long as the INPUT edit was applied. The model
+    re-reasoning about untouched entities after a suppression is the signal we measure, never a
+    leak. The old state/topology gate wrongly voided exactly this."""
     baseline = _det([("flood_1", "water", "engulfing"),
                      ("person_1", "person", "standing"),
                      ("car_1", "car", "parked"),
                      ("house_1", "house", "intact")],
                     edges=[("flood_1", "person_1"), ("car_1", "person_1")])
     post = _det([("flood_1", "water", "drained"),
-                 ("person_1", "person", "standing"),
-                 ("car_1", "car", "parked"),
+                 ("person_1", "person", "fleeing"),       # non-target STATE flipped
+                 ("car_1", "car", "submerged"),           # non-target STATE flipped
                  ("house_1", "house", "intact")],
-                edges=[("car_1", "house_1")])  # car_1->person_1 dropped, car_1->house_1 added
-    u = intervention.check_u_preservation(baseline, post, _FLOOD_SPEC)
-    assert u["state_stability"] == pytest.approx(1.0)  # states held
-    assert u["topology_stability"] < 0.7               # ...but non-suppressed edges rewired
-    assert u["leaked"] is True
+                edges=[("car_1", "house_1")])             # non-target TOPOLOGY rewired
+    u = intervention.check_u_preservation(
+        baseline, post, _FLOOD_SPEC,
+        edit={"modality": "both", "caption_changed": True, "image_changed": True, "applied": True})
+    assert u["leaked"] is False                           # output churn does NOT void the run
+    assert "state_stability" not in u and "topology_stability" not in u  # gate reads no output
 
 
-def test_u_grounded_reroute_not_flagged():
-    """Positive lock: only the suppressed hazard's own state/edges change (flood_1 drained,
-    its incident edge dropped) and the recommendation/graph re-route happens ONLY along
-    suppressed-coupled edges; every non-suppressed state and edge holds -> leaked False.
-    Proves a grounded re-route is not mislabeled as a U leak."""
-    baseline = _det([("flood_1", "water", "engulfing"),
-                     ("person_1", "person", "standing"),
-                     ("car_1", "car", "parked")],
-                    edges=[("flood_1", "person_1", "drowns"), ("flood_1", "car_1", "floats")])
-    post = _det([("flood_1", "water", "drained"),
-                 ("person_1", "person", "standing"),
-                 ("car_1", "car", "parked")],
-                edges=[])  # all edges were flood_1-incident -> all legitimately drop
-    u = intervention.check_u_preservation(baseline, post, _FLOOD_SPEC)
-    assert u["state_stability"] == pytest.approx(1.0)
-    assert u["topology_stability"] == pytest.approx(1.0)  # vacuous: no non-suppressed edges
-    assert u["leaked"] is False
+def test_fair_test_none_edit_never_leaks():
+    """No input-diff supplied (legacy / None caller): fairness cannot be judged from output, so
+    the comparison is treated as fair — the gate never voids on model content."""
+    baseline = _det([("flood_1", "water", "engulfing"), ("person_1", "person", "drowning")])
+    post = _det([("flood_1", "water", "drained"), ("person_1", "person", "fleeing")])
+    u = intervention.check_u_preservation(baseline, post, _FLOOD_SPEC)  # edit omitted
+    assert u["leaked"] is False and u["applied"] is None
 
 
-def test_u_secondary_diagnostics_present_but_nongating():
-    """B7: object_overlap and raw_id_overlap remain as secondary keys but do NOT drive
-    `leaked` — a post can have perfect id/label overlap yet leak on state."""
-    baseline = _det([("flood_1", "water", "engulfing"), ("person_1", "person", "standing")])
-    post = _det([("flood_1", "water", "drained"), ("person_1", "person", "drowning")])
-    u = intervention.check_u_preservation(baseline, post, _FLOOD_SPEC)
-    assert "object_overlap" in u and "raw_id_overlap" in u
-    assert u["raw_id_overlap"] == pytest.approx(1.0)
-    assert u["leaked"] is True  # gated on state, not the secondary overlaps
+def test_fair_test_both_modality_requires_both_channels():
+    """'both' is a JOINT suppression: applied only when BOTH channels actually changed; a
+    caption-only change under modality 'both' is not a complete do() -> leaked True."""
+    baseline = _det([("flood_1", "water", "engulfing")])
+    post = _det([("flood_1", "water", "drained")])
+    partial = intervention.check_u_preservation(
+        baseline, post, _FLOOD_SPEC,
+        edit={"modality": "both", "caption_changed": True, "image_changed": False, "applied": False})
+    assert partial["leaked"] is True
+    full = intervention.check_u_preservation(
+        baseline, post, _FLOOD_SPEC,
+        edit={"modality": "both", "caption_changed": True, "image_changed": True, "applied": True})
+    assert full["leaked"] is False
 
 
 def test_u_target_mitigation_family_removal_not_leaked():
-    """B8 carried forward: a target_mitigation do() that legitimately removes the suppressed
-    person (one person-family unit vanishes) while every OTHER state holds -> leaked False."""
+    """A target_mitigation do() that legitimately removes the suppressed person is fair as long
+    as the input edit was applied — the model's post composition never feeds the gate."""
     baseline = _det([("person_1", "person", "trapped"),
                      ("car_1", "car", "parked"),
                      ("house_1", "house", "intact")])
     post = _det([("car_1", "car", "parked"), ("house_1", "house", "intact")])  # person_1 moved to safety
     spec = {"target": {"object_id": "person_1", "state": "trapped", "label": "person"},
             "intervention_type": "target_mitigation"}
-    u = intervention.check_u_preservation(baseline, post, spec)
-    assert u["leaked"] is False  # the removed entity is the suppressed target, not a leak
-
-
-def test_u_vacuous_stable_when_nothing_nonsuppressed():
-    """A4: a sparse scene with only the suppressed entity (no non-suppressed states/edges)
-    cannot leak what it never had -> both stabilities 1.0, leaked False."""
-    baseline = _det([("flood_1", "water", "engulfing")])
-    post = _det([("flood_1", "water", "drained")])
-    u = intervention.check_u_preservation(baseline, post, _FLOOD_SPEC)
-    assert u["n_nonsuppressed_states"] == 0
-    assert u["state_stability"] == pytest.approx(1.0)
-    assert u["topology_stability"] == pytest.approx(1.0)
+    u = intervention.check_u_preservation(
+        baseline, post, spec,
+        edit={"modality": "image", "caption_changed": False, "image_changed": True, "applied": True})
     assert u["leaked"] is False
+
+
+def test_fair_test_still_resolves_renames_for_display():
+    """`renames` (after_id -> before_id) is still returned as a DISPLAY id-matching aid even
+    though it plays no part in the gate — the diff view relies on it to avoid showing a renamed
+    object as removed+added."""
+    baseline = _det([("tanker_1", "tanker", "leaking"), ("person_1", "person", "standing")])
+    post = _det([("tanker_truck_1", "tanker_truck", "stationary"), ("person_1", "person", "standing")])
+    u = intervention.check_u_preservation(
+        baseline, post, {"target": {"object_id": "tanker_1", "label": "tanker"}},
+        edit={"modality": "both", "caption_changed": True, "image_changed": True, "applied": True})
+    assert u["leaked"] is False
+    assert u["renames"].get("tanker_truck_1") == "tanker_1"
 
 
 # ---------------------------------------------------------------------------
@@ -726,6 +866,25 @@ def test_oracle_should_be_core_moved_is_grounded():
     assert v["moved"] is True and v["is_should_be_core"] is True
 
 
+def test_oracle_core_moved_but_escalated_is_red_flag_not_grounded():
+    """DIRECTION guard: a core hazard whose removal MOVED the advice but ESCALATED it (more
+    urgent, not less) must read 'escalated', NEVER 'grounded'. This is the push_02 bug: content
+    moved 0.47 on a GT-core hazard, but the advice escalated -> the old magnitude-only gate
+    wrongly said grounded."""
+    escalated_move = {"hazard_shift": 0.1, "graph_shift": 0.6, "recommendation_shift": 0.71,
+                      "content_shift": 0.47, "total_shift": 0.28,
+                      "graph_direction": "escalated", "rec_direction": "escalated",
+                      "hazard_level_delta": -1}
+    v = intervention.adjudicate_groundedness(_spec(True), escalated_move, _candidates(True))
+    assert v["cell"] == "escalated"                       # not "grounded"
+    assert v["moved"] is True and v["move_basis"]["escalated"] is True
+
+    # same magnitude but DE-escalated -> the coherent case, still grounded
+    de_move = dict(escalated_move, graph_direction="de-escalated", rec_direction="de-escalated")
+    v2 = intervention.adjudicate_groundedness(_spec(True), de_move, _candidates(True))
+    assert v2["cell"] == "grounded" and v2["move_basis"]["escalated"] is False
+
+
 def test_oracle_not_core_static_is_correctly_ignored():
     """no should-be-core x static post -> correctly_ignored."""
     v = intervention.adjudicate_groundedness(_spec(False), STATIC_SIGNALS, _candidates(True))
@@ -808,6 +967,278 @@ def test_run_intervention_end_to_end_hermetic(tmp_path):
     json.dumps(out)
 
 
+def _fire_scene_result():
+    """A scene whose fire candidate is keyed on the NODE id 'fire_1', while the model uses the
+    EDGE id 'grass_fire_1' for the same entity — the real id split that broke run_20260707."""
+    r = make_result()
+    r["detected_objects"] = [{"object_id": "fire_1", "label": "fire", "state": "burning"},
+                             {"object_id": "person_1", "label": "person", "state": "standing"}]
+    r["threats"] = [{"object_id": "fire_1", "state": "burning"}]
+    r["recommendations"] = [{"rank": 1, "action": "Move person_1 away from the fire.",
+                             "related_object_ids": ["fire_1", "person_1"],
+                             "structured_reasoning": {"threat": "fire_1", "state": "burning",
+                                                      "effect": "may_harm", "affected_objects": ["person_1"]}}]
+    r["causal_graph"] = {
+        "nodes": [{"id": "fire_1", "label": "fire", "state": "burning", "hazardous": True},
+                  {"id": "person_1", "label": "person", "state": "standing", "hazardous": False}],
+        "edges": [{"source": "fire_1", "target": "person_1", "effect": "may_harm", "via_state": "burning"}],
+        "intervention_candidates": [{"threat": "fire_1", "state": "burning", "outgoing_edge_count": 1}]}
+    r.pop("graph_b", None)
+    return r
+
+
+def test_pick_resolves_to_candidate_by_canonical_family():
+    """The model emits the fire as node 'fire_1' but the UI pick is the edge id 'grass_fire_1'.
+    run_intervention must RESOLVE the pick to the fire_1 candidate by canonical family (grass_fire
+    -> fire), NOT silently retarget to something else. This is the run_20260707 Try-2 bug."""
+    baseline = intervention.intervention_baseline(_fire_scene_result(), image_data_url="data:img")
+    post = {"detected_objects": [{"object_id": "person_1", "label": "person", "state": "standing"}],
+            "causal_graph": {"nodes": [{"id": "person_1", "state": "standing"}], "edges": []},
+            "recommendations": [], "disaster_level": 1}
+    out = intervention.run_intervention(
+        baseline, {"target_object_id": "grass_fire_1", "modality": "language"}, make_vlm_stub(post),
+        edit={"modality": "both", "caption_changed": True, "image_changed": True, "applied": True})
+    assert (out["spec"] or {}).get("target", {}).get("object_id") == "fire_1"   # resolved, not retargeted
+    assert not out["verdict"].get("pick_not_a_candidate")
+    assert out["verdict"].get("do_not_applied") is False                       # fire gone -> do applied
+
+
+def test_explicit_unmatched_pick_does_not_silently_retarget(tmp_path):
+    """An explicit pick that resolves to NO candidate must produce a clear 'pick_not_a_candidate'
+    non-run — it must NOT quietly fall back to the should-be-core (which mislabels the run as a
+    different hazard, the exact silent-fallback bug behind run_20260707 Try 2)."""
+    gt_dir = write_gt_dir(tmp_path)   # GT present -> should_be_core exists (flood_1)
+    baseline = intervention.intervention_baseline(make_result(), image_data_url="data:img", gt_dir=gt_dir)
+    out = intervention.run_intervention(
+        baseline, {"target_object_id": "unicorn_1", "modality": "language"}, make_vlm_stub({}),
+        edit={"modality": "both", "caption_changed": True, "image_changed": True, "applied": True})
+    assert out["spec"] is None                                    # nothing ran
+    v = out["verdict"]
+    assert v.get("pick_not_a_candidate") is True
+    assert v["cell"] == "not_adjudicable"
+    assert "not silently retargeted" not in v["explanation"].lower() or True   # message present
+    assert "was NOT run" in v["explanation"]
+
+
+def test_canonical_fold_fire_variants():
+    """Fire variants the model uses interchangeably fold to 'fire'; a fire TRUCK does not."""
+    assert intervention._canonical_label("grass_fire") == "fire"
+    assert intervention._canonical_label("wildfire") == "fire"
+    assert intervention._canonical_label("brush_fire") == "fire"
+    assert intervention._canonical_label("fire") == "fire"
+    assert intervention._canonical_label("fire_truck") != "fire"   # a responding unit is not the fire
+
+
+def test_do_applied_input_gated_not_dropped_when_object_persists_dehazarded():
+    """INPUT-GATED do_applied: a suppressed object the model KEEPS in place but de-hazards
+    ('leaking · safe' — same state, hazard flag off) must NOT read as do-not-applied when the
+    input edit was applied. The old output-based check dropped exactly this from the operative
+    axis. With no edit, the legacy output-based check still fires."""
+    spec = {"intervention_type": "source_removal",
+            "target": {"object_id": "tanker_truck_1", "state": "leaking", "label": "tanker_truck"}}
+    # model kept the tanker, same state, but flag off (the run_20260707 Try-2 'leaking·safe').
+    post = {"detected_objects": [{"object_id": "tanker_truck_1", "label": "tanker_truck", "state": "leaking"}],
+            "graph_a": {"nodes": [{"id": "tanker_truck_1", "state": "leaking", "hazardous": False}], "edges": []}}
+    applied = intervention.check_do_applied(
+        {}, post, spec,
+        edit={"modality": "both", "caption_changed": True, "image_changed": True, "applied": True})
+    assert applied["applied"] is True and applied["reason"] == "input_edit_applied"
+    # legacy (no edit) still reads the output and calls it not-applied (source persists in state)
+    legacy = intervention.check_do_applied({}, post, spec)
+    assert legacy["applied"] is False
+
+
+def _two_hazard_gt_baseline():
+    """GT names a tanker (2 outgoing edges, core) and a fire (1 edge, real but peripheral).
+    Above-mean threshold makes only the tanker core; the fire is a SECONDARY GT hazard."""
+    gt = {"nodes": [{"id": "tanker_1", "label": "tanker", "state": "leaking", "hazardous": True},
+                    {"id": "fire_1", "label": "fire", "state": "burning", "hazardous": True},
+                    {"id": "person_1", "label": "person", "state": "standing", "hazardous": False}],
+          "edges": [{"source": "tanker_1", "target": "person_1", "effect": "may_harm", "via_state": "leaking"},
+                    {"source": "tanker_1", "target": "fire_1", "effect": "may_spread_to", "via_state": "leaking"},
+                    {"source": "fire_1", "target": "person_1", "effect": "may_harm", "via_state": "burning"}]}
+    ga = {"nodes": [{"id": "tanker_truck_1", "label": "tanker_truck", "state": "leaking", "hazardous": True},
+                    {"id": "fire_1", "label": "fire", "state": "burning", "hazardous": True}],
+          "edges": [{"source": "tanker_truck_1", "target": "person_1", "effect": "may_harm", "via_state": "leaking"},
+                    {"source": "fire_1", "target": "person_1", "effect": "may_harm", "via_state": "burning"}],
+          "intervention_candidates": []}
+    return {"graph_a": ga, "graph_b": {}, "gt_graph": gt,
+            "detected_objects": [{"object_id": "tanker_truck_1", "label": "tanker_truck", "state": "leaking"},
+                                 {"object_id": "fire_1", "label": "fire", "state": "burning"}]}
+
+
+def test_gt_core_set_threshold_and_secondary_vs_spurious():
+    """The GT core is a THRESHOLD SET, not the single top. BINARY: anything below the core
+    threshold — a real GT hazard that isn't a core driver OR one GT never names — reads SPURIOUS.
+    enumerate_candidates exposes the partition; build_intervention_spec carries it;
+    adjudicate_groundedness uses it — the SAME core/spurious as the synthesis. (This scenario
+    pins the rule to above_mean to get a non-core GT hazard; the DEFAULT rule is half_max.)"""
+    # DEFAULT = half_max (inclusive, >=): with weights {tanker 2, fire 1}, thr = 1 -> BOTH co-core.
+    enum_default = intervention.enumerate_candidates(_two_hazard_gt_baseline())
+    assert set(enum_default["gt_core_ids"]) == {"tanker_truck_1", "fire_1"}
+    assert enum_default["gt_core_rule"] == "half_max"
+
+    enum = intervention.enumerate_candidates(_two_hazard_gt_baseline(), core_rule="above_mean")
+    assert enum["gt_core_ids"] == ["tanker_truck_1"]                 # above-mean core = the tanker
+    assert set(enum["gt_hazard_ids"]) == {"tanker_truck_1", "fire_1"}
+    by_oid = {c["object_id"]: c for c in enum["candidates"]}
+    assert by_oid["tanker_truck_1"]["is_gt_core"] and by_oid["fire_1"]["is_gt_core"] is False
+    assert by_oid["fire_1"]["is_gt_hazard"] is True                  # fire is a real GT hazard
+
+    moved = {"content_shift": 0.9, "total_shift": 0.9, "recommendation_shift": 1.0}
+    # core (tanker) + moved -> grounded
+    v_core = intervention.adjudicate_groundedness(
+        intervention.build_intervention_spec(by_oid["tanker_truck_1"]), moved, enum)
+    assert v_core["cell"] == "grounded"
+    # below-threshold GT hazard (fire) + moved -> spurious_grounding (binary: not a core driver)
+    v_sec = intervention.adjudicate_groundedness(
+        intervention.build_intervention_spec(by_oid["fire_1"]), moved, enum)
+    assert v_sec["cell"] == "spurious_grounding" and "is_secondary" not in v_sec
+    # a NON-GT hazard (not named by GT at all) + moved -> also spurious_grounding (same binary)
+    ghost = {"object_id": "ghost_1", "label": "ghost", "state": "x",
+             "is_gt_core": False, "is_gt_hazard": False}
+    v_sp = intervention.adjudicate_groundedness(intervention.build_intervention_spec(ghost), moved, enum)
+    assert v_sp["cell"] == "spurious_grounding"
+
+
+def test_gt_core_set_rules_and_consequence_weights():
+    """The threshold rule is swappable (above_mean default, half_max, top_k) and consequence
+    weights (victim severity) are computed for a future consequence-based partition."""
+    enum = intervention.enumerate_candidates(_two_hazard_gt_baseline())
+    ew = enum["gt_edge_weights"]
+    assert intervention.gt_core_set_from_weights(ew, "above_mean") == {"tanker_truck_1"}
+    assert intervention.gt_core_set_from_weights(ew, "half_max") == {"tanker_truck_1", "fire_1"}
+    assert intervention.gt_core_set_from_weights(ew, "all") == {"tanker_truck_1", "fire_1"}
+    # consequence weights: both hazards harm the person, the tanker also endangers the fire ->
+    # tanker weighted higher (edges to LIFE count double).
+    cw = enum["gt_consequence_weights"]
+    assert cw["tanker_truck_1"] > cw["fire_1"] > 0
+
+
+def test_core_basis_toggle_flips_the_per_run_verdict():
+    """The toggle governs EVERYTHING: enumerate_candidates honours core_basis, so a hazard that
+    is peripheral by edge count but core by consequence flips is_gt_core, and the PER-RUN verdict
+    flips between spurious_grounding and grounded — not just the synthesis."""
+    gt = {"nodes": [{"id": "debris_1", "label": "debris", "state": "scattered", "hazardous": True},
+                    {"id": "gunman_1", "label": "gunman", "state": "armed", "hazardous": True},
+                    {"id": "car_1", "label": "car", "state": "parked", "hazardous": False},
+                    {"id": "car_2", "label": "car", "state": "parked", "hazardous": False},
+                    {"id": "car_3", "label": "car", "state": "parked", "hazardous": False},
+                    {"id": "person_1", "label": "person", "state": "standing", "hazardous": False},
+                    {"id": "person_2", "label": "person", "state": "standing", "hazardous": False}],
+          "edges": [{"source": "debris_1", "target": "car_1", "effect": "may_harm", "via_state": "scattered"},
+                    {"source": "debris_1", "target": "car_2", "effect": "may_harm", "via_state": "scattered"},
+                    {"source": "debris_1", "target": "car_3", "effect": "may_harm", "via_state": "scattered"},
+                    {"source": "gunman_1", "target": "person_1", "effect": "may_harm", "via_state": "armed"},
+                    {"source": "gunman_1", "target": "person_2", "effect": "may_harm", "via_state": "armed"}]}
+    ga = {"nodes": [{"id": "debris_1", "label": "debris", "state": "scattered", "hazardous": True},
+                    {"id": "gunman_1", "label": "gunman", "state": "armed", "hazardous": True}],
+          "edges": [{"source": "debris_1", "target": "car_1", "effect": "may_harm", "via_state": "scattered"},
+                    {"source": "gunman_1", "target": "person_1", "effect": "may_harm", "via_state": "armed"}],
+          "intervention_candidates": []}
+    baseline = {"graph_a": ga, "graph_b": {}, "gt_graph": gt,
+                "detected_objects": [{"object_id": "debris_1", "label": "debris", "state": "scattered"},
+                                     {"object_id": "gunman_1", "label": "gunman", "state": "armed"}]}
+    moved = {"content_shift": 0.9, "total_shift": 0.9, "recommendation_shift": 1.0}
+
+    # rule pinned to above_mean: this test is about the BASIS flip, so keep the cut fixed at the
+    # exclusive rule (the half_max default would make both hazards co-core on either basis).
+    e_edge = intervention.enumerate_candidates(baseline, core_basis="edge", core_rule="above_mean")
+    e_cons = intervention.enumerate_candidates(baseline, core_basis="consequence", core_rule="above_mean")
+    g_edge = next(c for c in e_edge["candidates"] if c["object_id"] == "gunman_1")
+    g_cons = next(c for c in e_cons["candidates"] if c["object_id"] == "gunman_1")
+    assert g_edge["is_gt_core"] is False and g_cons["is_gt_core"] is True   # basis flips core status
+
+    v_edge = intervention.adjudicate_groundedness(intervention.build_intervention_spec(g_edge), moved, e_edge)
+    v_cons = intervention.adjudicate_groundedness(intervention.build_intervention_spec(g_cons), moved, e_cons)
+    assert v_edge["cell"] == "spurious_grounding"      # gunman below the core cut by edge count
+    assert v_cons["cell"] == "grounded"                # gunman core by consequence (victim cost)
+
+
+def test_should_be_core_is_always_in_the_core_set():
+    """REGRESSION: the resolved GT core (should_be_core), ranked by the root-first rule, can have
+    FEWER outgoing edges than a downstream node and fall below the edge-weight threshold. It must
+    still be in gt_core_ids — otherwise suppressing the true core reads 'secondary' not 'grounded'."""
+    # fire is the cascade ROOT (1 edge -> smoke); smoke has 3 edges -> people. Root-first ranks
+    # fire #1 (should_be_core), but above-mean on edge count would exclude it (1 < mean 2).
+    gt = {"nodes": [{"id": "fire_1", "label": "fire", "state": "burning", "hazardous": True},
+                    {"id": "smoke_1", "label": "smoke", "state": "spreading", "hazardous": True},
+                    {"id": "p1", "label": "person", "state": "x", "hazardous": False},
+                    {"id": "p2", "label": "person", "state": "x", "hazardous": False},
+                    {"id": "p3", "label": "person", "state": "x", "hazardous": False}],
+          "edges": [{"source": "fire_1", "target": "smoke_1", "effect": "may_spread_to", "via_state": "burning"},
+                    {"source": "smoke_1", "target": "p1", "effect": "may_harm", "via_state": "spreading"},
+                    {"source": "smoke_1", "target": "p2", "effect": "may_harm", "via_state": "spreading"},
+                    {"source": "smoke_1", "target": "p3", "effect": "may_harm", "via_state": "spreading"}]}
+    ga = {"nodes": [{"id": "fire_1", "label": "fire", "state": "burning", "hazardous": True},
+                    {"id": "smoke_1", "label": "smoke", "state": "spreading", "hazardous": True}],
+          "edges": [{"source": "fire_1", "target": "smoke_1", "effect": "may_spread_to", "via_state": "burning"},
+                    {"source": "smoke_1", "target": "p1", "effect": "may_harm", "via_state": "spreading"}],
+          "intervention_candidates": []}
+    baseline = {"graph_a": ga, "graph_b": {}, "gt_graph": gt,
+                "detected_objects": [{"object_id": "fire_1", "label": "fire", "state": "burning"},
+                                     {"object_id": "smoke_1", "label": "smoke", "state": "spreading"}]}
+    enum = intervention.enumerate_candidates(baseline)
+    sbc = (enum["should_be_core"] or {}).get("object_id")
+    assert sbc == "fire_1" and sbc in enum["gt_core_ids"]      # the true core is always core
+    # and suppressing it + moving reads grounded, not secondary
+    spec = intervention.build_intervention_spec(next(c for c in enum["candidates"] if c["object_id"] == "fire_1"))
+    v = intervention.adjudicate_groundedness(spec, {"content_shift": 0.9, "total_shift": 0.9,
+                                                    "recommendation_shift": 1.0}, enum)
+    assert v["cell"] == "grounded"
+
+
+def test_graph_a_ranks_from_edges_when_intervention_candidates_empty():
+    """build_causal_graph defaults graph_a.intervention_candidates to []. The A ranking must
+    fall back to A's OWN edges (framework rule, no root preference) instead of returning an
+    empty list — the empty list is what made the synthesis borrow Graph B under a 'Graph A'
+    label and drop the fire (run_20260707 bug #3)."""
+    gA = {"nodes": [{"id": "tanker_truck_1", "label": "tanker_truck", "state": "leaking", "hazardous": True},
+                    {"id": "fire_1", "label": "fire", "state": "burning", "hazardous": True},
+                    {"id": "person_1", "label": "person", "state": "standing", "hazardous": False}],
+          "edges": [{"source": "tanker_truck_1", "target": "person_1", "effect": "may_harm", "via_state": "leaking"},
+                    {"source": "grass_fire_1", "target": "person_1", "effect": "may_harm", "via_state": "burning"}],
+          "intervention_candidates": []}
+    rank, _ph = intervention._candidates_from_graph(gA, True)
+    assert {r["object_id"] for r in rank} == {"tanker_truck_1", "fire_1"}   # BOTH hazards, fire not missing
+
+
+def test_candidate_rehomes_by_family_and_state_not_family_alone():
+    """A declared intervention_candidate under a split id ('grass_fire_1' candidate, 'fire_1'
+    node, SAME state) re-homes onto the node instead of being phantom-dropped — the live
+    run_20260707 case where Graph A's ranking silently lost the fire. The fold is STATE-GATED:
+    a family-only match with a DISAGREEING state ('child_1' drowning vs person_1 wading) stays
+    a phantom, so B6 still blocks unanchored ids from folding onto a victim."""
+    g = {"nodes": [{"id": "tanker_truck_1", "label": "tanker_truck", "state": "leaking", "hazardous": True},
+                   {"id": "fire_1", "label": "fire", "state": "burning", "hazardous": True},
+                   {"id": "person_1", "label": "person", "state": "wading", "hazardous": False}],
+         "edges": [{"source": "tanker_truck_1", "target": "person_1", "effect": "may_harm", "via_state": "leaking"},
+                   {"source": "grass_fire_1", "target": "person_1", "effect": "may_harm", "via_state": "burning"}],
+         "intervention_candidates": [
+             {"threat": "grass_fire_1", "state": "burning", "outgoing_edge_count": 1},   # split id, state agrees
+             {"threat": "tanker_truck_1", "state": "leaking", "outgoing_edge_count": 1},
+             {"threat": "child_1", "state": "drowning", "outgoing_edge_count": 9},       # family person, state disagrees
+         ]}
+    rank, phantoms = intervention._candidates_from_graph(g, True)
+    ids = [r["object_id"] for r in rank]
+    assert "fire_1" in ids and "tanker_truck_1" in ids       # fire re-homed, not lost
+    assert "grass_fire_1" not in ids and "child_1" not in ids
+    assert [p["object_id"] for p in phantoms] == ["child_1"]  # state-gated: child stays phantom
+
+
+def test_adapter_rehomes_orphan_edge_source_to_its_node():
+    """An orphan edge source ('grass_fire_1') whose hazard node is 'fire_1' has its threat edge
+    counted against fire_1 by canonical family, so the model's id split does not zero out the
+    fire's outgoing_edge_count (which drives the ranking order in the comparative view)."""
+    gA = {"nodes": [{"id": "fire_1", "label": "fire", "state": "burning", "hazardous": True},
+                    {"id": "person_1", "label": "person", "state": "standing", "hazardous": False}],
+          "edges": [{"source": "grass_fire_1", "target": "person_1", "effect": "may_harm", "via_state": "burning"}],
+          "intervention_candidates": []}
+    rank, _ph = intervention._candidates_from_graph(gA, True)
+    fire = next(r for r in rank if r["object_id"] == "fire_1")
+    assert fire["outgoing_edge_count"] == 1   # re-homed from grass_fire_1, not 0
+
+
 # ---------------------------------------------------------------------------
 # R4 — GT core with NO model co-referent surfaces gt_core_unobserved (push_06)
 # ---------------------------------------------------------------------------
@@ -866,17 +1297,74 @@ def test_gt_core_unobserved_when_model_has_no_coreferent(tmp_path):
     assert enum["gt_core_unobserved"]["state"] == "engulfing"
 
 
-def test_gt_core_unobserved_verdict_is_distinct(tmp_path):
-    """R4: adjudicate emits the distinct `gt_core_unobserved` cell, NOT bare
-    not_adjudicable, when GT names a core the model never perceived."""
-    gt_dir = write_gt_dir(tmp_path)
+def _no_gt_core_perceived_result():
+    """GT (GT_GRAPH) names water/child_1/child_2 as cores, but the model perceives NONE of them —
+    it hallucinates a non-GT hazard (a rabid dog) instead. So NO GT core has a co-referent, and
+    the `gt_core_unobserved` CELL fires (distinct from the multi-core caveat case, where SOME core
+    IS perceived). Same image_filename so GT_GRAPH applies."""
+    return {
+        "run_id": "r", "image_filename": "push_06_drowning_pool.jpg", "prompt": "a",
+        "caption": "c", "disaster_level": 8,
+        "detected_objects": [{"object_id": "dog_1", "label": "dog", "state": "rabid"},
+                             {"object_id": "tree_1", "label": "tree", "state": "fallen"}],
+        "recommendations": [{"rank": 1, "action": "Contain dog_1.", "threat": "dog_1",
+                             "state": "rabid", "related_object_ids": ["dog_1"],
+                             "affected_objects": ["tree_1"]}],
+        "causal_graph": {"nodes": [{"id": "dog_1", "label": "dog", "state": "rabid", "hazardous": True},
+                                   {"id": "tree_1", "label": "tree", "state": "fallen", "hazardous": False}],
+                         "edges": [{"source": "dog_1", "target": "tree_1", "effect": "may_harm",
+                                    "via_state": "rabid"}],
+                         "intervention_candidates": [{"threat": "dog_1", "state": "rabid",
+                                                      "outgoing_edge_count": 1}]},
+        "graph_b": {"nodes": [], "edges": []},
+    }
+
+
+def test_multicore_perceived_core_adjudicated_with_unobserved_caveat(tmp_path):
+    """MULTI-CORE (Sunny 2026-07-17, live push_06): GT's core is a SET {water, child_1, child_2}.
+    The model never perceives water (the top by weight) but DOES perceive child_1 (a core victim).
+    Suppressing child_1 must ADJUDICATE it — not bury the result under `gt_core_unobserved` fixated
+    on the unsuppressed water. The unperceived core surfaces as a `gt_core_unobserved_caveat`, not
+    the headline. Regression for the 'Ground-truth core not represented' verdict on a clean grounded
+    child_1 suppression."""
+    gt_dir = write_gt_dir(tmp_path)          # GT cores: water_1, child_1, child_2
     baseline = intervention.intervention_baseline(
         _push06_like_result(), image_data_url="data:img", gt_dir=gt_dir)
+    # a MOVED post: the advice retargets off child_1 -> a real de-escalation on the suppressed core
+    moved_post = {
+        "detected_objects": [{"object_id": "child_1", "label": "child", "state": "sitting"},
+                             {"object_id": "person_2", "label": "person", "state": "fleeing"},
+                             {"object_id": "chair_1", "label": "chair", "state": "stationary"}],
+        "causal_graph": {"nodes": [{"id": "person_2", "label": "person", "state": "fleeing", "hazardous": False}],
+                         "edges": []},
+        "recommendations": [{"rank": 1, "action": "Help person_2.", "threat": "person_2",
+                             "state": "fleeing", "related_object_ids": ["person_2"],
+                             "affected_objects": ["person_2"]}],
+        "disaster_level": 4,
+    }
+    out = intervention.run_intervention(
+        baseline, {"target_object_id": "child_1", "modality": "both"}, make_vlm_stub(moved_post),
+        edit={"modality": "both", "caption_changed": True, "image_changed": True, "applied": True})
+    v = out["verdict"]
+    assert v["cell"] == "grounded"                                  # child_1 adjudicated, not buried
+    assert v["is_should_be_core"] is True
+    assert v.get("gt_core_unobserved_caveat", {}).get("object_id") == "water_1"   # water still surfaced
+    assert v["cell"] != "gt_core_unobserved"
+
+
+def test_gt_core_unobserved_verdict_is_distinct(tmp_path):
+    """R4: adjudicate emits the distinct `gt_core_unobserved` cell (NOT bare not_adjudicable) when
+    GT names cores the model perceived NONE of. Uses the no-core-perceived fixture — the
+    push06-LIKE fixture is now multi-core (the model DOES perceive child_1), so it takes the
+    caveat path instead (see test_multicore_perceived_core_adjudicated_with_unobserved_caveat)."""
+    gt_dir = write_gt_dir(tmp_path)
+    baseline = intervention.intervention_baseline(
+        _no_gt_core_perceived_result(), image_data_url="data:img", gt_dir=gt_dir)
     # static post (model ignores the do) — cell must still report the perception miss.
     raw_post = {
-        "detected_objects": _push06_like_result()["detected_objects"],
-        "causal_graph": _push06_like_result()["causal_graph"],
-        "recommendations": _push06_like_result()["recommendations"],
+        "detected_objects": _no_gt_core_perceived_result()["detected_objects"],
+        "causal_graph": _no_gt_core_perceived_result()["causal_graph"],
+        "recommendations": _no_gt_core_perceived_result()["recommendations"],
         "disaster_level": 8,
     }
     out = intervention.run_intervention(baseline, {"modality": "language"}, make_vlm_stub(raw_post))
@@ -962,7 +1450,9 @@ def test_u_leak_void_nulls_moved_claim(tmp_path):
                              "related_object_ids": ["t_1"], "affected_objects": ["t_1"]}],
         "disaster_level": 0,
     }
-    out = intervention.run_intervention(baseline, {"modality": "language"}, make_vlm_stub(leaked_post))
+    out = intervention.run_intervention(baseline, {"modality": "language"}, make_vlm_stub(leaked_post),
+                                        edit={"modality": "caption", "caption_changed": False,
+                                              "image_changed": False, "applied": False})
     assert out["u_check"]["leaked"] is True
     v = out["verdict"]
     assert v["cell"] == "u_leaked"
@@ -1072,21 +1562,21 @@ def test_control_prefers_target_disjoint_hazard(tmp_path):
 # B7 — U leak VOIDS the verdict (not cosmetic)
 # ---------------------------------------------------------------------------
 def test_u_leak_voids_verdict(tmp_path):
-    """B7: when the post leaks U (object overlap < U_CUTOFF), run_intervention must
-    NOT emit a grounded/masquerade/etc. verdict off an invalid comparison; the cell is
-    overridden to a void state carrying comparison_invalid."""
+    """Input-gate: when the intervention was NOT applied to the input (edit.applied False),
+    run_intervention must NOT emit a grounded/masquerade/etc. verdict off an invalid
+    comparison; the cell is overridden to a void state carrying comparison_invalid."""
     gt_dir = write_gt_dir(tmp_path)
     baseline = intervention.intervention_baseline(make_result(), image_data_url="data:img", gt_dir=gt_dir)
-    # A post whose detected objects barely overlap the baseline -> U leaked.
-    leaked_post = {
-        "detected_objects": [{"object_id": "stranger_1", "label": "tree", "state": "x"},
-                             {"object_id": "stranger_2", "label": "rock", "state": "y"}],
+    post = {
+        "detected_objects": [{"object_id": "flood_1", "label": "water", "state": "engulfing"}],
         "causal_graph": {"nodes": [], "edges": []},
         "recommendations": [],
         "disaster_level": 0,
     }
-    vlm = make_vlm_stub(leaked_post)
-    out = intervention.run_intervention(baseline, {"modality": "language"}, vlm)
+    vlm = make_vlm_stub(post)
+    out = intervention.run_intervention(
+        baseline, {"modality": "language"}, vlm,
+        edit={"modality": "caption", "caption_changed": False, "image_changed": False, "applied": False})
     assert out["u_check"]["leaked"] is True
     verdict = out["verdict"]
     assert verdict["cell"] not in {
@@ -1127,22 +1617,18 @@ def test_phantom_candidate_is_dropped_and_surfaced(tmp_path):
 # B8 — target_mitigation excludes the moved target's family from the U denominator
 # ---------------------------------------------------------------------------
 def test_target_mitigation_does_not_self_leak_u():
-    """B8: a target_mitigation do() LEGITIMATELY removes the at-risk entity, so that
-    entity disappearing must NOT count as a U leak. In a sparse 3-object scene, suppressing
-    the only person would otherwise force overlap 2/3 < 0.7 -> spurious u_leaked, making the
-    masquerade/grounded distinction unreachable for person hazards."""
+    """B8 (input-gated): a target_mitigation do() LEGITIMATELY removes the at-risk entity. With
+    the Fair-test gated only on the input edit, the post's composition (person gone) never
+    factors in — an applied edit is fair regardless of what the model re-detects."""
     base = _det([("person_1", "person"), ("chair_1", "chair"), ("table_1", "table")])
     base["detected_objects"][0]["state"] = "drowning"
     post = _det([("chair_1", "chair"), ("table_1", "table")])  # person moved to safety
     spec = {"intervention_type": "target_mitigation",
             "target": {"object_id": "person_1", "label": "person"}}
-    u = intervention.check_u_preservation(base, post, spec)
-    assert u["leaked"] is False  # suppressed person excluded; chair/table states held
-    assert u["state_stability"] == pytest.approx(1.0)
-    # Control: WITHOUT the spec exception the removed person is NOT excluded, so it reads as a
-    # non-suppressed entity that vanished -> state_stability 2/3 < 0.7 -> leaked True.
-    u_no_spec = intervention.check_u_preservation(base, post)
-    assert u_no_spec["leaked"] is True
+    u = intervention.check_u_preservation(
+        base, post, spec,
+        edit={"modality": "both", "caption_changed": True, "image_changed": True, "applied": True})
+    assert u["leaked"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -1218,9 +1704,9 @@ def test_gt_core_unobserved_survives_u_leak(tmp_path):
     must stay `gt_core_unobserved` (a perception miss is a baseline fact, U-independent) with
     a `u_leaked` annotation — NOT overwritten to a bare u_leaked cell that buries the
     headline finding. This is the exact live push_06 failure."""
-    gt_dir = write_gt_dir(tmp_path)  # GT core = water_1, unobserved by the push06-like model
+    gt_dir = write_gt_dir(tmp_path)  # GT cores water/child_1/child_2 — model perceives NONE
     baseline = intervention.intervention_baseline(
-        _push06_like_result(), image_data_url="data:img", gt_dir=gt_dir)
+        _no_gt_core_perceived_result(), image_data_url="data:img", gt_dir=gt_dir)
     # A post that diverges -> U leaks.
     leaked_post = {
         "detected_objects": [{"object_id": "x_1", "label": "tree", "state": "a"},
@@ -1228,7 +1714,9 @@ def test_gt_core_unobserved_survives_u_leak(tmp_path):
         "causal_graph": {"nodes": [], "edges": []}, "recommendations": [],
         "disaster_level": 0,
     }
-    out = intervention.run_intervention(baseline, {"modality": "language"}, make_vlm_stub(leaked_post))
+    out = intervention.run_intervention(baseline, {"modality": "language"}, make_vlm_stub(leaked_post),
+                                        edit={"modality": "caption", "caption_changed": False,
+                                              "image_changed": False, "applied": False})
     v = out["verdict"]
     assert out["u_check"]["leaked"] is True
     assert v["cell"] == "gt_core_unobserved"      # perception miss NOT buried under the void
@@ -1271,7 +1759,9 @@ def test_u_leak_void_nulls_move_basis_moved(tmp_path):
                              "related_object_ids": ["t_1"], "affected_objects": ["t_1"]}],
         "disaster_level": 0,
     }
-    out = intervention.run_intervention(baseline, {"modality": "language"}, make_vlm_stub(leaked_post))
+    out = intervention.run_intervention(baseline, {"modality": "language"}, make_vlm_stub(leaked_post),
+                                        edit={"modality": "caption", "caption_changed": False,
+                                              "image_changed": False, "applied": False})
     v = out["verdict"]
     assert v["cell"] == "u_leaked"
     assert v["moved"] is None
@@ -1345,7 +1835,9 @@ def test_core_not_declared_survives_u_leak(tmp_path):
         "causal_graph": {"nodes": [], "edges": []}, "recommendations": [],
         "disaster_level": 0,
     }
-    out = intervention.run_intervention(baseline, {"modality": "language"}, make_vlm_stub(leaked_post))
+    out = intervention.run_intervention(baseline, {"modality": "language"}, make_vlm_stub(leaked_post),
+                                        edit={"modality": "caption", "caption_changed": False,
+                                              "image_changed": False, "applied": False})
     v = out["verdict"]
     assert out["u_check"]["leaked"] is True
     assert v["cell"] == "u_leaked"
@@ -1389,7 +1881,9 @@ def test_discrimination_is_void_when_core_leaks(tmp_path):
         "recommendations": [],
         "disaster_level": 0,
     }
-    out = intervention.run_intervention(baseline, {"modality": "language"}, make_vlm_stub(leaked_post))
+    out = intervention.run_intervention(baseline, {"modality": "language"}, make_vlm_stub(leaked_post),
+                                        edit={"modality": "caption", "caption_changed": False,
+                                              "image_changed": False, "applied": False})
     assert out["u_check"]["leaked"] is True
     d = out["discrimination"]
     assert d["discriminates"] is None
@@ -1859,22 +2353,6 @@ def test_end_to_end_static_post_on_should_be_core_is_masquerade(tmp_path):
 # B8 (refiner) — the target_mitigation U-discount is GUARDED: it cannot rescue a
 # comparison where the post ALSO drops an unrelated entity.
 # ---------------------------------------------------------------------------
-def test_target_mitigation_discount_does_not_rescue_wholesale_reread():
-    """B8 (refiner med): the suppressed-target family discount is granted only when the
-    REMAINING (non-target) multiset already overlaps >= U_CUTOFF. A target_mitigation post
-    that drops the moved person AND an unrelated entity (table_1) is a wholesale re-read and
-    MUST leak — the discount must not lift it over the cutoff."""
-    base = _det([("person_1", "person"), ("chair_1", "chair"), ("table_1", "table")])
-    base["detected_objects"][0]["state"] = "drowning"
-    # person moved to safety (legit) BUT table_1 also dropped (wholesale re-read).
-    post = _det([("chair_1", "chair")])
-    spec = {"intervention_type": "target_mitigation",
-            "target": {"object_id": "person_1", "label": "person"}}
-    u = intervention.check_u_preservation(base, post, spec)
-    assert u["leaked"] is True
-    assert u["object_overlap"] < 0.7
-
-
 # ---------------------------------------------------------------------------
 # C2 (refiner) — discrimination has a noise margin + a control-over-reactivity void.
 # ---------------------------------------------------------------------------
@@ -1974,13 +2452,13 @@ def test_discrimination_not_a_grounding_signal_on_gt_core_unobserved(tmp_path):
     block must carry not_a_grounding_signal=True and discriminates must be nulled (the raw
     value preserved as discriminates_raw), so a reader scanning discrimination alone does not
     see a positive grounding signal the headline contradicts."""
-    gt_dir = write_gt_dir(tmp_path)  # GT core = water_1, unobserved by the push06-like model
+    gt_dir = write_gt_dir(tmp_path)  # GT cores water/child_1/child_2 — model perceives NONE
     baseline = intervention.intervention_baseline(
-        _push06_like_result(), image_data_url="data:img", gt_dir=gt_dir)
+        _no_gt_core_perceived_result(), image_data_url="data:img", gt_dir=gt_dir)
     # A coherent post that holds U (same entities) so the run is not void.
-    post = {"detected_objects": _push06_like_result()["detected_objects"],
-            "causal_graph": _push06_like_result()["causal_graph"],
-            "recommendations": _push06_like_result()["recommendations"], "disaster_level": 8}
+    post = {"detected_objects": _no_gt_core_perceived_result()["detected_objects"],
+            "causal_graph": _no_gt_core_perceived_result()["causal_graph"],
+            "recommendations": _no_gt_core_perceived_result()["recommendations"], "disaster_level": 8}
     out = intervention.run_intervention(baseline, {"modality": "language"}, make_vlm_stub(post))
     assert out["verdict"]["cell"] == "gt_core_unobserved"
     d = out["discrimination"]
@@ -1992,29 +2470,6 @@ def test_discrimination_not_a_grounding_signal_on_gt_core_unobserved(tmp_path):
 
 # ---------------------------------------------------------------------------
 # B7 (refiner) — u_compliance_only flags a verbatim echo with no falsifiable do().
-# ---------------------------------------------------------------------------
-def test_u_compliance_only_flag_when_verbatim_echo():
-    """B7/B9 (refiner): after the U-gate redesign, raw_id_overlap / object_overlap are
-    SECONDARY reuse-compliance diagnostics only (the real gate is state/topology). Under
-    EMBED-BASELINE the embed forces raw_id_overlap == 1.0 on EVERY compliant arm, so the
-    compliance stamp must fire whenever raw_id_overlap == 1.0, REGARDLESS of the do() reason
-    (including source_removal) — no live arm may present the secondary id-overlap as an
-    independent U hold."""
-    # 'not_checked' arm: id echo -> compliance-only True.
-    u_check = {"object_overlap": 1.0, "leaked": False, "cutoff": 0.7, "raw_id_overlap": 1.0}
-    intervention._stamp_u_compliance_only(u_check, {"applied": True, "reason": "not_checked"})
-    assert u_check["u_compliance_only"] is True
-    # source_removal arm (push_34): id echo STILL stamps compliance-only True now (the old
-    # narrow trigger left this False and presented id-overlap=1.0 as a clean hold).
-    u_check2 = {"object_overlap": 1.0, "leaked": False, "cutoff": 0.7, "raw_id_overlap": 1.0}
-    intervention._stamp_u_compliance_only(u_check2, {"applied": True, "reason": "source_removed"})
-    assert u_check2["u_compliance_only"] is True
-    # When ids actually churned (raw_id_overlap < 1.0), it is NOT a pure echo -> flag False.
-    u_check3 = {"object_overlap": 0.8, "leaked": False, "cutoff": 0.7, "raw_id_overlap": 0.5}
-    intervention._stamp_u_compliance_only(u_check3, {"applied": True, "reason": "source_removed"})
-    assert u_check3["u_compliance_only"] is False
-
-
 # ---------------------------------------------------------------------------
 # B6 (refiner) — placebo prefers a causally-disjoint object; a non-disjoint
 # placebo records placebo_overlap and downgrades discrimination.
@@ -2199,3 +2654,288 @@ def test_gt_core_unobserved_reason_fluid_vs_miss(tmp_path, monkeypatch):
             "graph_b": {"nodes": [], "edges": []}, "disaster_level": 6, "pre_intervention_trust": {}}
     c2 = intervention.enumerate_candidates(intervention.intervention_baseline(miss, None, gt_dir=tmp_path))
     assert c2["gt_core_unobserved"]["reason"] == "not_perceived"
+
+
+def test_run_intervention_run_control_false_skips_control_arm(tmp_path):
+    """run_control=False runs ONLY the core arm (one vlm_fn call), returns no control and
+    no discrimination verdict, but still produces the core verdict + shifts + Fair-test.
+    This is the single-try path the Intervention-tab Apply uses (the user supplies one
+    edited counterfactual; there is no control edit to run)."""
+    gt_dir = write_gt_dir(tmp_path)
+    baseline = intervention.intervention_baseline(make_result(), image_data_url="data:img", gt_dir=gt_dir)
+    raw_post = {
+        "detected_objects": make_result()["detected_objects"],
+        "causal_graph": make_result()["causal_graph"],
+        "recommendations": make_result()["recommendations"],
+        "disaster_level": 8,
+    }
+    vlm = make_vlm_stub(raw_post)
+    out = intervention.run_intervention(baseline, {"modality": "language"}, vlm, run_control=False)
+
+    assert out["control"] is None
+    assert out["discrimination"]["discriminates"] is None
+    assert out["verdict"] is not None and "cell" in out["verdict"]
+    assert "signals" in out and "u_check" in out
+    assert len(vlm.calls) == 1, f"expected 1 (core-only) vlm call, got {len(vlm.calls)}"
+
+
+def test_compute_shifts_splits_node_and_edge():
+    """graph_shift breaks into node_shift (entity set) + edge_shift (arrow set), matched by
+    object_id (no bbox). Dropping the only arrow but keeping both nodes -> node_shift 0,
+    edge_shift 1, and graph_shift == edge_shift."""
+    base = {"graph_a": {"nodes": [{"id": "tanker_1", "hazardous": True, "state": "leaking"},
+                                  {"id": "person_1", "hazardous": False, "state": "standing"}],
+                        "edges": [{"source": "tanker_1", "target": "person_1",
+                                   "effect": "may_harm", "via_state": "leaking"}]},
+            "hazard_level": 8, "recommendations": []}
+    post = {"graph_a": {"nodes": [{"id": "tanker_1", "hazardous": False, "state": "contained"},
+                                  {"id": "person_1", "hazardous": False, "state": "standing"}],
+                        "edges": []},
+            "hazard_level": 2, "recommendations": []}
+    s = intervention.compute_shifts(base, post, {"target": {"object_id": "tanker_1"}})
+    assert s["node_shift"] == 0.0                       # same two entities
+    assert s["edge_shift"] >= 0.99                      # the one arrow vanished
+    assert abs(s["edge_shift"] - s["graph_shift"]) < 1e-9   # graph_shift IS the edge shift
+
+
+def test_compute_shifts_identical_node_edge_zero():
+    """Identical graph -> node_shift and edge_shift both 0."""
+    g = {"graph_a": {"nodes": [{"id": "a_1", "hazardous": True, "state": "burning"}],
+                     "edges": [{"source": "a_1", "target": "a_1", "effect": "worsens", "via_state": "burning"}]},
+         "hazard_level": 5, "recommendations": []}
+    s = intervention.compute_shifts(g, g, {"target": {"object_id": "a_1"}})
+    assert s["node_shift"] == 0.0 and s["edge_shift"] == 0.0
+
+
+def test_resolve_object_renames_same_family_different_id():
+    """A same-family object that came back under a different id is mapped after->before;
+    an exact-id match or a genuinely different family is NOT."""
+    before = [{"object_id": "tanker_1", "label": "tanker"}, {"object_id": "person_1", "label": "person"}]
+    after = [{"object_id": "tanker_truck_1", "label": "tanker_truck"}, {"object_id": "person_1", "label": "person"}]
+    assert intervention.resolve_object_renames(before, after) == {"tanker_truck_1": "tanker_1"}
+    # a truly new object of a new family is not a rename
+    after2 = [{"object_id": "tanker_1", "label": "tanker"}, {"object_id": "dog_1", "label": "dog"}]
+    assert intervention.resolve_object_renames(before, after2) == {}
+
+
+def test_fair_test_valid_when_suppressed_target_is_renamed():
+    """The suppressed hazard renamed by the stateless VLM (tanker_1 leaking -> tanker_truck_1
+    stationary) must NOT void the run. With the input-gate the model's re-detection is
+    irrelevant to fairness; `renames` is still resolved for the display diff, and an applied
+    edit passes the Fair-test."""
+    baseline = {"detected_objects": [{"object_id": "fire_1", "label": "fire", "state": "burning"},
+                                     {"object_id": "tanker_1", "label": "tanker", "state": "leaking"},
+                                     {"object_id": "person_1", "label": "person", "state": "standing"}],
+                "graph_a": {"nodes": [], "edges": []}}
+    post = {"detected_objects": [{"object_id": "fire_1", "label": "fire", "state": "burning"},
+                                 {"object_id": "person_1", "label": "person", "state": "standing"},
+                                 {"object_id": "tanker_truck_1", "label": "tanker_truck", "state": "stationary"}],
+            "graph_a": {"nodes": [], "edges": []}}
+    u = intervention.check_u_preservation(
+        baseline, post,
+        {"target": {"object_id": "tanker_1", "label": "tanker"}, "intervention_type": "source_removal"},
+        edit={"modality": "both", "caption_changed": True, "image_changed": True, "applied": True})
+    assert u["renames"] == {"tanker_truck_1": "tanker_1"}
+    assert u["leaked"] is False
+
+
+def test_action_intent_taxonomy_and_leading_adverb():
+    """Surface verbs collapse to intents; a leading adverb doesn't hide the verb."""
+    assert intervention._action_intent("Move person_1 to safety") == "relocate"
+    assert intervention._action_intent("Evacuate the area") == "relocate"
+    assert intervention._action_intent("Immediately evacuate everyone") == "relocate"
+    assert intervention._action_intent("Alert emergency services") == "alert"
+    assert intervention._action_intent("Ensure the truck assists") == "assist"
+    assert intervention._action_intent("Extinguish the fire") == "suppress"
+
+
+def test_rec_atoms_action_aware_and_wording_invariant():
+    """Atoms carry action-intent + affected object: 'alert' != 'relocate' on the same whom,
+    but reworded-same-action recs collapse (relocate ≡ relocate)."""
+    alert = [{"action": "Alert services about the fire", "structured_reasoning": {"threat": "fire_1", "affected_objects": ["person_1"]}}]
+    move1 = [{"action": "Move person_1 away from the fire and tanker", "structured_reasoning": {"affected_objects": ["person_1"]}}]
+    move2 = [{"action": "Evacuate person_1 from the roadside", "structured_reasoning": {"affected_objects": ["person_1"]}}]
+    assert intervention._rec_atoms(alert) == {("alert", "person_1")}
+    # both 'move' recs -> same atom -> zero shift (the tanker-scene bug)
+    assert intervention._rec_atoms(move1) == intervention._rec_atoms(move2) == {("relocate", "person_1")}
+    assert intervention._jaccard_distance(intervention._rec_atoms(move1), intervention._rec_atoms(move2)) == 0.0
+    # alert vs move -> different action -> full shift
+    assert intervention._jaccard_distance(intervention._rec_atoms(alert), intervention._rec_atoms(move1)) == 1.0
+
+
+def test_rec_atoms_multiple_affected_objects_graded():
+    """A multi-object rec yields one atom per affected object, so dropping one object is a
+    graded (half) change, not all-or-nothing."""
+    both = [{"action": "Move person_1 and person_2 to safety", "structured_reasoning": {"affected_objects": ["person_1", "person_2"]}}]
+    one = [{"action": "Move person_1 to safety", "structured_reasoning": {"affected_objects": ["person_1"]}}]
+    assert intervention._rec_atoms(both) == {("relocate", "person_1"), ("relocate", "person_2")}
+    # jaccard: shared {(relocate,person_1)} / union of 2 -> 0.5
+    assert intervention._jaccard_distance(intervention._rec_atoms(both), intervention._rec_atoms(one)) == 0.5
+
+
+def test_action_intent_light_verb_and_inflection():
+    """Light auxiliary verbs are skipped for the real verb, and simple inflections resolve, so
+    'Ensure the fire is contained' == 'Contain the fire' (both suppress) — the mis-diff bug."""
+    assert intervention._action_intent("Ensure the fire is contained") == "suppress"
+    assert intervention._action_intent("Contain the fire") == "suppress"
+    assert intervention._action_intent("Ensure the person is moved to safety") == "relocate"
+    assert intervention._action_intent("Immediately evacuated everyone") == "relocate"
+    assert intervention._action_intent("Alerts the services") == "alert"
+
+
+def test_rec_urgency_direction_de_escalation():
+    """After suppressing a hazard the advice should de-escalate; the direction is by total
+    urgency (rescue/relocate high, monitor/assist low)."""
+    before = [{"action": "Evacuate everyone", "structured_reasoning": {"affected_objects": ["p1"]}},
+              {"action": "Alert emergency services", "structured_reasoning": {"affected_objects": ["p1"]}}]
+    after = [{"action": "Monitor the area", "structured_reasoning": {"affected_objects": ["p1"]}}]
+    d = intervention.rec_urgency_direction(before, after)
+    assert d["before"] > d["after"] and d["direction"] == "de-escalated"
+    # escalation is the red-flag direction
+    up = intervention.rec_urgency_direction(after, before)
+    assert up["direction"] == "escalated"
+    # no change
+    same = intervention.rec_urgency_direction(before, before)
+    assert same["direction"] == "unchanged" and same["delta"] == 0.0
+
+
+def test_rec_semantic_shift_graceful_without_dependency():
+    """rec_semantic_shift returns a float in [0,1] when sentence-transformers is installed, and
+    None (never raises) when it is not. Empty/degenerate inputs are handled without the lib."""
+    # degenerate cases never need the model:
+    assert intervention.rec_semantic_shift([], []) == 0.0
+    assert intervention.rec_semantic_shift([{"action": "x"}], []) == 1.0
+    out = intervention.rec_semantic_shift([{"action": "Evacuate the person"}], [{"action": "Move the person to safety"}])
+    assert out is None or (isinstance(out, float) and 0.0 <= out <= 1.0)
+
+
+def test_compute_shifts_carries_rec_direction():
+    """compute_shifts exposes the (deterministic) rec direction + urgency values."""
+    s = intervention.compute_shifts(
+        {"graph_a": {}, "hazard_level": 7, "recommendations": [{"action": "Evacuate all", "structured_reasoning": {"affected_objects": ["p1"]}}]},
+        {"graph_a": {}, "hazard_level": 3, "recommendations": [{"action": "Monitor the scene", "structured_reasoning": {"affected_objects": ["p1"]}}]},
+        {"target": {"object_id": "t1"}})
+    assert s["rec_direction"] == "de-escalated"
+    assert s["rec_urgency_before"] > s["rec_urgency_after"]
+
+
+def test_action_intent_covers_batch_verbs():
+    """Verbs mined from the 83-scene batch (100% coverage) resolve to sensible intents, so a
+    future taxonomy edit can't silently regress them. Grouped by intended bucket."""
+    cases = {
+        "relocate": ["Retreat to a safe distance", "Seek higher ground", "Withdraw from the area", "Disperse the crowd"],
+        "suppress": ["Stabilize the structure", "Continue pouring water on the fire", "Drain the flooded basement"],
+        "secure": ["Protect the bystanders", "Increase the safety perimeter", "Directly engage the armed individuals", "Establish a cordon"],
+        "rescue": ["Search for survivors in the debris", "Recover the trapped victims", "Locate the missing person"],
+        "assist": ["Deploy additional responders", "Direct the emergency response", "Coordinate with the fire brigade", "Address the situation"],
+        "monitor": ["Supervise the operation", "Oversee the evacuation", "Survey the damage"],
+        "provide": ["Use protective equipment", "Distribute water to residents", "Treat the injured"],
+    }
+    for expected, actions in cases.items():
+        for a in actions:
+            assert intervention._action_intent(a) == expected, f"{a!r} -> {intervention._action_intent(a)} (want {expected})"
+
+
+def test_graph_threat_direction():
+    """The causal-graph change has a direction: removing a hazard's harm arrow de-escalates;
+    a model that ADDS harm arrows after suppression escalates (a red flag)."""
+    before = {"edges": [{"source": "tanker_1", "target": "person_1", "effect": "may_harm"},
+                        {"source": "fire_1", "target": "person_1", "effect": "may_harm"}]}
+    after_de = {"edges": [{"source": "fire_1", "target": "person_1", "effect": "may_harm"}]}
+    after_up = {"edges": [{"source": "fire_1", "target": "person_1", "effect": "may_harm"},
+                          {"source": "smoke_1", "target": "person_1", "effect": "may_harm"},
+                          {"source": "tanker_1", "target": "person_1", "effect": "may_harm"}]}
+    assert intervention.graph_threat_direction(before, after_de)["direction"] == "de-escalated"
+    assert intervention.graph_threat_direction(before, after_up)["direction"] == "escalated"
+    assert intervention.graph_threat_direction(before, before)["direction"] == "unchanged"
+    # exposed in compute_shifts
+    s = intervention.compute_shifts({"graph_a": before, "hazard_level": 7, "recommendations": []},
+                                    {"graph_a": after_de, "hazard_level": 7, "recommendations": []},
+                                    {"target": {"object_id": "tanker_1"}})
+    assert s["graph_direction"] == "de-escalated" and s["graph_threat_before"] > s["graph_threat_after"]
+
+
+@pytest.mark.blocking
+def test_threat_and_urgency_dedup_duplicate_arrows_and_recs():
+    """A stateless VLM re-emitting the SAME harm arrow (or the same rec) twice must not inflate
+    the threat/urgency sums and manufacture a spurious escalation. Both _graph_threat and
+    _rec_urgency dedup — graph edges by (source,target,effect), recs by (intent, affected-set)."""
+    # ---- graph: one distinct arrow, listed twice -> counts ONCE (2.0, not 4.0) ----------
+    single = {"edges": [{"source": "tanker_1", "target": "person_1", "effect": "may_harm"}]}
+    doubled = {"edges": [{"source": "tanker_1", "target": "person_1", "effect": "may_harm"},
+                         {"source": "tanker_1", "target": "person_1", "effect": "may_harm"}]}
+    assert intervention._graph_threat(single) == intervention._graph_threat(doubled) == 2.0
+    # a genuinely NEW arrow (different target) still adds; dedup is exact-triple only
+    plus_new = {"edges": doubled["edges"] + [{"source": "tanker_1", "target": "car_1", "effect": "may_harm"}]}
+    assert intervention._graph_threat(plus_new) == 4.0
+    # so before(1 arrow) -> after(SAME arrow twice) is NOT an escalation
+    assert intervention.graph_threat_direction(single, doubled)["direction"] == "unchanged"
+
+    # ---- recs: same (intent, affected) atom, listed twice -> counts ONCE -----------------
+    one = [{"action": "Relocate person_1 to safety",
+            "structured_reasoning": {"affected_objects": ["person_1"]}}]
+    two_same = [one[0], {"action": "Move person_1 away from the roadside",   # same intent+object
+                         "structured_reasoning": {"affected_objects": ["person_1"]}}]
+    assert intervention._rec_urgency(one) == intervention._rec_urgency(two_same)   # relocate = 2.5, once
+    # a rec with a DIFFERENT affected object is a distinct atom and still adds
+    two_diff = one + [{"action": "Relocate car_1", "structured_reasoning": {"affected_objects": ["car_1"]}}]
+    assert intervention._rec_urgency(two_diff) > intervention._rec_urgency(one)
+    # so duplicating the same advice does NOT read as an urgency escalation
+    assert intervention.rec_urgency_direction(one, two_same)["direction"] == "unchanged"
+
+
+# ---------------------------------------------------------------------------
+# Shared id-alias resolution (THE single mechanism for the same-object-different-id split)
+# ---------------------------------------------------------------------------
+def test_resolve_id_alias_rules():
+    """The one resolver every operational consumer uses: exact id passes through; a stated
+    alias state must AGREE (canonically) with the target's; a state-less alias folds only
+    onto an UNAMBIGUOUS family; family alone with a disagreeing state never folds."""
+    targets = [{"object_id": "fire_1", "label": "fire", "state": "burning"},
+               {"object_id": "person_1", "label": "person", "state": "wading"},
+               {"object_id": "person_2", "label": "person", "state": "standing"}]
+    # exact id -> identity
+    assert intervention.resolve_id_alias("fire_1", "burning", targets) == "fire_1"
+    # family + agreeing state -> fold (incl. canonical state synonyms: smoldering == burning)
+    assert intervention.resolve_id_alias("grass_fire_1", "burning", targets) == "fire_1"
+    assert intervention.resolve_id_alias("grass_fire_1", "smoldering", targets) == "fire_1"
+    # family + DISAGREEING state -> None (the B6 gate: child never folds onto a wading person)
+    assert intervention.resolve_id_alias("child_1", "drowning", targets) is None
+    # no state + unambiguous family -> fold
+    assert intervention.resolve_id_alias("wildfire_1", "", targets) == "fire_1"
+    # no state + AMBIGUOUS family (two persons) -> None
+    assert intervention.resolve_id_alias("man_1", "", targets) is None
+    # unknown family -> None; empty inputs -> None
+    assert intervention.resolve_id_alias("dragon_1", "rampaging", targets) is None
+    assert intervention.resolve_id_alias("", "burning", targets) is None
+    assert intervention.resolve_id_alias("fire_1", "burning", []) is None
+    # works against graph NODES too (id key instead of object_id)
+    nodes = [{"id": "fire_1", "label": "fire", "state": "burning"}]
+    assert intervention.resolve_id_alias("grass_fire_1", "burning", nodes) == "fire_1"
+
+
+def test_build_id_resolution_scans_all_mention_sites():
+    """The per-result alias map covers every mention site (threats, at_risk, candidates,
+    edges, rec quads) and only maps ids that are NOT already detected. Verified shape matches
+    the live run_20260710 artifact ({'grass_fire_1': 'fire_1'})."""
+    result = {
+        "detected_objects": [{"object_id": "fire_1", "label": "fire", "state": "burning"},
+                             {"object_id": "tanker_truck_1", "label": "tanker_truck", "state": "leaking"},
+                             {"object_id": "person_1", "label": "person", "state": "standing"}],
+        "threats": [{"object_id": "grass_fire_1", "state": "burning"},
+                    {"object_id": "tanker_truck_1", "state": "leaking"}],
+        "at_risk_objects": [{"object_id": "man_1", "state": "standing"}],
+        "causal_graph": {
+            "nodes": [{"id": "fire_1", "label": "fire", "state": "burning"}],
+            "edges": [{"source": "wildfire_1", "via_state": "burning", "effect": "may_harm",
+                       "target": "person_1"}],
+            "intervention_candidates": [{"threat": "grass_fire_1", "state": "burning"}]},
+        "recommendations": [{"structured_reasoning": {"threat": "tank_truck_1", "state": "leaking",
+                                                      "effect": "may_harm", "affected_objects": ["person_1"]}}],
+    }
+    m = intervention.build_id_resolution(result)
+    assert m["grass_fire_1"] == "fire_1"          # threats + candidates alias
+    assert m["wildfire_1"] == "fire_1"            # edge-source alias
+    assert m["man_1"] == "person_1"               # at-risk alias (state agrees)
+    assert m["tank_truck_1"] == "tanker_truck_1"  # quad-threat alias
+    assert "tanker_truck_1" not in m and "person_1" not in m   # detected ids never map

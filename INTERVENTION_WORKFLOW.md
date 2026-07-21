@@ -85,11 +85,31 @@ adjudicate_groundedness -> {moved:bool, is_should_be_core:bool,
   cell:"grounded"|"masquerade"|"spurious_grounding"|"correctly_ignored"|"not_adjudicable",
   move_basis:{...}, explanation:str}     # not_adjudicable when is_should_be_core is unknown (no GT)
 
-compare_to_control -> {core_total_shift, control_total_shift, discriminates:bool}
-  # core_total_shift/control_total_shift = each run's total_shift; discriminates = core > control
+compare_to_control -> {core_total_shift, control_total_shift,
+                       core_content_shift, control_content_shift, content_basis:true,
+                       discriminates:bool|None}
+  # discrimination is computed on content_shift (mean of hazard+graph+recommendation), NOT
+  # total_shift (B2: structural/semantic deltas are ~0 under coherent re-route and dilute the
+  # mean toward the control). discriminates = core_content_shift > control_content_shift.
+  # control_run None (isolated call) -> discriminates None; run_intervention fills a placebo
+  # first so its end-to-end discriminates is a real bool (A1).
 
-run_intervention -> {baseline:{...summary}, spec, u_check, signals, verdict,
-                     control:{spec,signals,verdict}, discrimination}
+run_intervention -> {baseline:{...summary}, spec, u_check, do_applied, signals, verdict,
+                     post_composition, control:{spec,signals,u_check,do_applied,verdict,
+                     is_placebo,post_composition}, discrimination, candidates, selection_notes}
+  # do_applied (B5/B7): {applied:bool, reason, intervention_type} per arm — for
+  #   source_removal/edge_severance, applied=False/reason='source_persists' when the suppressed
+  #   source survives unchanged in the post graph (the do() was a no-op; U passing then certifies
+  #   a non-applied comparison). target_mitigation/placebo_null -> not_checked (applied True).
+  # verdict caveats (composable flags on the core verdict):
+  #   trust_caveat (C3), do_not_applied (B5/B7), discrimination_caveat (C4/C2/B8/B9 — stamped
+  #   when control ran, comparison valid, discriminates is False, and the cell is grounded/
+  #   spurious_grounding: the core moved no more than the control, so the explanation is
+  #   downgraded to 'moved but did NOT beat the control — grounding UNCONFIRMED').
+  # discrimination adds: control_kind ('placebo'|'hazard'|None), control_overlap (the REAL-hazard
+  #   control's confound status, reported independently of placebo substitution), and
+  #   has_real_hazard_control (False on a placebo-only scene, so it is not read as a clean control).
+  # control verdict adds placebo_not_a_finding when a placebo arm lands in a moved cell (B3/B6).
 ```
 
 ### Fixed rules (both Builder and Test-author honor identically)
@@ -116,8 +136,17 @@ run_intervention -> {baseline:{...summary}, spec, u_check, signals, verdict,
 5. **hazard_level** maps from the result's `disaster_level` (0-10).
 6. **U-preservation cutoff:** `U_CUTOFF = 0.7` (object-id Jaccard below this -> `leaked`).
 7. **No-GT / no-control outcomes:** no GT -> `should_be_core` None ->
-   `adjudicate` returns `not_adjudicable`. < 2 hazards -> `control` None ->
-   `compare_to_control` returns `discriminates: None` (skipped, not a failure).
+   `adjudicate` returns `not_adjudicable`. < 2 distinct GT hazards -> no real-hazard
+   `control`. **Placebo extension (refiner pass, A1):** when no clean real-hazard control
+   exists (< 2 GT hazards, or the only second hazard is causally correlated with the core),
+   `enumerate_candidates` emits a `placebo_control` (a non-hazard detected object) and
+   `run_intervention` runs it as the control arm. So the <2-hazard case is NOT skipped end to
+   end: `compare_to_control` returns a real `discriminates: bool` and `discrimination.
+   control_kind = "placebo"`. `compare_to_control(core, None)` in ISOLATION still returns
+   `discriminates: None` (the no-control primitive is unchanged); it is `run_intervention`
+   that substitutes the placebo before calling it. A placebo cell is NOT a real
+   spurious-grounding/grounded finding (it is the anti-confound baseline) and the placebo do()
+   is an inert `placebo_null` ("plays no causal role"), never a destructive removal.
 
 ### Integration constraints
 

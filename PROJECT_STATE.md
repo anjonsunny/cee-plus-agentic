@@ -391,6 +391,94 @@ See `INTERN_BRIEF.md` and `INTERN_SUMMARY.md` for the full intern-facing spec.
 
 - Activation logging, probing classifiers, attention-head ablation on open-weight VLMs. Parallel research thread.
 
+### 8.5 Distributional groundedness — edge-level (cause→effect) enrichment [PRIORITY #1, re-ranked 2026-07-08]
+
+**Priority order (Sunny, 2026-07-08):**
+0. **First: intervention reconnaissance experiments** (live, before any coding) — node-level single-suppression runs across a spread of multi-core / multi-spurious scenes to validate the I24 fixes and understand the core/spurious distribution before any new module. Recon scene set (consequence-basis splits, run each on both toggle settings): `push_09_tanker_near_fire` (coupled pair, fire-as-secondary), `push_49_highway_pileup_blizzard` (2 core / 3 peri, balanced), `push_45_earthquake_urban_block` (1 core / 4 peri, pure spurious tail), `push_02_multi_fire_cascade` (all-co-core, the 5+ hazard case), `push_50_train_derailment_hazmat` (spurious tail + fluid co-reference id-drift). NOT exhaustive (66 scenes would add no marginal insight); expand only on surprise. **Note (2026-07-14): barrier/wall edge-severance edits are dropped — Sunny ruled them physically contrived; edge-severance is deferred to the edge-level module below, not part of recon.**
+0a. **Robustness validation of recon findings [NEW, Sunny 2026-07-15] — part of recon, before any claim rests on a finding.** See the dedicated subsection 8.5a below. Headless tools now exist for this (`tools/headless_synth.py`, `tools/headless_rerun.py`, `tools/headless_variance.py`).
+0b. **Future-prediction intervention mode (NEW, Sunny 2026-07-14) — scheduled right after recon (item 0), before item 1.** A new counterfactual mode where we intervene and ask the model what will happen GOING FORWARD, not re-assess the present. See the dedicated subsection below.
+1. **THIS module (edge-level cause→effect distribution + edge-severance counterfactual), as a NEW MODULE** alongside conformance / alignment / trust / intervention.
+2. **Pre + post trust surfacing** — trust score for the baseline AND the post-intervention output (post = conformance-based subset, no second Graph-B call), each with SPECIFIC error meaning (which rules broke, e.g. the `leaking·safe` contradiction), shown top-level in the verdict card, details on need-to-know (button). Trust QUALIFIES the verdict, never multiplies into it.
+2b. **Rule/alignment penalty calibration + victim-consequence weighting [DEFERRED, Sunny 2026-07-14].** Rule and alignment violations are currently penalized too harshly (push_01 recon: a clean-baseline scene landed `pre_intervention_trust=0.035`). We ALREADY have a partial consequence penalty (T3 in the trust computation, main.py ~3082: `align_consequence = Σ consequence_score(failure.type)`, `internal = min(passratio, 1 − min(0.9, Σ/CONSEQUENCE_SATURATION))`, saturation=2.0, floor 0.1). Three things to fix when we get here:
+   - **Calibrate the harshness.** `CONSEQUENCE_SATURATION=2.0` saturates after a couple of failures and floors at 0.1; a few violations should not zero out trust. Retune saturation / floor.
+   - **Add victim-severity weighting.** Today the penalty weights by failure TYPE (fixed per-type cost), NOT by the specific victim in the scene. Add the life-vs-property factor (person/animal ×2) the core/spurious weighting already uses, so a violation that drops a child costs more than one that drops a mailbox.
+   - **Reach beyond trust.** The consequence weighting only caps the trust internal component; the raw internal-alignment and rule-conformance scores/panels stay flat head-counts. Decide whether they should be consequence-weighted too.
+   - Precondition: fix the model-internal `detected_objects ↔ graph_a/recs` co-reference drift first (push_01 `man_1` vs `person_1`), or the penalty keeps firing on FALSE violations. GT→model co-reference is done (a91defd); the model's own internal id drift is not.
+3. The remaining I24 deferred correctness items (control-arm co-core pick, operative multi-try aggregation, adapter `via_state` sensitivity, `run_key==""`), sweep-all button, 5+ hazard UX.
+
+**Idea (Sunny, 2026-07-08, thinking out loud):** the current core/spurious distribution is over HAZARD NODES (which hazard drives the advice). Enrich it with a second, finer level over CAUSAL RELATIONS = the `(cause, effect, victim)` edge, because causal grounding is not "did the model name the right hazard" but "did it get the right MECHANISM: this cause producing this effect on this victim."
+
+- **What it catches that node-level cannot:** *cause-right / effect-spurious* (right hazard, wrong harm type — e.g. GT `tanker may_harm person`, model `tanker may_spread_to person`; the old Layer-2 effect-label-misuse pathology, now measured distributionally) and *cause-right / victim-spurious* (harms the wrong entity). Both are invisible when core/spurious is node-only.
+- **Weighting decision (DECIDED):** each edge carries ONE `consequence-of-the-relation` weight in which **effect-severity is folded into the victim-consequence** — not a separate multiplied axis. i.e. the cost of harming a victim depends on HOW it is harmed. Reuse `_EFFECT_THREAT` (may_harm/threatens=2, worsens/isolates/may_spread_to=1.5, blocks_access_to=1.0) as the effect component and the life-vs-property victim factor (person/animal ×2) as the victim component, combined into one scalar. (So `isolates` a person weighs less than `may_harm` a person.)
+- **Two phases, in this order — the edge-level MIRROR of the node pipeline (corrected 2026-07-08 after Sunny: Phase A is candidate ENUMERATION for counterfactual options, NOT a declared-vs-GT comparison card):**
+  - **Phase A — enumerate + rank EDGES as counterfactual options (build first, no new intervention machinery).** The edge-level analogue of `enumerate_candidates` + the hazard picker: collect candidate relations from ALL THREE sources — GT edges, Graph A edges, Graph B edges — merge by (cause, effect, victim) identity with canonical co-reference (as nodes merge by label family), weight each by the consequence-of-the-relation scalar (effect severity folded into victim cost), partition core/peripheral by the threshold rules (half-of-max default — inclusive, `>=` — per Sunny 2026-07-10; toggle-aware), and surface a ranked, badged EDGE PICK LIST (`tanker →may_harm→ person · GT #1 · A #1 · B #2 · core`). Purpose: provide the counterfactual OPTIONS from GT/A/B at relation granularity, exactly like the node picker does for hazards. (Declared-vs-GT edge comparisons fall out of this enumeration downstream, like the node evidence card — they are not the goal.)
+  - **Phase B — single-edge severance do() (OPERATIVE; after A).** Sever the picked relation while keeping the cause. Does NOT exist today: the current `edge_severance` intervention type is NODE-scoped (fluid-containment verb, severs ALL edges of a hazard; do_applied = source-persistence); the suppression VARIABLE today is entity-only, Phase B adds the relational one. **Open design problem: a REALISTIC single-edge do()** — barrier/wall edits rejected as physically contrived; vet scene-consistent candidates (wind direction for smoke→person, spill pooling direction) against real images. Requires: per-edge spec target, realistic per-edge edit templates, per-edge applied notion, exactly-one-edge-gone shift accounting.
+  - **Then the FULL machinery runs at edge granularity IN ADDITION to node granularity:** per-edge operative strength, per-edge status (core/secondary/spurious), edge rows in the suppression comparison, edge-level distributional verdict + masquerade matrix — the same views at both levels. The overlap-alignment math carries over unchanged.
+- **Positioning:** node-level stays the PRIMARY verdict (robust, communicable, "grounded in the right hazard"); edge-level is the DEEPER drill-down ("...and in the right cause→effect relation"), coverage-aware and provisional until enough edge-severance interventions land. Same toggle philosophy, one more granularity level.
+- **Pearl framing:** node-level asks "is the right VARIABLE operative"; edge-level asks "is the right MECHANISM (cause→effect) operative" — closer to the rung-3 object, so it strengthens the rung-1-vs-rung-3 claim.
+- **Tests to add when built** (standing rule): edge-level distribution build; cause-right/effect-wrong detection; coverage-aware provisional verdict; edge-severance operative signal.
+
+### 8.5a Robustness validation of recon findings [NEW, 2026-07-15 — part of recon]
+
+**The finding to validate (push_02, `run_20260715T143550`).** Suppressing any one of THREE identical
+burning houses makes the model ESCALATE (advice gets more urgent, threat 6→8; it re-imagines the
+scene, merges houses, invents `car_1→person` edges). Suppressing `car_1` — the one visually DISTINCT
+hazard — de-escalates cleanly and reads `grounded`. Aggregate: `misproportioned`, alignment 0.25,
+all operative mass on car_1. Hypothesis: **the model cannot cleanly suppress one of N
+indistinguishable same-label hazards**; it handles a unique hazard coherently.
+
+**The determinism caveat (learned the hard way, 2026-07-15).** `build_payload` (main.py ~3328) sets
+`"temperature": 0` — Qwen decodes GREEDILY. Re-running a saved counterfactual therefore returns
+byte-identical output: the 3-pass variance run gave 4/4 stable verdicts with **±0.00** deviation.
+That measures DETERMINISM, not robustness — with temp=0 there is no sampling luck to rule out, so
+repeat-the-same-input proves only that the run is replayable. **No claim may rest on repeat-identical
+runs.** (Useful for debugging/replay; worthless as evidence.)
+
+**The three variance axes that WOULD support a claim, ranked:**
+1. **Edit variance [HIGHEST VALUE].** Redo the SAME suppression with differently phrased captions
+   and differently rendered images. Tests whether the escalation is a property of *the model on
+   repeated hazards* or an artifact of one specific edit. Needs new hand-made edits (manual).
+2. **Scene variance [generalization].** Does multi-identical-instance escalation recur on OTHER
+   repeated-hazard scenes (`push_39_multi_house_fire_units`, `push_37`, `push_33` — the all-co-core
+   rows) and NOT on distinct-hazard scenes (`push_09` tanker/fire, `push_49`)? The distinct-hazard
+   contrast is what isolates repetition as the cause rather than something general about the model.
+   This is what a paper claim would rest on.
+3. **Decoding variance [cheap probe].** Override to `temperature > 0` and sample, to see whether the
+   escalation survives decoding noise. Probe-only: the app pins temp=0 deliberately for
+   reproducibility, so this must never become the default. Needs a `--temperature` flag on
+   `tools/headless_variance.py` (not built).
+
+**Tooling built (2026-07-15).** All headless, run from repo root in `clip_dash`, work on any saved
+run folder (counterfactual images + captions auto-save per I33):
+- `tools/headless_synth.py <run_dir> [--basis] [--rule]` — REPLAY: recompute the synthesis from
+  stored tries. No VLM, instant, deterministic. Sweep basis/rule without re-running the model.
+- `tools/headless_rerun.py <run_dir>` — LIVE: feed each saved counterfactual image+caption back to
+  Qwen, recompute. Exposes `rerun_once()` for reuse.
+- `tools/headless_variance.py <run_dir> --repeats N` — repeat live passes, report per-hazard verdict
+  stability + content_shift spread + synthesis stability. **Currently near-useless at temp=0** (see
+  caveat); becomes meaningful only with axis 3, or repurposed for axis 1/2.
+
+**Tests to add when built** (standing rule): `--temperature` override changes the payload and is
+never the default; edit-variance harness accepts N alternative edits per hazard and reports verdict
+agreement across them.
+
+### 8.5b Future-prediction intervention mode [NEW, Sunny 2026-07-14 — after recon (item 0b)]
+
+A new intervention MODE: intervene on a hazard, then ask the model **what will happen going forward**, rather than re-assessing the present scene. This is the forward / predictive counterfactual, and the on-ramp to Stage-3 progressive reasoning (action to consequence to new state to new decision).
+
+- **Distinct from the existing modes.** `intervention-mode` today has two values, both of which ask the model to RE-ASSESS THE PRESENT after an edit:
+  - `retrospective` ("Back to the Future"): hazard removed as if it never happened, clean scene, no damage left.
+  - `prospective` ("Future"): hazard neutralized now, but its damage and artifacts stay in the scene.
+  The new mode is NOT either of these: it does not re-read the current hazard level, it PREDICTS the scene's forward evolution after the intervention. (Naming caution: the existing `prospective` value is already labeled "Future" in the UI. Pick a different label for the new mode to avoid collision.)
+- **KEY REQUIREMENT (Sunny): the caption and image intervention INSTRUCTIONS must change for this option.** Today's edit templates (`build_intervention_edit_texts` in main.py, and the do-prompt) instruct the model to re-analyze the scene as it stands with the hazard changed. For this mode they must instead instruct: "the hazard has been acted on; describe / predict what happens NEXT." So this mode needs its own caption-instruction and image-prompt branch, model-independent template like the others.
+- **Measurement surface — recommendations are NOT enough (Sunny 2026-07-14).** Today the shift stack is centered on recommendations (`rec_urgency_direction` + `rec_semantic_shift` give change + direction + semantics for recs). The forward fields must get the SAME treatment, each as its own shift signal:
+  - `remaining_risk` (the remaining hazards after the recommendation) — did the set of residual hazards change, in which direction (more / fewer / more-severe / less-severe residual risk), and semantically (is the residual it names actually different, or a rephrase).
+  - `follow_up_action` (what comes next) — did it change, in which direction (escalate / de-escalate / redirect), and semantically.
+  - `expected_consequence` — the predicted-outcome field, same change + direction + semantic comparison.
+  Each needs a directional read (not just changed / unchanged) AND a semantic read (paraphrase vs genuine change), mirroring how recs are handled, so a reworded-but-identical follow-up does not register as a real shift. In the future-prediction mode these forward-field shifts are the PRIMARY signal (predicted-future vs baseline-future), not a secondary surface.
+- **Sequencing.** After recon (item 0), before the edge-level module (item 1). Independent of the edge work; can proceed in parallel if desired.
+- **Tests to add when built** (standing rule): new-mode caption/image instruction branch renders the forward-prediction phrasing (not the re-assess phrasing); mode is selectable and distinct from retrospective/prospective; forward-field shift computed under the new mode; per-field direction + semantic reads for `remaining_risk`, `follow_up_action`, `expected_consequence` (reworded-but-identical registers as no shift; genuine change registers with the right direction).
+
 ---
 
 ## 9. Working-style notes (preferences Sunny has stated)

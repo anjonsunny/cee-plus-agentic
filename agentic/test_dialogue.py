@@ -122,8 +122,132 @@ def test_tool_round_cap_ends_the_loop(fake_records):
     endless = {"role": "assistant", "content": None,
                "tool_calls": [_tc("list_runs", {})]}
     out = respond(f"t-{uuid.uuid4().hex}", "loop!", llm_fn=scripted_llm([endless]))
-    assert len(out["tool_trace"]) <= MAX_TOOL_ROUNDS
+    executed = [t for t in out["tool_trace"]
+                if "cap_denied" not in t.get("result", {})]
+    assert len(executed) <= MAX_TOOL_ROUNDS
     assert out["answer"] == "(no answer produced)"
+
+
+def test_cap_resets_per_user_turn(fake_records):
+    """Codex finding #1: the budget must be PER TURN. Several normal
+    turns (1 tool call each) on one thread must never exhaust it —
+    the old counter summed tool messages across the whole conversation
+    and silently cut off tool access around turn MAX_TOOL_ROUNDS."""
+    tid = f"t-{uuid.uuid4().hex}"
+    for i in range(MAX_TOOL_ROUNDS + 3):       # more turns than the cap
+        llm = scripted_llm([
+            {"role": "assistant", "content": None,
+             "tool_calls": [_tc("get_entity",
+                                {"run": "B_pool", "object_id": "child_1"})]},
+            {"role": "assistant", "content": f"turn {i}: child_1 drowning."},
+        ])
+        out = respond(tid, f"question {i}", llm_fn=llm)
+        # the tool must have EXECUTED this turn, not been denied
+        assert out["tool_trace"], f"turn {i}: tool call was not executed"
+        assert out["tool_trace"][0]["result"].get("state") == "drowning"
+
+
+def test_cap_stop_leaves_no_dangling_tool_calls(fake_records):
+    """When the cap trips, every assistant tool_call must still get a
+    tool response (else the stored sequence is malformed OpenAI and
+    poisons the NEXT turn), and the next turn must work normally."""
+    tid = f"t-{uuid.uuid4().hex}"
+    endless = {"role": "assistant", "content": None,
+               "tool_calls": [_tc("list_runs", {})]}
+    out = respond(tid, "loop!", llm_fn=scripted_llm([endless]))
+    msgs = out["messages"]
+    answered = {m["tool_call_id"] for m in msgs if m.get("role") == "tool"}
+    for m in msgs:
+        for tc in m.get("tool_calls") or []:
+            assert tc["id"] in answered, f"dangling tool_call {tc['id']}"
+    # the poisoned-next-turn regression: a normal turn still succeeds
+    llm = scripted_llm([
+        {"role": "assistant", "content": None,
+         "tool_calls": [_tc("get_entity", {"run": "B_pool", "object_id": "child_1"})]},
+        {"role": "assistant", "content": "the record identifies child_1 as drowning."}])
+    nxt = respond(tid, "and child_1?", llm_fn=llm)
+    assert "drowning" in nxt["answer"]
+    assert nxt["tool_trace"][0]["result"]["state"] == "drowning"
+
+
+def test_concurrent_turns_on_one_thread_serialize(fake_records):
+    """Codex finding #5: two rapid submissions on one thread_id race the
+    checkpointer. respond() now serializes them on a per-thread lock:
+    both complete, both user turns land in the final transcript."""
+    import threading as _th
+    tid = f"t-{uuid.uuid4().hex}"
+    results: list[dict] = []
+
+    def slow_llm(messages, tools):
+        import time
+        time.sleep(0.05)                       # widen the race window
+        return {"role": "assistant", "content": f"seen {len(messages)} msgs"}
+
+    def go(q):
+        results.append(respond(tid, q, llm_fn=slow_llm))
+
+    threads = [_th.Thread(target=go, args=(f"q{i}",)) for i in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(results) == 2 and all(r["answer"] for r in results)
+    final = max(results, key=lambda r: len(r["messages"]))["messages"]
+    users = [m["content"] for m in final if m.get("role") == "user"]
+    assert sorted(users) == ["q0", "q1"]       # neither turn was lost
+
+
+def test_malformed_tool_arguments_preserved_as_evidence(fake_records):
+    """Codex finding #10: bad JSON args are agent-failure EVIDENCE. The
+    trace must keep the raw string and parse error, not silently {}."""
+    bad_call = {"id": "call_bad", "function": {
+        "name": "get_entity", "arguments": '{"run": "B_pool", broken'}}
+    llm = scripted_llm([
+        {"role": "assistant", "content": None, "tool_calls": [bad_call]},
+        {"role": "assistant", "content": "that lookup failed."},
+    ])
+    steps: list[dict] = []
+    out = respond(f"t-{uuid.uuid4().hex}", "?", llm_fn=llm, on_step=steps.append)
+    entry = out["tool_trace"][0]
+    assert entry["raw_arguments"].startswith('{"run"')
+    assert entry["parse_error"]
+    assert "malformed" in entry["result"]["error"]
+    call_step = next(s for s in steps if s["step"] == "tool_call")
+    assert call_step.get("parse_error")        # visible in the UI trajectory
+    result_step = next(s for s in steps if s["step"] == "tool_result")
+    assert not result_step["ok"]
+
+
+def test_unverified_ids_flag_evidence_free_mentions(fake_records):
+    """Codex findings #2/#9, our show-don't-block middle path: an id in
+    the answer with no tool evidence gets flagged; evidenced ids don't."""
+    llm = scripted_llm([
+        {"role": "assistant", "content": None,
+         "tool_calls": [_tc("get_entity", {"run": "B_pool", "object_id": "child_1"})]},
+        {"role": "assistant",
+         "content": "child_1 is drowning and shark_9 is circling."},
+    ])
+    out = respond(f"t-{uuid.uuid4().hex}", "?", llm_fn=llm)
+    assert out["unverified_ids"] == ["shark_9"]
+
+    ungrounded = scripted_llm([
+        {"role": "assistant", "content": "child_1 is fine."}])  # no tools at all
+    out2 = respond(f"t-{uuid.uuid4().hex}", "?", llm_fn=ungrounded)
+    assert out2["unverified_ids"] == ["child_1"]
+
+
+def test_system_prompt_demands_record_speak(fake_records):
+    """Codex finding #8: answers must attribute claims to the perception
+    record, never state them as ground truth."""
+    seen = {}
+
+    def llm(messages, tools):
+        seen["system"] = messages[0]["content"]
+        return {"role": "assistant", "content": "ok"}
+
+    respond(f"t-{uuid.uuid4().hex}", "hi", llm_fn=llm)
+    assert "record identifies child_1 as drowning" in seen["system"]
+    assert "never launder" in seen["system"]
 
 
 def test_trajectory_steps_stream_in_order(fake_records):
@@ -174,6 +298,19 @@ def test_transcript_renders_live_trajectory():
                       {"step": "answer", "text": "because child_1 is drowning"}])
     done = str(agent_transcript_component(log))
     assert "because child_1 is drowning" in done and "now" not in done
+
+
+def test_transcript_badges_unverified_ids():
+    """An answer naming entities with no retrieved evidence gets a
+    visible badge under the bubble (flag, never block)."""
+    from agentic.ui import agent_transcript_component
+    log = [{"q": "?", "pending": False, "a": "shark_9 is circling",
+            "steps": [], "unverified": ["shark_9"]}]
+    out = str(agent_transcript_component(log))
+    assert "not in retrieved evidence" in out and "shark_9" in out
+    clean = [{"q": "?", "pending": False, "a": "all good",
+              "steps": [], "unverified": []}]
+    assert "not in retrieved evidence" not in str(agent_transcript_component(clean))
 
 
 def test_focus_run_lands_in_system_prompt(fake_records):

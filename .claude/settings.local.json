@@ -44,7 +44,29 @@
       "Bash(sed -n \"$\\(awk 'NR>=3763 && /^    return report$|^    return \\\\{/{print NR; exit}' main.py\\),+3p\" main.py)",
       "Bash(sed -n '12500,12520p' main.py)",
       "Bash(sed -n '12728,12742p' main.py)",
-      "Bash(git reset *)"
+      "Bash(git reset *)",
+      "Bash(git commit *)",
+      "Bash(awk 'NR>=2996 && NR<=3200 && /components|\"internal_alignment\"|\"internal_effective\"/{print NR\": \"$0}' main.py)",
+      "Bash(awk -F: '$1>13400 && $1<13520')",
+      "Bash(awk 'NR>=13388 && NR<=13417 && /Output\\\\\\(/{print $0}' main.py)",
+      "Bash(awk 'NR>=1349 && NR<=1900 && /allow_inferred|at_risk_missing_detected_object|unresolved_affected_object|inferred/' main.py)",
+      "Bash(awk -F: '$1>4480 && $1<4700 || /derive_gt_validation|gt.*edge.*diff|compare.*gt/')",
+      "WebFetch(domain:arxiv.org)",
+      "Bash(mkdir -p ~/Documents/\"Agentic AI Course - Andrew Ng\" && ls -d ~/Documents/\"Agentic AI Course - Andrew Ng\")",
+      "WebFetch(domain:utaustin.wd1.myworkdayjobs.com)",
+      "Bash(awk -F: '$1>8880 && $1<9400')",
+      "Bash(awk 'NR>8880 && NR<9400 && /return html.Div\\\\\\(\\\\[/{print NR\": \"$0; found=1; next} found && /header/{print NR\": \"$0; found=0}' main.py)",
+      "Bash(awk 'NR>8900 && /^def /{print NR\": \"$0; exit}' main.py)",
+      "Bash(awk -F: '$1>8900 && $1<9448')",
+      "Bash(awk 'NR<=14325 && /^def |^    def /{f=$0; ln=NR} END{print ln\": \"f}' main.py)",
+      "Bash(awk 'NR>=7820 && NR<=7960 && /result\\\\[\"[a-z_]+\"\\\\] =|caption/{print NR\": \"$0}' main.py)",
+      "Bash(awk 'NR>=7790 && NR<=7960 && /result\\\\[\"caption\"\\\\]|payload = \\\\{|\"caption\"|\"structured_response\"/{print NR\": \"$0}' main.py)",
+      "Bash(awk 'NR>=7840 && NR<=7925 && /result\\\\[\"caption\"\\\\]/{print NR\": \"$0}' main.py)",
+      "Bash(python3 -c \"import reportlab; print\\('reportlab ok'\\)\")",
+      "Bash(python3 -c \"import fpdf; print\\('fpdf ok'\\)\")",
+      "Bash(pip3 --version)",
+      "Bash(pip3 install *)",
+      "Bash(python3 -c \"import fpdf; print\\('fpdf2 ready, version', fpdf.__version__\\)\")"
     ]
   }
 }

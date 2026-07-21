@@ -4,8 +4,18 @@
     {
       "name": "intervention-ui",
       "runtimeExecutable": "/Users/sunny/miniconda3/envs/clip_dash/bin/python",
-      "runtimeArgs": ["intervention_ui_harness.py"],
+      "runtimeArgs": [
+        "intervention_ui_harness.py"
+      ],
       "port": 8051
+    },
+    {
+      "name": "cee-app",
+      "runtimeExecutable": "/Users/sunny/miniconda3/envs/clip_dash/bin/python",
+      "runtimeArgs": [
+        "main.py"
+      ],
+      "port": 5005
     }
   ]
 }

@@ -1084,6 +1084,17 @@ def agent_transcript_component(log: list[dict[str, Any]]) -> list[Any]:
             body.append(html.Div("…", className="bubble-agent-text working"))
         elif turn.get("a") is not None:
             body.append(html.Div(turn["a"], className="bubble-agent-text"))
+            if turn.get("unverified"):
+                # Deterministic groundedness flag: these entity ids appear
+                # in the answer but in NO tool result this turn. We badge,
+                # we never block: show the failure, don't hide it.
+                body.append(html.Div(
+                    "⚠ not in retrieved evidence: " + ", ".join(turn["unverified"]),
+                    className="bubble-agent-text unverified-badge",
+                    style={"color": "#b45309", "background": "#fffbeb",
+                           "border": "1px solid #fcd34d", "borderRadius": "8px",
+                           "padding": "4px 10px", "marginTop": "6px",
+                           "fontSize": "12px", "fontWeight": "600"}))
         bubbles.append(html.Div(body, className="bubble-agent"))
     return bubbles
 
@@ -1102,6 +1113,12 @@ def ask_agent(_clicks, _submit, question, run_id):
     focus = run.get("record_name") if run else None
     thread = f"ui-{run_id or 'global'}"
     log = AGENT_LOGS.setdefault(thread, [])
+    if log and log[-1].get("pending"):
+        # One dialogue turn at a time per conversation: respond() also
+        # serializes on a per-thread lock, but queueing here would still
+        # answer questions out of the order the user sees. Keep the text
+        # in the box; they can resend when the turn completes.
+        return dash.no_update
     turn = {"q": question.strip(), "steps": [], "a": None, "pending": True}
     log.append(turn)
 
@@ -1111,6 +1128,7 @@ def ask_agent(_clicks, _submit, question, run_id):
             out = respond(thread, turn["q"], focus_run=focus,
                           on_step=turn["steps"].append)
             turn["a"] = out["answer"]
+            turn["unverified"] = out.get("unverified_ids") or []
         except Exception as exc:
             turn["a"] = (f"agent unavailable: {exc}. Is Ollama running with "
                          f"the dialogue model pulled (ollama pull qwen2.5:7b)?")

@@ -12,6 +12,11 @@ tests/README.md for the contract.
 """
 from __future__ import annotations
 
+import os as _os
+# Unit tests must not load the optional sentence-transformers model (a 5s display-only
+# diagnostic); the live app still computes it. Cleared by unsetting CEE_DISABLE_SEMANTIC.
+_os.environ.setdefault("CEE_DISABLE_SEMANTIC", "1")
+
 import json
 import os
 import sys

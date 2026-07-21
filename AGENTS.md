@@ -89,3 +89,5 @@ python main.py
 
 - **Prompting strength vs. evaluation validity:** A heavily engineered prompt raises "are we evaluating the VLM or the prompt?" — give the baseline its best shot so remaining failures are unambiguously the model's. State this methodologically in the paper.
 - **Constraint vs. reasoning freedom:** Hazard-as-state and stable ids constrain format, not reasoning itself.
+
+## Imported Claude Cowork project instructions

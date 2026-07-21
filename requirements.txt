@@ -4,3 +4,7 @@ requests>=2.32.0
 Pillow>=10.4.0
 Markdown>=3.5          # batch report markdown -> HTML for PDF export
 xhtml2pdf>=0.2.16      # HTML -> PDF (pure-python, no native deps); batch PDF export
+
+# Optional (combined semantic recommendation shift in the Intervention tab result panel).
+# The pipeline degrades gracefully to a deterministic-only view when this is absent.
+# sentence-transformers
