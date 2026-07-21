@@ -90,6 +90,9 @@ LABEL_SYNONYMS: dict[str, str] = {
     "leak": "spill", "leakage": "spill", "liquid": "spill", "oil": "spill",
     "fuel": "spill", "chemical": "spill", "wreckage": "debris",
     "rubble_pile": "rubble", "dust_cloud": "dust",
+    # "brush fire" / "grass fire" name ONE free-burning fire, not a
+    # vegetation entity plus a fire entity (C_tanker rule-5 artifact).
+    "brush_fire": "fire", "grass_fire": "fire", "brushfire": "fire",
     # infrastructure
     "street": "road", "highway": "road", "lane": "road", "pavement": "sidewalk",
     "wall": "fence", "railing": "handrail", "rail": "handrail",
@@ -135,9 +138,16 @@ def canonicalize_label(raw: str) -> tuple[str, str, bool, bool]:
     if label in LABEL_SYNONYMS:
         canon = LABEL_SYNONYMS[label]
         return canon, f"synonym:{label}->{canon}", True, False
-    # Singularize the trivial plural before giving up.
-    if label.endswith("s") and label[:-1] in ALL_LABELS:
-        return label[:-1], f"synonym:{label}->{label[:-1]}", True, False
+    # Singularize the trivial plural, resolving through BOTH the vocabulary
+    # and the synonym map ("chemicals" -> "chemical" -> spill; the D_aerial
+    # caption miss).
+    if label.endswith("s"):
+        singular = label[:-1]
+        if singular in ALL_LABELS:
+            return singular, f"synonym:{label}->{singular}", True, False
+        if singular in LABEL_SYNONYMS:
+            canon = LABEL_SYNONYMS[singular]
+            return canon, f"synonym:{label}->{canon}", True, False
     return OTHER_LABEL, f"extension:{label}", False, False
 
 

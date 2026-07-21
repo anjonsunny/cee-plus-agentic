@@ -127,6 +127,24 @@ def test_no_caption_no_rule5():
                                "bbox": [0, 0, 9, 9]}], caption="") == []
 
 
+def test_brush_fire_is_one_demand_not_two():
+    """C_tanker artifact: 'brush fire' must resolve to fire alone, never
+    demand a separate brush entity."""
+    labels = caption_labels("a brush fire burns nearby")
+    assert "fire" in labels and "brush" not in labels
+
+
+def test_plural_synonym_resolves_chemicals_to_spill():
+    """D_aerial miss: 'leaking chemicals' must demand a spill."""
+    labels = caption_labels("an overturned tanker truck leaking chemicals")
+    assert "spill" in labels and "tanker_truck" in labels
+
+
+def test_operating_state_is_stationary():
+    from agentic.perception import state_kind
+    assert state_kind("operating") == "normal"
+
+
 def test_prompt_quotes_entities_and_numbers_problems():
     entities = [{"label": "vehicle", "state": "intact", "bbox": [0, 0, 9, 9]},
                 {"label": "person", "state": "floating", "bbox": [1, 1, 5, 5]}]

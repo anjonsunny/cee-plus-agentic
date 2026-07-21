@@ -66,6 +66,8 @@ EXTRA_STATE_SYNONYMS = {
     # Emergency vehicles "attending" a scene (D_aerial run, 2026-07-21):
     # semantically on-scene-responding, mechanically stationary.
     "attending": "stationary",
+    # A tanker "operating" (pumping/spraying; C_tanker run): stationary.
+    "operating": "stationary",
 }
 
 # ── Contract ─────────────────────────────────────────────────────────────
