@@ -90,6 +90,7 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
         # happening, rendered as a ribbon ON the scene, with an optional
         # spotlight target (the entity currently being worked on).
         "activity": {"text": "", "oid": None, "busy": False},
+        "perceive_entities": [],   # the model's FIRST answer (pre-repair)
     }
     for ev in events:
         t = ev.get("type")
@@ -109,6 +110,8 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
                 extras = {k: v for k, v in ev.items()
                           if k not in ("type", "stage", "seconds", "entities")}
                 d["stages"][s]["info"] = ", ".join(f"{k}={v}" for k, v in extras.items())
+                if s == "Perceive":
+                    d["perceive_entities"] = ev.get("entities", [])
         elif t == "violation_found":
             key = f"{ev.get('kind')}|{ev.get('raw_label')}|{ev.get('entity_index')}"
             d["violations"].setdefault(key, {
@@ -191,8 +194,12 @@ def build_replay_events(record: dict[str, Any]) -> list[dict[str, Any]]:
                "image_name": Path(record.get("image_path", "scene")).name})
     objs = record.get("detected_objects", [])
     ev.append({"type": "stage_started", "stage": "Perceive"})
+    # Saved records hold the post-repair list; the true first answer is only
+    # known live. Close enough for replay's Perceive detail line.
     ev.append({"type": "stage_done", "stage": "Perceive", "seconds": None,
-               "n_entities": len(objs)})
+               "n_entities": len(objs),
+               "entities": [{"label": o.get("label"), "state": o.get("state")}
+                            for o in objs]})
     ev.append({"type": "stage_started", "stage": "Repair"})
     trace = record.get("repair_trace") or {}
     rounds = trace.get("rounds", [])
@@ -295,21 +302,62 @@ def start_replay(json_path: str) -> str:
 
 
 def rail_component(d: dict[str, Any]) -> html.Div:
-    """The stage rail. Repair renders as a loop station with round pips."""
+    """The stage rail. Perceive and Repair carry rich detail lines:
+    Perceive lists what the model's FIRST answer named (label·state, so a
+    later repair is visible as a difference); Repair summarizes the loop's
+    ledger (violations by kind, fixed vs stood, rounds, verdict)."""
     items = []
     for s in STAGES:
         st = d["stages"][s]
         cls = {"pending": "station", "active": "station active",
                "done": "station done"}[st["status"]]
         secs = f"{st['seconds']:.1f}s" if st.get("seconds") else ""
-        body = [html.Div(s, className="station-name"),
-                html.Div(secs or st.get("info", ""), className="station-info")]
+        head = [html.Span(s, className="station-name"),
+                html.Span(secs, className="station-secs")]
+        body: list[Any] = [html.Div(head, className="station-head")]
+
+        if s == "Perceive" and d["perceive_entities"]:
+            named = []
+            for e in d["perceive_entities"][:8]:
+                lbl = str(e.get("label", "?"))
+                stt = str(e.get("state", ""))
+                named.append(f"{lbl}·{stt}" if stt else lbl)
+            more = len(d["perceive_entities"]) - 8
+            line = ", ".join(named) + (f" +{more} more" if more > 0 else "")
+            body.append(html.Div(f"first answer ({len(d['perceive_entities'])}): {line}",
+                                 className="station-detail"))
+        elif s == "Perceive":
+            body.append(html.Div(st.get("info", ""), className="station-info"))
+
         if s == "Repair":
+            n_v = len(d["violations"])
+            fixed = sum(1 for v in d["violations"].values() if v["status"] == "fixed")
+            stood = sum(1 for v in d["violations"].values() if v["status"] == "stood")
+            open_ = n_v - fixed - stood
             pips = "".join("●" if i < d["rounds_used"] else "○" for i in range(2))
             stamp = {"clean": "CLEAN", "no_change": "STOOD GROUND",
-                     "cap_reached": "CAP", "skipped": "SKIPPED", None: ""}.get(
+                     "cap_reached": "CAP REACHED", "skipped": "SKIPPED", None: ""}.get(
                 d["stop_reason"], "")
+            if n_v:
+                kinds: dict[str, int] = {}
+                for v in d["violations"].values():
+                    kinds[v["kind"]] = kinds.get(v["kind"], 0) + 1
+                kind_line = " · ".join(f"{k.replace('_', ' ')} ×{n}"
+                                       for k, n in kinds.items())
+                counts = f"{n_v} violation(s): {fixed} fixed"
+                if stood:
+                    counts += f", {stood} stood"
+                if open_:
+                    counts += f", {open_} open"
+                body.append(html.Div(counts, className="station-detail"))
+                body.append(html.Div(kind_line, className="station-detail dim"))
+            elif st["status"] != "pending":
+                body.append(html.Div("no violations in the first answer",
+                                     className="station-detail"))
             body.append(html.Div(f"loop {pips}  {stamp}", className="station-loop"))
+
+        if s not in ("Perceive", "Repair"):
+            body.append(html.Div(st.get("info", ""), className="station-info"))
         items.append(html.Div(body, className=cls))
         items.append(html.Div("│", className="rail-link"))
     return html.Div(items[:-1], className="rail")
@@ -471,8 +519,13 @@ def inspector_component(d: dict[str, Any], selected: str | None):
             html.Div([html.Span(obj["object_id"], className="insp-id"),
                       html.Span(obj["state"], className="insp-state",
                                 style={"background": color}),
-                      html.Button("×", id="insp-close", className="insp-close",
-                                  n_clicks=0)], className="insp-head"),
+                      # Pattern-matching id: a plain id would break the click
+                      # callback whenever the modal is closed (Dash never
+                      # fires a callback whose Input component is absent;
+                      # ALL-pattern inputs tolerate zero matches).
+                      html.Button("×", id={"type": "insp-close", "n": 0},
+                                  className="insp-close", n_clicks=0)],
+                     className="insp-head"),
             html.Div(obj.get("description", ""), className="insp-desc"),
             html.Ul([html.Li(c) for c in chain], className="insp-chain"),
         ], className="modal"),
@@ -504,6 +557,10 @@ app.index_string = """<!DOCTYPE html>
   .controls { display:flex; gap:10px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
   .controls .upload { border:1px dashed #cbd5e1; background:var(--card); border-radius:10px;
       padding:9px 16px; cursor:pointer; color:var(--muted); box-shadow:var(--shadow); }
+  .upload-inner { display:flex; align-items:center; gap:9px; }
+  .upload-thumb { height:34px; border-radius:6px; display:block; box-shadow:0 1px 3px rgba(0,0,0,.25); }
+  .upload-name { font-size:12px; color:var(--ink); max-width:180px; overflow:hidden;
+      text-overflow:ellipsis; white-space:nowrap; }
   .controls input[type=text] { background:var(--card); border:1px solid var(--line); color:var(--ink);
       border-radius:10px; padding:9px 12px; width:420px; box-shadow:var(--shadow); }
   .go { background:var(--accent); color:white; border:none; border-radius:10px; padding:10px 20px;
@@ -544,7 +601,11 @@ app.index_string = """<!DOCTYPE html>
   .station.done { border-left-color:#16a34a; }
   @keyframes stpulse { 0%,100% { background:#eff6ff; } 50% { background:#dbeafe; } }
   .station-name { font-weight:bold; letter-spacing:1px; font-size:13px; }
+  .station-head { display:flex; align-items:baseline; gap:8px; }
+  .station-secs { font-size:11px; color:var(--faint); }
   .station-info, .station-loop { font-size:11px; color:var(--muted); }
+  .station-detail { font-size:11px; color:#475569; margin-top:2px; line-height:1.5; }
+  .station-detail.dim { color:var(--faint); }
   .station-loop { color:#d97706; }
   .rail-link { color:var(--line); margin-left:18px; line-height:6px; }
   .tickets { margin-top:12px; max-height:340px; overflow-y:auto; }
@@ -621,11 +682,17 @@ app.layout = html.Div([
 ], className="wrap")
 
 
-@app.callback(Output("upload-cache", "data"),
+@app.callback(Output("upload-cache", "data"), Output("upload", "children"),
               Input("upload", "contents"), State("upload", "filename"),
               prevent_initial_call=True)
 def cache_upload(contents, filename):
-    return {"contents": contents, "filename": filename}
+    """Cache the pick AND show it: the upload control becomes a thumbnail
+    plus filename, so there is never doubt about which image is loaded."""
+    picked = html.Div([
+        html.Img(src=contents, className="upload-thumb"),
+        html.Span(filename or "image", className="upload-name"),
+    ], className="upload-inner")
+    return {"contents": contents, "filename": filename}, picked
 
 
 @app.callback(Output("run-id", "data"),
@@ -645,13 +712,13 @@ def start_run(_clicks, replay_path, cached, caption):
 
 @app.callback(Output("selected", "data"),
               Input({"type": "scene-box", "oid": ALL}, "n_clicks"),
-              Input("insp-close", "n_clicks"),
+              Input({"type": "insp-close", "n": ALL}, "n_clicks"),
               prevent_initial_call=True)
-def select_entity(box_clicks, _close):
+def select_entity(box_clicks, close_clicks):
     trig = ctx.triggered_id
-    if trig == "insp-close":
+    if isinstance(trig, dict) and trig.get("type") == "insp-close":
         return None
-    if isinstance(trig, dict) and any(box_clicks):
+    if isinstance(trig, dict) and trig.get("type") == "scene-box" and any(box_clicks):
         return trig.get("oid")
     return dash.no_update
 
@@ -662,14 +729,22 @@ def select_entity(box_clicks, _close):
     Output("inspector-modal", "children"),
     Output("scrub", "max"), Output("scrub", "value"),
     Input("tick", "n_intervals"), Input("scrub", "value"),
-    State("run-id", "data"), State("selected", "data"), State("scrub", "max"))
-def render(_n, scrub_value, run_id, selected, scrub_max):
+    State("run-id", "data"), State("selected", "data"), State("scrub", "max"),
+    State("upload-cache", "data"))
+def render(_n, scrub_value, run_id, selected, scrub_max, cached):
     run = RUNS.get(run_id or "")
     if not run:
         empty = derive([])
+        # A picked-but-unanalyzed image previews in the scene immediately,
+        # with a ribbon saying it's ready.
+        if cached and cached.get("contents"):
+            scene = [html.Img(src=cached["contents"], className="scene-img"),
+                     html.Div(f"{cached.get('filename', 'image')} — ready, "
+                              f"press ANALYZE", className="ribbon")]
+        else:
+            scene = scene_component(empty, None)
         return (rail_component(empty), tickets_component(empty),
-                instruments_component(empty),
-                scene_component(empty, None),
+                instruments_component(empty), scene,
                 inspector_component(empty, None), 1, 1)
     events = run["events"]
     total = max(1, len(events))

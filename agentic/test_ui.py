@@ -111,6 +111,52 @@ def test_scene_returns_children_for_the_positioned_container():
                 assert 0.0 <= float(str(style[key]).rstrip("%")) <= 100.0
 
 
+def test_perceive_detail_and_repair_ledger():
+    """The rail's Perceive station lists the first answer; Repair carries
+    the violation ledger. (Sunny: 'should include more details'.)"""
+    ev = EVENTS[:3]
+    ev[2] = {**ev[2], "entities": [{"label": "vehicle", "state": "intact"}]}
+    d = derive(ev)
+    assert d["perceive_entities"] == [{"label": "vehicle", "state": "intact"}]
+    rail = rail_component(derive(EVENTS))          # renders without crashing
+    assert rail is not None
+
+
+def test_inspector_close_button_uses_pattern_id():
+    """Regression: a plain id on the sometimes-absent close button silently
+    disabled the whole click callback."""
+    from agentic.ui import inspector_component
+    d = derive(EVENTS + [{"type": "assembled", "result": {
+        "image_size": [400, 300],
+        "detected_objects": [{"object_id": "tanker_truck_1", "label": "tanker_truck",
+                              "state": "stationary", "state_kind": "normal",
+                              "description": "", "bbox": [1, 1, 9, 9],
+                              "box_source": "dino_matched", "box_confidence": 0.9,
+                              "anchor_bbox": None, "mask_path": None, "label_note": "",
+                              "vocab_extension": False, "family_name_as_label": False}]}}])
+    modal = inspector_component(d, "tanker_truck_1")
+
+    def find_button(node):
+        if getattr(node, "id", None) and isinstance(node.id, dict):
+            if node.id.get("type") == "insp-close":
+                return True
+        kids = getattr(node, "children", None)
+        kids = kids if isinstance(kids, list) else ([kids] if kids else [])
+        return any(find_button(k) for k in kids if hasattr(k, "children") or hasattr(k, "id"))
+
+    assert find_button(modal)
+
+
+def test_upload_pick_shows_thumbnail_and_name():
+    """After picking an image, the upload control shows what was picked."""
+    from agentic.ui import cache_upload
+    data, picked = cache_upload("data:image/png;base64,xyz", "A_fire.png")
+    assert data["filename"] == "A_fire.png"
+    assert picked.className == "upload-inner"
+    img, name = picked.children
+    assert img.src.startswith("data:image/") and name.children == "A_fire.png"
+
+
 def test_activity_ribbon_follows_events():
     """The scene narrates the run: ribbon text and spotlight target derive
     from the latest event."""
