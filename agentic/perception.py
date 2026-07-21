@@ -144,7 +144,17 @@ CRITICAL LABEL RULES:
   water containing a victim ("water", state "rising"/"engulfing"), leaked
   liquid ("spill", state "leaking"/"seeping"), dust ("dust", state
   "billowing"), gas, and FREE-BURNING fire not attached to one object (a
-  grass or brush fire: label "fire", state "spreading").
+  grass or brush fire: label "fire", state "spreading"). When both readings
+  apply (a brush patch ablaze AND the fire spreading beyond it), the fire
+  entity wins: the spread is what matters causally.
+- Producer and medium are TWO hazards. An object actively emitting a
+  hazardous medium is itself hazardous, separately from the medium it
+  produces: a tanker leaking fuel is "tanker_truck" with state "leaking"
+  PLUS a "spill" entity; a burning house under a smoke column is "house"
+  state "burning" PLUS a "smoke" entity. They harm by different mechanisms
+  and are suppressed differently (plug the source vs contain the spill),
+  so never fold them into one entity or demote the producer to a normal
+  state while its medium is still flowing.
 
 For each entity give:
 - label: one specific noun from the allowed labels

@@ -84,6 +84,16 @@ def test_state_extensions():
 # ── Prompt ──────────────────────────────────────────────────────────────
 
 
+def test_prompt_teaches_producer_and_medium_pattern():
+    """Agreed with Sunny 2026-07-21 after the C_tanker 'stationary' miss:
+    the prompt teaches the two-hazard pattern (leaking tanker + spill,
+    mirroring burning house + smoke) and the fire-entity-wins rule."""
+    flat = " ".join(perception.build_perception_prompt().split())
+    assert "Producer and medium are TWO hazards" in flat
+    assert 'tanker leaking fuel is "tanker_truck" with state "leaking"' in flat
+    assert "the fire entity wins" in flat
+
+
 def test_prompt_forbids_family_names_and_states_fluid_rule():
     prompt = perception.build_perception_prompt()
     assert "NEVER answer" in prompt and "family name" in prompt
