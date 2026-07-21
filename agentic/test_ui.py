@@ -253,6 +253,17 @@ def test_rail_renders_timeline_nodes():
     assert "warn" in rail                       # the violation line's node
 
 
+def test_flight_recorder_timestamp_never_leaks_into_station_info():
+    """Regression (Sunny's screenshot): the events.jsonl 't' stamp showed
+    up as 't=178...' in station headers."""
+    d = derive([{"type": "run_started", "image_size": [10, 10]},
+                {"type": "stage_started", "stage": "Ground", "t": 1784622358.4},
+                {"type": "stage_done", "stage": "Ground", "seconds": 2.0,
+                 "n_candidates": 6, "t": 1784622360.4}])
+    assert "t=" not in d["stages"]["Ground"]["info"]
+    assert "n_candidates=6" in d["stages"]["Ground"]["info"]
+
+
 def test_station_activity_feeds_accumulate():
     """Cowork-style narration: each stage collects its own activity lines
     (Sunny, 2026-07-21)."""

@@ -147,7 +147,7 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
                 d["stages"][s]["status"] = "done"
                 d["stages"][s]["seconds"] = ev.get("seconds")
                 extras = {k: v for k, v in ev.items()
-                          if k not in ("type", "stage", "seconds", "entities")}
+                          if k not in ("type", "stage", "seconds", "entities", "t")}
                 d["stages"][s]["info"] = ", ".join(f"{k}={v}" for k, v in extras.items())
                 if s == "Perceive":
                     d["perceive_entities"] = ev.get("entities", [])
