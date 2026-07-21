@@ -219,6 +219,35 @@ def test_upload_pick_shows_thumbnail_and_name():
     assert img.src.startswith("data:image/") and name.children == "A_fire.png"
 
 
+def test_station_activity_feeds_accumulate():
+    """Cowork-style narration: each stage collects its own activity lines
+    (Sunny, 2026-07-21)."""
+    d = derive(EVENTS)
+    per = d["stage_activities"]["Perceive"]
+    rep = d["stage_activities"]["Repair"]
+    assert per[0].startswith("asking the VLM")
+    assert any("first answer: 1 entities" in a for a in per)
+    assert any(a.startswith("found: family name as label") for a in rep)
+    assert any("round 1: asking the model" in a for a in rep)
+    assert any("model revised its answer" in a for a in rep)
+    assert rep[-1] == "all problems resolved — clean"
+    assert any("tanker_truck_1: matched" in a for a in d["stage_activities"]["Bind"])
+
+
+def test_ticket_shows_fixing_during_inflight_round():
+    """Mid-round, open violations read FIXING (the 'which problem is being
+    fixed right now' focus)."""
+    mid = EVENTS[:6]                       # violation found + round started
+    d = derive(mid)
+    assert d["round_in_progress"]
+    tickets = tickets_component(d)
+    text = str(tickets)
+    assert "FIXING" in text
+    d_done = derive(EVENTS)                # after round done + clean
+    assert not d_done["round_in_progress"]
+    assert "FIXING" not in str(tickets_component(d_done))
+
+
 def test_activity_ribbon_follows_events():
     """The scene narrates the run: ribbon text and spotlight target derive
     from the latest event."""

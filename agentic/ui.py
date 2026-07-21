@@ -103,6 +103,13 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
         # spotlight target (the entity currently being worked on).
         "activity": {"text": "", "oid": None, "busy": False},
         "perceive_entities": [],   # the model's FIRST answer (pre-repair)
+        # Per-station activity feed (the Cowork-style narration Sunny asked
+        # for): each stage accumulates high-level lines; while the stage is
+        # active its newest line renders as "happening now".
+        "stage_activities": {s: [] for s in STAGES},
+        # True between repair_round_started and its round_done: the open
+        # violations are literally being fixed right now.
+        "round_in_progress": False,
     }
     for ev in events:
         t = ev.get("type")
@@ -154,6 +161,57 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
             d["result"] = ev.get("result")
         elif t == "run_error":
             d["error"] = ev.get("message", "unknown error")
+
+        # Per-station narration lines.
+        def act(stage: str, text: str) -> None:
+            d["stage_activities"][stage].append(text)
+
+        if t == "stage_started":
+            s = ev.get("stage")
+            opener = {"Perceive": "asking the VLM to name every entity...",
+                      "Repair": "checking the answer against the rulebook...",
+                      "Ground": "detector searching for the named labels...",
+                      "Bind": "matching candidates to the model's anchors...",
+                      "Mask": "tracing outlines with SAM...",
+                      "Assemble": "validating and writing the record..."}.get(s)
+            if s in d["stage_activities"] and opener:
+                act(s, opener)
+        elif t == "stage_done":
+            s = ev.get("stage")
+            closer = {"Perceive": f"first answer: {ev.get('n_entities', '?')} entities",
+                      "Ground": f"{ev.get('n_candidates', '?')} candidate boxes found",
+                      "Bind": (f"{ev.get('matched', 0)} matched, "
+                               f"{ev.get('fallback', 0)} via SAM fallback"),
+                      "Mask": f"{ev.get('masks', '?')} masks captured",
+                      "Assemble": "record validated and saved"}.get(s)
+            if s in d["stage_activities"] and closer:
+                act(s, closer)
+        elif t == "violation_found":
+            act("Repair", f"found: {str(ev.get('kind', '')).replace('_', ' ')} "
+                          f"('{ev.get('raw_label')}')")
+        elif t == "repair_round_started":
+            d["round_in_progress"] = True
+            act("Repair", f"round {ev.get('round')}: asking the model to fix "
+                          f"{ev.get('open_violations')} problem(s)...")
+        elif t == "repair_round_done":
+            d["round_in_progress"] = False
+            changed = "model revised its answer" if ev.get("changed") \
+                else "model returned the same answer"
+            act("Repair", f"round {ev.get('round')} done: {changed}, "
+                          f"{ev.get('remaining_violations', 0)} problem(s) remain")
+        elif t == "repair_stopped":
+            d["round_in_progress"] = False
+            act("Repair", {"clean": "all problems resolved — clean",
+                           "no_change": "model stood its ground — stopping",
+                           "cap_reached": "round cap reached — stopping"}.get(
+                ev.get("reason"), ev.get("reason", "")))
+        elif t == "masking_entity":
+            act("Mask", f"masking {ev.get('object_id')}...")
+        elif t == "entity_bound":
+            src = ("matched" if ev.get("box_source") == "dino_matched"
+                   else "SAM fallback")
+            act("Bind", f"{ev.get('object_id')}: {src} "
+                        f"(conf {ev.get('confidence', 0):.2f})")
 
         # Activity ribbon: a one-liner for the scene, updated per event.
         if t == "stage_started":
@@ -370,6 +428,23 @@ def rail_component(d: dict[str, Any]) -> html.Div:
 
         if s not in ("Perceive", "Repair"):
             body.append(html.Div(st.get("info", ""), className="station-info"))
+
+        # The Cowork-style narration: this station's own activity lines,
+        # newest last; while the station is active the newest line pulses
+        # as "happening now". Older lines collapse into a count.
+        acts = d["stage_activities"].get(s, [])
+        if acts:
+            shown = acts[-4:]
+            lines: list[Any] = []
+            if len(acts) > 4:
+                lines.append(html.Div(f"… {len(acts) - 4} earlier",
+                                      className="act-line dim"))
+            for i, a in enumerate(shown):
+                now = (st["status"] == "active" and i == len(shown) - 1)
+                lines.append(html.Div(("▸ " if now else "· ") + a,
+                                      className="act-line now" if now else "act-line"))
+            body.append(html.Div(lines, className="act-feed"))
+
         items.append(html.Div(body, className=cls))
         items.append(html.Div("│", className="rail-link"))
     return html.Div(items[:-1], className="rail")
@@ -381,7 +456,12 @@ def tickets_component(d: dict[str, Any]) -> html.Div:
     cards = []
     for key, v in d["violations"].items():
         status = v["status"]
+        # An open violation during an in-flight repair round is literally
+        # being fixed right now; its ticket says so and pulses.
+        if status == "open" and d.get("round_in_progress"):
+            status = "fixing"
         stamp = {"open": ("OPEN", "stamp open"),
+                 "fixing": ("FIXING…", "stamp fixing"),
                  "fixed": ("FIXED", "stamp fixed"),
                  "stood": ("STOOD ITS GROUND", "stamp stood")}[status]
         cards.append(html.Details([
@@ -668,6 +748,16 @@ app.index_string = """<!DOCTYPE html>
   .stamp { margin-left:auto; font-size:10px; font-weight:bold; letter-spacing:1px;
       padding:2px 8px; border-radius:6px; border:1px solid; }
   .stamp.open { color:#d97706; border-color:#f59e0b; background:#fffbeb; }
+  .stamp.fixing { color:#b45309; border-color:#f59e0b; background:#fef3c7;
+      animation: fixpulse 1s ease-in-out infinite; }
+  @keyframes fixpulse { 50% { background:#fde68a; } }
+  .ticket.fixing { border-color:#f59e0b; }
+  .act-feed { margin-top:5px; border-left:2px solid var(--line); padding-left:9px; }
+  .act-line { font-size:11px; color:var(--muted); line-height:1.7; }
+  .act-line.dim { color:var(--faint); font-style:italic; }
+  .act-line.now { color:var(--accent); font-weight:600;
+      animation: nowpulse 1.1s ease-in-out infinite; }
+  @keyframes nowpulse { 50% { opacity:.45; } }
   .stamp.fixed { color:#16a34a; border-color:#86efac; background:#f0fdf4; }
   .stamp.stood { color:#64748b; border-color:#cbd5e1; background:#f8fafc; }
   .ticket-body { margin-top:8px; }
