@@ -219,6 +219,32 @@ def test_upload_pick_shows_thumbnail_and_name():
     assert img.src.startswith("data:image/") and name.children == "A_fire.png"
 
 
+def test_event_sink_writes_jsonl_flight_recorder(tmp_path):
+    """Every event lands in events.jsonl as it happens: the durable record
+    (Sunny: 'are you writing everything in a log file?')."""
+    import json as _json
+    from agentic import ui as ui_mod
+    ui_mod.RUNS["testrun"] = {"events": [], "done": False, "error": None}
+    sink = ui_mod.make_event_sink("testrun", tmp_path)
+    sink({"type": "stage_started", "stage": "Perceive"})
+    sink({"type": "violation_found", "kind": "x", "raw_label": "y"})
+    lines = (tmp_path / "events.jsonl").read_text().splitlines()
+    assert len(lines) == 2 == len(ui_mod.RUNS["testrun"]["events"])
+    first = _json.loads(lines[0])
+    assert first["type"] == "stage_started" and "t" in first
+    del ui_mod.RUNS["testrun"]
+
+
+def test_stations_are_collapsible_details():
+    """Stations render as <details> (collapsible); non-pending ones open."""
+    from dash import html
+    rail = rail_component(derive(EVENTS))
+    stations = [c for c in rail.children if isinstance(c, html.Details)]
+    assert len(stations) == 6
+    opens = {s.className.split()[-1]: s.open for s in stations}
+    assert opens["st-perceive"] and not opens["st-assemble"]
+
+
 def test_rail_renders_timeline_nodes():
     """The station activity feed renders as a mini timeline (nodes on a
     connector), with a warn node for violation lines."""

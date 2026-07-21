@@ -330,10 +330,16 @@ def build_replay_events(record: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def saved_records() -> list[dict[str, str]]:
-    if not PERCEPTION_DIR.exists():
-        return []
-    return [{"label": p.name.replace("__perception.json", ""), "value": str(p)}
-            for p in sorted(PERCEPTION_DIR.glob("*__perception.json"))]
+    """Replayables: frozen worked-example records, plus every UI run's
+    events.jsonl flight recorder (true replay, exact event stream)."""
+    opts: list[dict[str, str]] = []
+    if PERCEPTION_DIR.exists():
+        opts += [{"label": p.name.replace("__perception.json", ""), "value": str(p)}
+                 for p in sorted(PERCEPTION_DIR.glob("*__perception.json"))]
+    if UI_RUNS_DIR.exists():
+        opts += [{"label": f"ui run · {p.parent.name}", "value": str(p)}
+                 for p in sorted(UI_RUNS_DIR.glob("*/events.jsonl"))]
+    return opts
 
 
 def image_src_for_record(json_path: Path) -> str | None:
@@ -349,26 +355,52 @@ def image_src_for_record(json_path: Path) -> str | None:
 # ── Live run (background thread) ────────────────────────────────────────
 
 
+UI_RUNS_DIR = REPO_ROOT / "exports" / "agentic_runs"
+
+
+def make_event_sink(run_id: str, run_dir: Path):
+    """Event sink: append to the in-memory stream AND to events.jsonl.
+
+    events.jsonl is the run's flight recorder: one JSON object per line,
+    timestamped, written as it happens. It is the durable record the
+    scrubber, future replays, and the dialogue agent read; the in-memory
+    list only serves the live screen."""
+    import time as _time
+
+    run_dir.mkdir(parents=True, exist_ok=True)
+    log_path = run_dir / "events.jsonl"
+
+    def sink(event: dict[str, Any]) -> None:
+        stamped = {"t": round(_time.time(), 3), **event}
+        RUNS[run_id]["events"].append(stamped)
+        with log_path.open("a") as f:
+            f.write(json.dumps(stamped) + "\n")
+
+    return sink
+
+
 def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
     run_id = uuid.uuid4().hex[:8]
-    tmp = Path("/tmp") / f"agentic_ui_{run_id}_{filename or 'scene.jpg'}"
-    tmp.write_bytes(image_bytes)
-    mime = mimetypes.guess_type(str(tmp))[0] or "image/jpeg"
+    run_dir = UI_RUNS_DIR / f"ui_{run_id}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    image_path = run_dir / (filename or "scene.jpg")
+    image_path.write_bytes(image_bytes)
+    (run_dir / "caption.txt").write_text(caption or "")
+    mime = mimetypes.guess_type(str(image_path))[0] or "image/jpeg"
     RUNS[run_id] = {
         "events": [],
         "image_src": f"data:{mime};base64,{base64.b64encode(image_bytes).decode()}",
         "done": False, "error": None,
     }
+    sink = make_event_sink(run_id, run_dir)
 
     def worker() -> None:
         try:
             from agentic.perception import run_perception
-            run_perception(tmp, caption=caption,
-                           out_dir=tmp.parent / f"agentic_ui_{run_id}_out",
-                           on_event=RUNS[run_id]["events"].append)
+            run_perception(image_path, caption=caption, out_dir=run_dir,
+                           on_event=sink)
         except Exception as exc:  # surfaced as a card, never a dead screen
-            RUNS[run_id]["events"].append(
-                {"type": "run_error", "message": str(exc)})
+            sink({"type": "run_error", "message": str(exc)})
             RUNS[run_id]["error"] = str(exc)
         finally:
             RUNS[run_id]["done"] = True
@@ -379,10 +411,27 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
 
 def start_replay(json_path: str) -> str:
     run_id = uuid.uuid4().hex[:8]
-    record = json.loads(Path(json_path).read_text())
+    path = Path(json_path)
+    if path.name == "events.jsonl":
+        # True replay: the exact recorded event stream of a past UI run.
+        events = [json.loads(line) for line in path.read_text().splitlines() if line]
+        image_src = None
+        for ext in (".png", ".jpg", ".jpeg", ".webp"):
+            for img in sorted(path.parent.glob(f"*{ext}")):
+                if "__" not in img.name:      # skip overlays/masks
+                    mime = mimetypes.guess_type(str(img))[0] or "image/jpeg"
+                    image_src = (f"data:{mime};base64,"
+                                 f"{base64.b64encode(img.read_bytes()).decode()}")
+                    break
+            if image_src:
+                break
+        RUNS[run_id] = {"events": events, "image_src": image_src,
+                        "done": True, "error": None}
+        return run_id
+    record = json.loads(path.read_text())
     RUNS[run_id] = {
         "events": build_replay_events(record),
-        "image_src": image_src_for_record(Path(json_path)),
+        "image_src": image_src_for_record(path),
         "done": True, "error": None,
     }
     return run_id
@@ -403,9 +452,19 @@ def rail_component(d: dict[str, Any]) -> html.Div:
                "done": "station done"}[st["status"]]
         cls += f" st-{s.lower()}"          # per-stage tint (shaded cards)
         secs = f"{st['seconds']:.1f}s" if st.get("seconds") else ""
-        head = [html.Span(s, className="station-name"),
-                html.Span(secs, className="station-secs")]
-        body: list[Any] = [html.Div(head, className="station-head")]
+        # Compact status shown in the collapsed header.
+        if s == "Repair" and d["violations"]:
+            compact = f"{len(d['violations'])} violation(s)"
+        elif st.get("info"):
+            compact = st["info"]
+        else:
+            compact = ""
+        head = html.Summary([html.Span(s, className="station-name"),
+                             html.Span(secs, className="station-secs"),
+                             html.Span(compact, className="station-compact"),
+                             html.Span("▾", className="station-chev")],
+                            className="station-head")
+        body: list[Any] = [head]
 
         if s == "Perceive" and d["perceive_entities"]:
             named = []
@@ -485,9 +544,12 @@ def rail_component(d: dict[str, Any]) -> html.Div:
             body.append(html.Div(rows, className="tl",
                                  style={"--tl-line": f"{color}55"}))
 
-        items.append(html.Div(body, className=cls))
-        items.append(html.Div("│", className="rail-link"))
-    return html.Div(items[:-1], className="rail")
+        # Collapsible station: active stages arrive open; finished ones can
+        # be folded to their header line. (The render cache below keeps the
+        # user's toggles from being reset by the refresh interval.)
+        items.append(html.Details(body, className=cls,
+                                  open=(st["status"] != "pending")))
+    return html.Div(items, className="rail")
 
 
 def tickets_component(d: dict[str, Any]) -> html.Div:
@@ -777,8 +839,22 @@ app.index_string = """<!DOCTYPE html>
   .station.active { animation: stlift 1.2s ease-in-out infinite; box-shadow:var(--shadow-lift); }
   @keyframes stlift { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-1px); } }
   .station-name { font-weight:bold; letter-spacing:1.5px; font-size:14px; }
-  .station-head { display:flex; align-items:baseline; gap:10px; margin-bottom:2px; }
+  .station-head { display:flex; align-items:baseline; gap:10px; margin-bottom:2px;
+      cursor:pointer; list-style:none; }
+  .station-head::-webkit-details-marker { display:none; }
   .station-secs { font-size:11px; color:var(--faint); }
+  .station-compact { font-size:11px; color:var(--muted); margin-left:auto; }
+  .station-chev { color:var(--faint); font-size:11px; transition:transform .2s; }
+  details:not([open]) > .station-head .station-chev,
+  details:not([open]) > .phase-head .station-chev { transform:rotate(-90deg); }
+  .phase-card { background:var(--card); border:1px solid var(--line);
+      border-radius:16px; padding:14px 16px; box-shadow:var(--shadow-lift); }
+  .phase-head { display:flex; align-items:baseline; gap:10px; cursor:pointer;
+      list-style:none; margin-bottom:10px; }
+  .phase-head::-webkit-details-marker { display:none; }
+  .phase-num { font-size:10px; font-weight:bold; letter-spacing:2px; color:white;
+      background:var(--accent); border-radius:6px; padding:3px 8px; }
+  .phase-title { font-weight:bold; letter-spacing:2px; font-size:14px; color:var(--ink); }
   .station-info, .station-loop { font-size:12px; color:var(--muted); }
   .station-detail { font-size:12px; color:#475569; margin-top:3px; line-height:1.6; }
   .station-detail.dim { color:var(--faint); }
@@ -874,11 +950,20 @@ app.layout = html.Div([
                            className="scrub"),
                   # Reserved: the conversation agent docks here next.
                   html.Div(id="agent-dock")]),
-        html.Div([html.Div(id="rail"), html.Div(id="tickets")]),
+        # PHASE 0 · PERCEPTION: the whole live panel for this stage lives
+        # under one collapsible phase card. Later stages (threats, graphs,
+        # intervention) will stack their own phase cards below it.
+        html.Div(html.Details([
+            html.Summary([html.Span("PHASE 0", className="phase-num"),
+                          html.Span("PERCEPTION", className="phase-title"),
+                          html.Span("▾", className="station-chev")],
+                         className="phase-head"),
+            html.Div(id="rail"), html.Div(id="tickets"),
+        ], className="phase-card", open=True)),
     ], className="main"),
     html.Div(id="inspector-modal"),
     dcc.Store(id="run-id"), dcc.Store(id="selected"),
-    dcc.Store(id="upload-cache"),
+    dcc.Store(id="upload-cache"), dcc.Store(id="render-key"),
     dcc.Interval(id="tick", interval=700),
 ], className="wrap")
 
@@ -929,13 +1014,17 @@ def select_entity(box_clicks, close_clicks):
     Output("instruments", "children"), Output("scene", "children"),
     Output("inspector-modal", "children"),
     Output("scrub", "max"), Output("scrub", "value"),
+    Output("render-key", "data"),
     Input("tick", "n_intervals"), Input("scrub", "value"),
     State("run-id", "data"), State("selected", "data"), State("scrub", "max"),
-    State("upload-cache", "data"))
-def render(_n, scrub_value, run_id, selected, scrub_max, cached):
+    State("upload-cache", "data"), State("render-key", "data"))
+def render(_n, scrub_value, run_id, selected, scrub_max, cached, prev_key):
     run = RUNS.get(run_id or "")
     if not run:
         empty = derive([])
+        key = ["empty", bool(cached and cached.get("contents"))]
+        if key == prev_key:
+            return (dash.no_update,) * 7 + (dash.no_update,)
         # A picked-but-unanalyzed image previews in the scene immediately,
         # with a ribbon saying it's ready.
         if cached and cached.get("contents"):
@@ -946,18 +1035,24 @@ def render(_n, scrub_value, run_id, selected, scrub_max, cached):
             scene = scene_component(empty, None)
         return (rail_component(empty), tickets_component(empty),
                 instruments_component(empty), scene,
-                inspector_component(empty, None), 1, 1)
+                inspector_component(empty, None), 1, 1, key)
     events = run["events"]
     total = max(1, len(events))
     # Follow-live rule: the slider sticks to the right edge unless the user
     # dragged it left; dragging back to the edge resumes following.
     following = scrub_value is None or scrub_max is None or scrub_value >= scrub_max
     k = total if (following or ctx.triggered_id != "scrub") and following else min(scrub_value, total)
+    # Render cache: when nothing changed since the last tick, leave the DOM
+    # alone. This is what preserves the user's collapse/expand toggles
+    # (re-rendering identical children would reset every <details>).
+    key = [run_id, total, k, selected]
+    if key == prev_key and ctx.triggered_id != "scrub":
+        return (dash.no_update,) * 7 + (dash.no_update,)
     d = derive(events[:k])
     return (rail_component(d), tickets_component(d), instruments_component(d),
             scene_component(d, run.get("image_src")),
             inspector_component(d, selected),
-            total, total if following else k)
+            total, total if following else k, key)
 
 
 if __name__ == "__main__":
