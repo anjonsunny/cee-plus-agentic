@@ -1,0 +1,310 @@
+{
+  "image_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/E_collapse.jpg",
+  "image_size": [
+    1672,
+    941
+  ],
+  "caption": "A partially collapsed apartment building with a man trapped at an upper window; two police officers stand behind caution tape.",
+  "entity_source": "vlm",
+  "detected_objects": [
+    {
+      "object_id": "person_1",
+      "label": "person",
+      "family": "person",
+      "state": "trapped",
+      "state_kind": "at_risk",
+      "description": "man at the upper window of the collapsed building",
+      "bbox": [
+        1093,
+        97,
+        1160,
+        180
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.385145366191864,
+      "anchor_bbox": [
+        1098,
+        127,
+        1165,
+        183
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/E_collapse__person_1_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "responder_1",
+      "label": "responder",
+      "family": "responder",
+      "state": "standing",
+      "state_kind": "normal",
+      "description": "police officer behind caution tape",
+      "bbox": [
+        439,
+        660,
+        561,
+        939
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.34662333130836487,
+      "anchor_bbox": [
+        443,
+        665,
+        565,
+        941
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/E_collapse__responder_1_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "responder_2",
+      "label": "responder",
+      "family": "responder",
+      "state": "standing",
+      "state_kind": "normal",
+      "description": "another police officer behind caution tape",
+      "bbox": [
+        577,
+        652,
+        698,
+        938
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.4117068648338318,
+      "anchor_bbox": [
+        612,
+        660,
+        700,
+        941
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/E_collapse__responder_2_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "car_1",
+      "label": "car",
+      "family": "vehicle",
+      "state": "stationary",
+      "state_kind": "normal",
+      "description": "police car with flashing lights in the foreground",
+      "bbox": [
+        131,
+        678,
+        593,
+        915
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.8903441429138184,
+      "anchor_bbox": [
+        138,
+        694,
+        623,
+        928
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/E_collapse__car_1_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "building_1",
+      "label": "building",
+      "family": "structure",
+      "state": "collapsed",
+      "state_kind": "hazard_bearing",
+      "description": "partially collapsed apartment building",
+      "bbox": [
+        416,
+        0,
+        1671,
+        880
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.4087221920490265,
+      "anchor_bbox": [
+        425,
+        0,
+        1672,
+        941
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/E_collapse__building_1_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "dust_1",
+      "label": "dust",
+      "family": "hazard_media",
+      "state": "billowing",
+      "state_kind": "hazard_bearing",
+      "description": "dust from the collapse",
+      "bbox": [
+        0,
+        144,
+        563,
+        703
+      ],
+      "box_source": "vlm_sam_fallback",
+      "box_confidence": 0.0,
+      "anchor_bbox": [
+        38,
+        180,
+        548,
+        650
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/E_collapse__dust_1_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "caution_tape_1",
+      "label": "caution_tape",
+      "family": "infrastructure",
+      "state": "stationary",
+      "state_kind": "normal",
+      "description": "caution tape around the collapsed building",
+      "bbox": [
+        2,
+        741,
+        1671,
+        854
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.5016525983810425,
+      "anchor_bbox": [
+        279,
+        758,
+        1672,
+        830
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/E_collapse__caution_tape_1_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    }
+  ],
+  "unlocalized": [],
+  "notes": [],
+  "repair_trace": {
+    "rounds": [
+      {
+        "round_number": 1,
+        "violations": [
+          {
+            "entity_index": 3,
+            "raw_label": "vehicle",
+            "kind": "family_name_as_label",
+            "instruction": "Entity 3: 'vehicle' is a family name, not a label. Replace it with the specific noun that fits: car, truck, tanker_truck, pickup_truck, van, bus, bicycle, motorcycle, fire_truck, ambulance, police_car. If none fits, use 'other'."
+          },
+          {
+            "entity_index": 4,
+            "raw_label": "structure",
+            "kind": "family_name_as_label",
+            "instruction": "Entity 4: 'structure' is a family name, not a label. Replace it with the specific noun that fits: house, building, shed, garage. If none fits, use 'other'."
+          },
+          {
+            "entity_index": 5,
+            "raw_label": "hazard_media",
+            "kind": "family_name_as_label",
+            "instruction": "Entity 5: 'hazard_media' is a family name, not a label. Replace it with the specific noun that fits: fire, smoke, water, dust, gas, spill, debris, rubble. If none fits, use 'other'."
+          },
+          {
+            "entity_index": 6,
+            "raw_label": "infrastructure",
+            "kind": "family_name_as_label",
+            "instruction": "Entity 6: 'infrastructure' is a family name, not a label. Replace it with the specific noun that fits: road, bridge, sidewalk, fence, pole, powerline, traffic_light, street_lamp, sign, hydrant, ladder, handrail, traffic_cone, caution_tape, pool. If none fits, use 'other'."
+          }
+        ],
+        "entities_after": [
+          {
+            "label": "person",
+            "state": "trapped",
+            "description": "man at the upper window of the collapsed building",
+            "bbox": [
+              1098,
+              127,
+              1165,
+              183
+            ]
+          },
+          {
+            "label": "responder",
+            "state": "standing",
+            "description": "police officer behind caution tape",
+            "bbox": [
+              443,
+              665,
+              565,
+              950
+            ]
+          },
+          {
+            "label": "responder",
+            "state": "standing",
+            "description": "another police officer behind caution tape",
+            "bbox": [
+              612,
+              660,
+              700,
+              950
+            ]
+          },
+          {
+            "label": "car",
+            "state": "stationary",
+            "description": "police car with flashing lights in the foreground",
+            "bbox": [
+              138,
+              694,
+              623,
+              928
+            ]
+          },
+          {
+            "label": "building",
+            "state": "collapsed",
+            "description": "partially collapsed apartment building",
+            "bbox": [
+              425,
+              0,
+              1679,
+              950
+            ]
+          },
+          {
+            "label": "dust",
+            "state": "billowing",
+            "description": "dust from the collapse",
+            "bbox": [
+              38,
+              180,
+              548,
+              650
+            ]
+          },
+          {
+            "label": "caution_tape",
+            "state": "stationary",
+            "description": "caution tape around the collapsed building",
+            "bbox": [
+              279,
+              758,
+              1679,
+              830
+            ]
+          }
+        ],
+        "changed": true
+      }
+    ],
+    "clean_on_arrival": false,
+    "stopped_reason": "clean"
+  }
+}

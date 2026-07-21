@@ -1,0 +1,70 @@
+{
+  "image_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/B_pool.jpg",
+  "image_size": [
+    1672,
+    941
+  ],
+  "caption": "A child is struggling in a swimming pool; the lifeguard chair is empty; another child floats motionless face down farther away.",
+  "entity_source": "vlm",
+  "detected_objects": [
+    {
+      "object_id": "child_1",
+      "label": "child",
+      "family": "person",
+      "state": "drowning",
+      "state_kind": "at_risk",
+      "description": "struggling in water with arms up, splashing",
+      "bbox": [
+        380,
+        490,
+        760,
+        747
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.7743358612060547,
+      "anchor_bbox": [
+        382,
+        526,
+        794,
+        780
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/B_pool__child_1_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "child_2",
+      "label": "child",
+      "family": "person",
+      "state": "trapped",
+      "state_kind": "at_risk",
+      "description": "floating motionless face down farther away",
+      "bbox": [
+        1357,
+        368,
+        1569,
+        401
+      ],
+      "box_source": "vlm_sam_fallback",
+      "box_confidence": 0.0,
+      "anchor_bbox": [
+        1362,
+        376,
+        1575,
+        405
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/B_pool__child_2_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    }
+  ],
+  "unlocalized": [],
+  "notes": [],
+  "repair_trace": {
+    "rounds": [],
+    "clean_on_arrival": true,
+    "stopped_reason": "clean"
+  }
+}

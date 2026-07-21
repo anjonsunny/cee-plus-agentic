@@ -1,0 +1,383 @@
+{
+  "image_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/D_aerial_spill.jpg",
+  "image_size": [
+    1672,
+    941
+  ],
+  "caption": "Aerial view of an overturned tanker truck leaking chemicals at an intersection, attended by hazmat workers, a fire truck, an ambulance, and a police car.",
+  "entity_source": "vlm",
+  "detected_objects": [
+    {
+      "object_id": "tanker_truck_1",
+      "label": "tanker_truck",
+      "family": "vehicle",
+      "state": "fallen",
+      "state_kind": "hazard_bearing",
+      "description": "silver tanker truck on its side in the middle of the road",
+      "bbox": [
+        471,
+        204,
+        1081,
+        445
+      ],
+      "box_source": "vlm_sam_fallback",
+      "box_confidence": 0.0,
+      "anchor_bbox": [
+        469,
+        203,
+        1087,
+        450
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/D_aerial_spill__tanker_truck_1_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "hazmat_worker_1",
+      "label": "hazmat_worker",
+      "family": "responder",
+      "state": "standing",
+      "state_kind": "normal",
+      "description": "person wearing protective gear standing near the overturned tanker truck",
+      "bbox": [
+        777,
+        331,
+        821,
+        423
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.4761826992034912,
+      "anchor_bbox": [
+        784,
+        339,
+        816,
+        428
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/D_aerial_spill__hazmat_worker_1_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "hazmat_worker_2",
+      "label": "hazmat_worker",
+      "family": "responder",
+      "state": "standing",
+      "state_kind": "normal",
+      "description": "person wearing protective gear standing near the overturned tanker truck",
+      "bbox": [
+        850,
+        310,
+        893,
+        396
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.4570002555847168,
+      "anchor_bbox": [
+        850,
+        322,
+        897,
+        400
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/D_aerial_spill__hazmat_worker_2_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "fire_truck_1",
+      "label": "fire_truck",
+      "family": "vehicle",
+      "state": "stationary",
+      "state_kind": "normal",
+      "description": "red fire truck with emergency lights on parked behind the tanker truck",
+      "bbox": [
+        300,
+        114,
+        521,
+        236
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.7447023391723633,
+      "anchor_bbox": [
+        301,
+        116,
+        522,
+        237
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/D_aerial_spill__fire_truck_1_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "ambulance_1",
+      "label": "ambulance",
+      "family": "vehicle",
+      "state": "stationary",
+      "state_kind": "normal",
+      "description": "white ambulance with emergency lights on parked to the right of the fire truck",
+      "bbox": [
+        1181,
+        146,
+        1391,
+        268
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.6253864765167236,
+      "anchor_bbox": [
+        1184,
+        150,
+        1400,
+        276
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/D_aerial_spill__ambulance_1_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "police_car_1",
+      "label": "police_car",
+      "family": "vehicle",
+      "state": "stationary",
+      "state_kind": "normal",
+      "description": "black police car with emergency lights on parked in front of the tanker truck",
+      "bbox": [
+        56,
+        308,
+        265,
+        451
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.7164911031723022,
+      "anchor_bbox": [
+        53,
+        316,
+        268,
+        459
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/D_aerial_spill__police_car_1_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "spill_1",
+      "label": "spill",
+      "family": "hazard_media",
+      "state": "leaking",
+      "state_kind": "hazard_bearing",
+      "description": "chemical spill on the road near the overturned tanker truck",
+      "bbox": [
+        560,
+        398,
+        1672,
+        939
+      ],
+      "box_source": "vlm_sam_fallback",
+      "box_confidence": 0.0,
+      "anchor_bbox": [
+        700,
+        391,
+        1628,
+        941
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/D_aerial_spill__spill_1_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    }
+  ],
+  "unlocalized": [],
+  "notes": [],
+  "repair_trace": {
+    "rounds": [
+      {
+        "round_number": 1,
+        "violations": [
+          {
+            "entity_index": -1,
+            "raw_label": "spill",
+            "kind": "caption_entity_missing",
+            "instruction": "The caption mentions \"chemicals\" but your list has no 'spill' entity. Look at the image again and add it with its state and bbox. If you truly cannot see it in the image, leave your list unchanged."
+          }
+        ],
+        "entities_after": [
+          {
+            "label": "tanker_truck",
+            "state": "overturned",
+            "description": "silver tanker truck on its side in the middle of the road",
+            "bbox": [
+              469,
+              203,
+              1087,
+              450
+            ]
+          },
+          {
+            "label": "hazmat_worker",
+            "state": "standing",
+            "description": "person wearing protective gear standing near the overturned tanker truck",
+            "bbox": [
+              784,
+              339,
+              816,
+              428
+            ]
+          },
+          {
+            "label": "hazmat_worker",
+            "state": "standing",
+            "description": "person wearing protective gear standing near the overturned tanker truck",
+            "bbox": [
+              850,
+              322,
+              897,
+              400
+            ]
+          },
+          {
+            "label": "fire_truck",
+            "state": "attending",
+            "description": "red fire truck with emergency lights on parked behind the tanker truck",
+            "bbox": [
+              301,
+              116,
+              522,
+              237
+            ]
+          },
+          {
+            "label": "ambulance",
+            "state": "attending",
+            "description": "white ambulance with emergency lights on parked to the right of the fire truck",
+            "bbox": [
+              1184,
+              150,
+              1400,
+              276
+            ]
+          },
+          {
+            "label": "police_car",
+            "state": "attending",
+            "description": "black police car with emergency lights on parked in front of the tanker truck",
+            "bbox": [
+              53,
+              316,
+              268,
+              459
+            ]
+          },
+          {
+            "label": "spill",
+            "state": "visible",
+            "description": "chemical spill on the road near the overturned tanker truck",
+            "bbox": [
+              700,
+              391,
+              1628,
+              945
+            ]
+          }
+        ],
+        "changed": true
+      },
+      {
+        "round_number": 2,
+        "violations": [
+          {
+            "entity_index": 6,
+            "raw_label": "spill",
+            "kind": "state_out_of_vocab",
+            "instruction": "Entity 6 ('spill'): state 'visible' is not a vocabulary state. Choose the single word that matches what you see: hazard-bearing: burning, burnt, collapsed, collapsing, fallen, crushed, flooded, leaking, spreading, billowing, rising, seeping, engulfing / at-risk: injured, bleeding, fleeing, trapped, cowering, drowning, suffocating, unconscious / normal: intact, standing, upright, dry, sealed, stationary, resting, healthy, stable, swimming, walking, running."
+          }
+        ],
+        "entities_after": [
+          {
+            "label": "tanker_truck",
+            "state": "overturned",
+            "description": "silver tanker truck on its side in the middle of the road",
+            "bbox": [
+              469,
+              203,
+              1087,
+              450
+            ]
+          },
+          {
+            "label": "hazmat_worker",
+            "state": "standing",
+            "description": "person wearing protective gear standing near the overturned tanker truck",
+            "bbox": [
+              784,
+              339,
+              816,
+              428
+            ]
+          },
+          {
+            "label": "hazmat_worker",
+            "state": "standing",
+            "description": "person wearing protective gear standing near the overturned tanker truck",
+            "bbox": [
+              850,
+              322,
+              897,
+              400
+            ]
+          },
+          {
+            "label": "fire_truck",
+            "state": "attending",
+            "description": "red fire truck with emergency lights on parked behind the tanker truck",
+            "bbox": [
+              301,
+              116,
+              522,
+              237
+            ]
+          },
+          {
+            "label": "ambulance",
+            "state": "attending",
+            "description": "white ambulance with emergency lights on parked to the right of the fire truck",
+            "bbox": [
+              1184,
+              150,
+              1400,
+              276
+            ]
+          },
+          {
+            "label": "police_car",
+            "state": "attending",
+            "description": "black police car with emergency lights on parked in front of the tanker truck",
+            "bbox": [
+              53,
+              316,
+              268,
+              459
+            ]
+          },
+          {
+            "label": "spill",
+            "state": "leaking",
+            "description": "chemical spill on the road near the overturned tanker truck",
+            "bbox": [
+              700,
+              391,
+              1628,
+              945
+            ]
+          }
+        ],
+        "changed": true
+      }
+    ],
+    "clean_on_arrival": false,
+    "stopped_reason": "clean"
+  }
+}

@@ -1,0 +1,200 @@
+{
+  "image_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/F_park_control.jpg",
+  "image_size": [
+    1672,
+    941
+  ],
+  "caption": "Families relax in a park on a sunny afternoon; children play on the swings and a dog chases a ball.",
+  "entity_source": "vlm",
+  "detected_objects": [
+    {
+      "object_id": "person_1",
+      "label": "person",
+      "family": "person",
+      "state": "resting",
+      "state_kind": "normal",
+      "description": "family sitting on blanket under tree",
+      "bbox": [
+        138,
+        578,
+        304,
+        812
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.5391128063201904,
+      "anchor_bbox": [
+        138,
+        584,
+        270,
+        816
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/F_park_control__person_1_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "person_2",
+      "label": "person",
+      "family": "person",
+      "state": "standing",
+      "state_kind": "normal",
+      "description": "man holding child's hand near ice cream cart",
+      "bbox": [
+        306,
+        416,
+        356,
+        564
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.5181243419647217,
+      "anchor_bbox": [
+        312,
+        420,
+        369,
+        570
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/F_park_control__person_2_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "person_3",
+      "label": "person",
+      "family": "person",
+      "state": "resting",
+      "state_kind": "normal",
+      "description": "woman and man reading books on bench",
+      "bbox": [
+        1252,
+        517,
+        1443,
+        847
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.5737741589546204,
+      "anchor_bbox": [
+        1258,
+        519,
+        1450,
+        856
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/F_park_control__person_3_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "person_4",
+      "label": "person",
+      "family": "person",
+      "state": "standing",
+      "state_kind": "normal",
+      "description": "man pushing ice cream cart",
+      "bbox": [
+        104,
+        412,
+        153,
+        554
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.5267045497894287,
+      "anchor_bbox": [
+        107,
+        419,
+        173,
+        562
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/F_park_control__person_4_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "person_5",
+      "label": "person",
+      "family": "person",
+      "state": "resting",
+      "state_kind": "normal",
+      "description": "family sitting on blanket under tree",
+      "bbox": [
+        875,
+        413,
+        925,
+        544
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.5473683476448059,
+      "anchor_bbox": [
+        868,
+        505,
+        950,
+        589
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/F_park_control__person_5_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "person_6",
+      "label": "person",
+      "family": "person",
+      "state": "standing",
+      "state_kind": "normal",
+      "description": "man and woman walking with child near ice cream cart",
+      "bbox": [
+        246,
+        405,
+        304,
+        567
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.5189612507820129,
+      "anchor_bbox": [
+        243,
+        410,
+        317,
+        576
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/F_park_control__person_6_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "dog_1",
+      "label": "dog",
+      "family": "animal",
+      "state": "running",
+      "state_kind": "normal",
+      "description": "golden retriever chasing ball in park",
+      "bbox": [
+        724,
+        596,
+        899,
+        704
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.8519829511642456,
+      "anchor_bbox": [
+        728,
+        603,
+        902,
+        713
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/F_park_control__dog_1_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    }
+  ],
+  "unlocalized": [],
+  "notes": [],
+  "repair_trace": {
+    "rounds": [],
+    "clean_on_arrival": true,
+    "stopped_reason": "clean"
+  }
+}

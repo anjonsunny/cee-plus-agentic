@@ -1,0 +1,148 @@
+{
+  "image_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/A_fire.png",
+  "image_size": [
+    1536,
+    1024
+  ],
+  "caption": "A house on fire at night on a residential street; a person, a dog, and a parked car are nearby, next to an intact house.",
+  "entity_source": "vlm",
+  "detected_objects": [
+    {
+      "object_id": "person_1",
+      "label": "person",
+      "family": "person",
+      "state": "standing",
+      "state_kind": "normal",
+      "description": "person standing near the burning house",
+      "bbox": [
+        1091,
+        529,
+        1156,
+        654
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.7481537461280823,
+      "anchor_bbox": [
+        1095,
+        534,
+        1162,
+        660
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/A_fire__person_1_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "dog_1",
+      "label": "dog",
+      "family": "animal",
+      "state": "standing",
+      "state_kind": "normal",
+      "description": "black dog on sidewalk next to car",
+      "bbox": [
+        257,
+        749,
+        461,
+        889
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.892316997051239,
+      "anchor_bbox": [
+        260,
+        758,
+        464,
+        893
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/A_fire__dog_1_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "car_1",
+      "label": "car",
+      "family": "vehicle",
+      "state": "stationary",
+      "state_kind": "normal",
+      "description": "silver sedan parked on the street near the burning house",
+      "bbox": [
+        502,
+        546,
+        1202,
+        907
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.9265084862709045,
+      "anchor_bbox": [
+        503,
+        572,
+        1205,
+        916
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/A_fire__car_1_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "house_1",
+      "label": "house",
+      "family": "structure",
+      "state": "burning",
+      "state_kind": "hazard_bearing",
+      "description": "brick house engulfed in flames and smoke",
+      "bbox": [
+        419,
+        437,
+        845,
+        637
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.5097388029098511,
+      "anchor_bbox": [
+        428,
+        390,
+        847,
+        640
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/A_fire__house_1_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    },
+    {
+      "object_id": "house_2",
+      "label": "house",
+      "family": "structure",
+      "state": "intact",
+      "state_kind": "normal",
+      "description": "gray house with blue trim on the right side of the street",
+      "bbox": [
+        1125,
+        325,
+        1535,
+        627
+      ],
+      "box_source": "dino_matched",
+      "box_confidence": 0.7229169011116028,
+      "anchor_bbox": [
+        1125,
+        334,
+        1536,
+        637
+      ],
+      "mask_path": "/Users/sunny/Documents/CEE+ Agentic/experiments/agentic_scenes/perception/A_fire__house_2_mask.png",
+      "label_note": "",
+      "vocab_extension": false,
+      "family_name_as_label": false
+    }
+  ],
+  "unlocalized": [],
+  "notes": [],
+  "repair_trace": {
+    "rounds": [],
+    "clean_on_arrival": true,
+    "stopped_reason": "clean"
+  }
+}
