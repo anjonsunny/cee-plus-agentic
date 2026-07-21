@@ -219,6 +219,14 @@ def test_upload_pick_shows_thumbnail_and_name():
     assert img.src.startswith("data:image/") and name.children == "A_fire.png"
 
 
+def test_rail_renders_timeline_nodes():
+    """The station activity feed renders as a mini timeline (nodes on a
+    connector), with a warn node for violation lines."""
+    rail = str(rail_component(derive(EVENTS)))
+    assert "tl-row" in rail and "tl-node" in rail
+    assert "warn" in rail                       # the violation line's node
+
+
 def test_station_activity_feeds_accumulate():
     """Cowork-style narration: each stage collects its own activity lines
     (Sunny, 2026-07-21)."""

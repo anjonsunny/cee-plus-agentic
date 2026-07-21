@@ -78,6 +78,26 @@ STATE_KIND_CSS = {
     "unknown": "#94a3b8",
 }
 
+STAGE_COLORS = {
+    "Perceive": "#3b82f6", "Repair": "#f59e0b", "Ground": "#8b5cf6",
+    "Bind": "#06b6d4", "Mask": "#ec4899", "Assemble": "#16a34a",
+}
+
+
+def _timeline_glyph(text: str) -> tuple[str, str]:
+    """(glyph, css modifier) for an activity line, by what it reports."""
+    if text.startswith("found:"):
+        return "!", "warn"
+    if "asking the model" in text or text.endswith("..."):
+        return "…", "ask"
+    if ("done:" in text or "resolved" in text or "matched" in text
+            or "captured" in text or "saved" in text or "found" in text
+            or "entities" in text or "fallback" in text):
+        return "✓", "ok"
+    if "stood its ground" in text or "cap reached" in text:
+        return "■", "stood"
+    return "·", "info"
+
 # In-memory run registry: {run_id: {"events": [...], "image_src": str,
 # "error": str|None, "done": bool}}. One user, local tool: a dict is enough.
 RUNS: dict[str, dict[str, Any]] = {}
@@ -430,21 +450,40 @@ def rail_component(d: dict[str, Any]) -> html.Div:
         if s not in ("Perceive", "Repair"):
             body.append(html.Div(st.get("info", ""), className="station-info"))
 
-        # The Cowork-style narration: this station's own activity lines,
-        # newest last; while the station is active the newest line pulses
-        # as "happening now". Older lines collapse into a count.
+        # Activity timeline: a mini vertical timeline inside the card
+        # (nodes on a connector line, one per activity; the newest node of
+        # an active stage pulses as "happening now"). A striking variation
+        # of the Cowork activity feed, per Sunny, not a copy: nodes carry
+        # outcome glyphs and the stage's color, the connector is drawn in
+        # the stage tint, and the live node radiates.
         acts = d["stage_activities"].get(s, [])
         if acts:
-            shown = acts[-4:]
-            lines: list[Any] = []
-            if len(acts) > 4:
-                lines.append(html.Div(f"… {len(acts) - 4} earlier",
-                                      className="act-line dim"))
+            color = STAGE_COLORS.get(s, "#64748b")
+            shown = acts[-5:]
+            rows: list[Any] = []
+            if len(acts) > 5:
+                rows.append(html.Div([
+                    html.Div("⋯", className="tl-node dim",
+                             style={"borderColor": "#cbd5e1"}),
+                    html.Div(f"{len(acts) - 5} earlier steps",
+                             className="tl-text dim"),
+                ], className="tl-row"))
             for i, a in enumerate(shown):
                 now = (st["status"] == "active" and i == len(shown) - 1)
-                lines.append(html.Div(("▸ " if now else "· ") + a,
-                                      className="act-line now" if now else "act-line"))
-            body.append(html.Div(lines, className="act-feed"))
+                glyph, mod = _timeline_glyph(a)
+                node_style = {"borderColor": color}
+                if mod == "warn":
+                    node_style = {"borderColor": "#f59e0b", "color": "#b45309"}
+                if now:
+                    glyph, mod = "▸", "now"
+                    node_style = {"borderColor": color, "color": color,
+                                  "boxShadow": f"0 0 0 4px {color}22"}
+                rows.append(html.Div([
+                    html.Div(glyph, className=f"tl-node {mod}", style=node_style),
+                    html.Div(a, className=f"tl-text {mod}"),
+                ], className="tl-row"))
+            body.append(html.Div(rows, className="tl",
+                                 style={"--tl-line": f"{color}55"}))
 
         items.append(html.Div(body, className=cls))
         items.append(html.Div("│", className="rail-link"))
@@ -761,12 +800,27 @@ app.index_string = """<!DOCTYPE html>
       animation: fixpulse 1s ease-in-out infinite; }
   @keyframes fixpulse { 50% { background:#fde68a; } }
   .ticket.fixing { border-color:#f59e0b; }
-  .act-feed { margin-top:8px; border-left:2px solid rgba(100,116,139,.25); padding-left:11px; }
-  .act-line { font-size:12px; color:var(--muted); line-height:1.8; }
-  .act-line.dim { color:var(--faint); font-style:italic; }
-  .act-line.now { color:var(--accent); font-weight:600;
-      animation: nowpulse 1.1s ease-in-out infinite; }
-  @keyframes nowpulse { 50% { opacity:.45; } }
+  /* Mini timeline inside each station card: nodes on a tinted connector. */
+  .tl { margin-top:10px; position:relative; }
+  .tl-row { display:flex; align-items:flex-start; gap:11px; position:relative;
+      padding:4px 0; }
+  .tl-row:not(:last-child)::after { content:""; position:absolute; left:9px;
+      top:26px; bottom:-6px; width:2px; background:var(--tl-line, #cbd5e1);
+      border-radius:1px; }
+  .tl-node { width:20px; height:20px; border-radius:50%; border:2px solid #cbd5e1;
+      background:#fff; color:#64748b; font-size:11px; font-weight:bold;
+      display:flex; align-items:center; justify-content:center; flex:none;
+      z-index:1; }
+  .tl-node.ok { color:#16a34a; }
+  .tl-node.warn { background:#fffbeb; }
+  .tl-node.stood { color:#64748b; background:#f8fafc; }
+  .tl-node.dim { color:#cbd5e1; border-style:dashed; }
+  .tl-node.now { animation: nodepulse 1.1s ease-in-out infinite; }
+  @keyframes nodepulse { 50% { transform:scale(1.18); } }
+  .tl-text { font-size:12px; color:var(--muted); line-height:1.6; padding-top:2px; }
+  .tl-text.dim { color:var(--faint); font-style:italic; }
+  .tl-text.now { color:var(--ink); font-weight:600; }
+  .tl-text.warn { color:#b45309; }
   .stamp.fixed { color:#16a34a; border-color:#86efac; background:#f0fdf4; }
   .stamp.stood { color:#64748b; border-color:#cbd5e1; background:#f8fafc; }
   .ticket-body { margin-top:8px; }
