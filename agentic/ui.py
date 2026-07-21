@@ -760,4 +760,11 @@ def render(_n, scrub_value, run_id, selected, scrub_max, cached):
 
 
 if __name__ == "__main__":
-    app.run(debug=False, port=8060)
+    # Debug mode ON by default: Dash then hot-reloads the browser tab when
+    # the server code changes. Without it, a tab from before a restart
+    # keeps posting the OLD callback wiring and every interval tick 500s
+    # (the KeyError / IndexError storms Sunny hit on 2026-07-21). Disable
+    # with AGENTIC_UI_DEBUG=0 for a demo.
+    import os as _os
+    debug = _os.getenv("AGENTIC_UI_DEBUG", "1") != "0"
+    app.run(debug=debug, port=8060)
