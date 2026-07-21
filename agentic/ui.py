@@ -944,6 +944,10 @@ app.index_string = """<!DOCTYPE html>
   .tool-chips { margin-top:6px; display:flex; gap:6px; flex-wrap:wrap; }
   .tool-chip { font-family:monospace; font-size:10px; background:#e0e7ff; color:#3730a3;
       border-radius:8px; padding:2px 8px; }
+  .agent-steps { --tl-line:#94a3b855; margin-bottom:8px; }
+  .step-tool { font-family:monospace; font-size:11px; background:#e0e7ff; color:#3730a3;
+      border-radius:6px; padding:1px 7px; }
+  .bubble-agent-text.working { color:var(--faint); animation: blink 1s infinite; }
   .agent-inputrow { display:flex; gap:8px; }
   .agent-inputbox { flex:1; background:#fff; border:1px solid var(--line); color:var(--ink);
       border-radius:10px; padding:9px 12px; }
@@ -1031,44 +1035,90 @@ def start_run(_clicks, replay_path, cached, caption):
     return dash.no_update
 
 
-# Per-page-load agent transcripts, keyed by thread id (rendered turns).
+# Per-page-load agent transcripts, keyed by thread id. Each turn:
+# {"q", "steps": [trajectory events], "a": answer|None, "pending": bool}.
 AGENT_LOGS: dict[str, list[dict[str, Any]]] = {}
 
 
-@app.callback(Output("agent-transcript", "children"),
-              Output("agent-input", "value"),
+def _fmt_args(args: dict[str, Any]) -> str:
+    return ", ".join(f"{v}" for v in args.values())
+
+
+def agent_transcript_component(log: list[dict[str, Any]]) -> list[Any]:
+    """Render the transcript, INCLUDING each turn's trajectory: the steps
+    the agent took (thinking, tool calls, tool results) shown as a mini
+    timeline above the answer, live-pulsing while the turn is in flight.
+    Tool use is visible before any answer exists."""
+    bubbles: list[Any] = []
+    for turn in log:
+        bubbles.append(html.Div(turn["q"], className="bubble-user"))
+        rows: list[Any] = []
+        steps = turn.get("steps", [])
+        for i, s in enumerate(steps):
+            live = turn.get("pending") and i == len(steps) - 1
+            kind = s.get("step")
+            if kind == "thinking":
+                glyph, mod, text = "…", "ask", "thinking..."
+            elif kind == "tool_call":
+                glyph, mod = "→", "info"
+                text = html.Span(f"{s['tool']}({_fmt_args(s.get('args', {}))})",
+                                 className="step-tool")
+            elif kind == "tool_result":
+                glyph = "✓" if s.get("ok") else "!"
+                mod = "ok" if s.get("ok") else "warn"
+                text = f"{s['tool']}: {s.get('summary', '')}"
+            elif kind == "answer":
+                continue                      # the answer renders as the bubble
+            else:
+                glyph, mod, text = "·", "info", str(s)
+            node_style = {"boxShadow": "0 0 0 4px #2563eb22"} if live else {}
+            rows.append(html.Div([
+                html.Div(glyph, className=f"tl-node {mod}" + (" now" if live else ""),
+                         style=node_style),
+                html.Div(text, className="tl-text" + (" now" if live else "")),
+            ], className="tl-row"))
+        body: list[Any] = []
+        if rows:
+            body.append(html.Div(rows, className="tl agent-steps"))
+        if turn.get("pending") and turn.get("a") is None:
+            body.append(html.Div("…", className="bubble-agent-text working"))
+        elif turn.get("a") is not None:
+            body.append(html.Div(turn["a"], className="bubble-agent-text"))
+        bubbles.append(html.Div(body, className="bubble-agent"))
+    return bubbles
+
+
+@app.callback(Output("agent-input", "value"),
               Input("agent-send", "n_clicks"), Input("agent-input", "n_submit"),
               State("agent-input", "value"), State("run-id", "data"),
               prevent_initial_call=True)
 def ask_agent(_clicks, _submit, question, run_id):
-    """One dialogue turn. Runs the LangGraph agent synchronously; the
-    answer's provenance (every tool call it made) renders as chips."""
+    """Start one dialogue turn in a background thread. The transcript
+    (with the live trajectory) renders via the tick interval, exactly like
+    the pipeline's own event stream."""
     if not question or not question.strip():
-        return dash.no_update, dash.no_update
+        return dash.no_update
     run = RUNS.get(run_id or "")
     focus = run.get("record_name") if run else None
     thread = f"ui-{run_id or 'global'}"
     log = AGENT_LOGS.setdefault(thread, [])
-    try:
-        from agentic.dialogue import respond
-        out = respond(thread, question.strip(), focus_run=focus)
-        log.append({"q": question.strip(), "a": out["answer"],
-                    "tools": [f"{t['tool']}({', '.join(map(str, t['args'].values()))})"
-                              for t in out["tool_trace"]]})
-    except Exception as exc:
-        log.append({"q": question.strip(),
-                    "a": f"agent unavailable: {exc}. Is Ollama running with "
-                         f"the dialogue model pulled (ollama pull qwen2.5:7b)?",
-                    "tools": []})
-    bubbles: list[Any] = []
-    for turn in log:
-        bubbles.append(html.Div(turn["q"], className="bubble-user"))
-        chips = [html.Span(t, className="tool-chip") for t in turn["tools"]]
-        bubbles.append(html.Div([html.Div(turn["a"], className="bubble-agent-text")]
-                                + ([html.Div(chips, className="tool-chips")]
-                                   if chips else []),
-                                className="bubble-agent"))
-    return bubbles, ""
+    turn = {"q": question.strip(), "steps": [], "a": None, "pending": True}
+    log.append(turn)
+
+    def worker() -> None:
+        try:
+            from agentic.dialogue import respond
+            out = respond(thread, turn["q"], focus_run=focus,
+                          on_step=turn["steps"].append)
+            turn["a"] = out["answer"]
+        except Exception as exc:
+            turn["a"] = (f"agent unavailable: {exc}. Is Ollama running with "
+                         f"the dialogue model pulled (ollama pull qwen2.5:7b)?")
+        finally:
+            turn["pending"] = False
+
+    threading.Thread(target=worker, daemon=True).start()
+    return ""
 
 
 @app.callback(Output("selected", "data"),
@@ -1089,17 +1139,22 @@ def select_entity(box_clicks, close_clicks):
     Output("instruments", "children"), Output("scene", "children"),
     Output("inspector-modal", "children"),
     Output("scrub", "max"), Output("scrub", "value"),
+    Output("agent-transcript", "children"),
     Output("render-key", "data"),
     Input("tick", "n_intervals"), Input("scrub", "value"),
     State("run-id", "data"), State("selected", "data"), State("scrub", "max"),
     State("upload-cache", "data"), State("render-key", "data"))
 def render(_n, scrub_value, run_id, selected, scrub_max, cached, prev_key):
+    thread = f"ui-{run_id or 'global'}"
+    log = AGENT_LOGS.get(thread, [])
+    # Agent fingerprint: any new step or completed answer re-renders.
+    agent_sig = [[len(t.get("steps", [])), t.get("a") is not None] for t in log]
     run = RUNS.get(run_id or "")
     if not run:
         empty = derive([])
-        key = ["empty", bool(cached and cached.get("contents"))]
+        key = ["empty", bool(cached and cached.get("contents")), agent_sig]
         if key == prev_key:
-            return (dash.no_update,) * 7 + (dash.no_update,)
+            return (dash.no_update,) * 8 + (dash.no_update,)
         # A picked-but-unanalyzed image previews in the scene immediately,
         # with a ribbon saying it's ready.
         if cached and cached.get("contents"):
@@ -1110,7 +1165,8 @@ def render(_n, scrub_value, run_id, selected, scrub_max, cached, prev_key):
             scene = scene_component(empty, None)
         return (rail_component(empty), tickets_component(empty),
                 instruments_component(empty), scene,
-                inspector_component(empty, None), 1, 1, key)
+                inspector_component(empty, None), 1, 1,
+                agent_transcript_component(log), key)
     events = run["events"]
     total = max(1, len(events))
     # Follow-live rule: the slider sticks to the right edge unless the user
@@ -1120,14 +1176,15 @@ def render(_n, scrub_value, run_id, selected, scrub_max, cached, prev_key):
     # Render cache: when nothing changed since the last tick, leave the DOM
     # alone. This is what preserves the user's collapse/expand toggles
     # (re-rendering identical children would reset every <details>).
-    key = [run_id, total, k, selected]
+    key = [run_id, total, k, selected, agent_sig]
     if key == prev_key and ctx.triggered_id != "scrub":
-        return (dash.no_update,) * 7 + (dash.no_update,)
+        return (dash.no_update,) * 8 + (dash.no_update,)
     d = derive(events[:k])
     return (rail_component(d), tickets_component(d), instruments_component(d),
             scene_component(d, run.get("image_src")),
             inspector_component(d, selected),
-            total, total if following else k, key)
+            total, total if following else k,
+            agent_transcript_component(log), key)
 
 
 if __name__ == "__main__":

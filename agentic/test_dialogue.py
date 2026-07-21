@@ -126,6 +126,56 @@ def test_tool_round_cap_ends_the_loop(fake_records):
     assert out["answer"] == "(no answer produced)"
 
 
+def test_trajectory_steps_stream_in_order(fake_records):
+    """on_step receives the agent's path: thinking -> tool_call ->
+    tool_result -> thinking -> answer (Sunny: show the steps before the
+    answer, so tool use is visible)."""
+    llm = scripted_llm([
+        {"role": "assistant", "content": None,
+         "tool_calls": [_tc("get_entity", {"run": "B_pool", "object_id": "child_1"})]},
+        {"role": "assistant", "content": "child_1 is drowning."},
+    ])
+    steps: list[dict] = []
+    respond(f"t-{uuid.uuid4().hex}", "child_1?", llm_fn=llm,
+            on_step=steps.append)
+    kinds = [s["step"] for s in steps]
+    assert kinds == ["thinking", "tool_call", "tool_result", "thinking", "answer"]
+    assert steps[1]["tool"] == "get_entity"
+    assert steps[2]["ok"] and "object_id" in steps[2]["summary"]
+    assert steps[4]["text"] == "child_1 is drowning."
+
+
+def test_trajectory_marks_failed_lookup(fake_records):
+    llm = scripted_llm([
+        {"role": "assistant", "content": None,
+         "tool_calls": [_tc("get_entity", {"run": "B_pool", "object_id": "shark_1"})]},
+        {"role": "assistant", "content": "no such entity."},
+    ])
+    steps: list[dict] = []
+    respond(f"t-{uuid.uuid4().hex}", "shark?", llm_fn=llm, on_step=steps.append)
+    result_step = next(s for s in steps if s["step"] == "tool_result")
+    assert not result_step["ok"] and "no entity" in result_step["summary"]
+
+
+def test_transcript_renders_live_trajectory():
+    """The UI transcript shows steps above the answer, pulsing while
+    pending."""
+    from agentic.ui import agent_transcript_component
+    log = [{"q": "why?", "pending": True, "a": None, "steps": [
+        {"step": "thinking"},
+        {"step": "tool_call", "tool": "get_run_summary", "args": {"run": "B_pool"}},
+    ]}]
+    out = str(agent_transcript_component(log))
+    assert "get_run_summary" in out and "tl-row" in out and "now" in out
+    log[0].update(pending=False, a="because child_1 is drowning",
+                  steps=log[0]["steps"] + [
+                      {"step": "tool_result", "tool": "get_run_summary",
+                       "ok": True, "summary": "run, caption"},
+                      {"step": "answer", "text": "because child_1 is drowning"}])
+    done = str(agent_transcript_component(log))
+    assert "because child_1 is drowning" in done and "now" not in done
+
+
 def test_focus_run_lands_in_system_prompt(fake_records):
     seen = {}
 

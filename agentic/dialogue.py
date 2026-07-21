@@ -105,9 +105,22 @@ _CHECKPOINTER = MemorySaver()
 _GRAPH_CACHE: dict[int, Any] = {}
 
 
-def build_graph(llm_fn: LlmFn | None = None, focus_run: str | None = None):
-    """Assemble and compile the two-node tool loop."""
+StepFn = Callable[[dict[str, Any]], None]
+
+
+def build_graph(llm_fn: LlmFn | None = None, focus_run: str | None = None,
+                on_step: StepFn | None = None):
+    """Assemble and compile the two-node tool loop.
+
+    `on_step` (optional) receives the agent's trajectory as it happens:
+      {"step": "thinking"}                       before each model call
+      {"step": "tool_call", tool, args}          when the model picks a tool
+      {"step": "tool_result", tool, ok, summary} when the tool returns
+      {"step": "answer", "text": ...}            the final reply
+    The UI renders this live, so tool use is visible before the answer:
+    the same show-the-work ethos as the pipeline's event stream."""
     llm_fn = llm_fn or _ollama_llm
+    emit = on_step or (lambda _e: None)
     focus_line = (f"The user is currently looking at run '{focus_run}'; "
                   f"when they do not name a run, they mean this one."
                   if focus_run else "")
@@ -115,7 +128,10 @@ def build_graph(llm_fn: LlmFn | None = None, focus_run: str | None = None):
               "content": SYSTEM_PROMPT.format(focus_line=focus_line)}
 
     def llm_node(state: AgentState) -> dict[str, Any]:
+        emit({"step": "thinking"})
         answer = llm_fn([system] + state["messages"], TOOL_SCHEMAS)
+        if answer.get("content") and not answer.get("tool_calls"):
+            emit({"step": "answer", "text": answer["content"]})
         return {"messages": [answer]}
 
     def tools_node(state: AgentState) -> dict[str, Any]:
@@ -128,7 +144,13 @@ def build_graph(llm_fn: LlmFn | None = None, focus_run: str | None = None):
                 args = json.loads(tc["function"].get("arguments") or "{}")
             except json.JSONDecodeError:
                 args = {}
+            emit({"step": "tool_call", "tool": name, "args": args})
             result = call_tool(name, args)
+            ok = "error" not in result
+            summary = (result.get("error") if not ok
+                       else ", ".join(list(result)[:4]))
+            emit({"step": "tool_result", "tool": name, "ok": ok,
+                  "summary": str(summary)})
             trace.append({"tool": name, "args": args, "result": result})
             out_msgs.append({"role": "tool", "tool_call_id": tc.get("id", name),
                              "content": json.dumps(result)})
@@ -155,11 +177,12 @@ def build_graph(llm_fn: LlmFn | None = None, focus_run: str | None = None):
 
 def respond(thread_id: str, user_text: str,
             llm_fn: LlmFn | None = None,
-            focus_run: str | None = None) -> dict[str, Any]:
+            focus_run: str | None = None,
+            on_step: StepFn | None = None) -> dict[str, Any]:
     """One conversational turn on a thread. Returns the assistant's answer,
     this turn's tool trace (the answer's provenance), and the full thread
-    transcript for rendering."""
-    graph = build_graph(llm_fn=llm_fn, focus_run=focus_run)
+    transcript for rendering. `on_step` streams the trajectory live."""
+    graph = build_graph(llm_fn=llm_fn, focus_run=focus_run, on_step=on_step)
     config = {"configurable": {"thread_id": thread_id}}
     before = graph.get_state(config)
     trace_before = len((before.values or {}).get("tool_trace", []))
