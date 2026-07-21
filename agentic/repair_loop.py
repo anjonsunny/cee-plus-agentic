@@ -53,11 +53,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+import re
+
 from agentic.vocabulary import (  # noqa: E402
     LABEL_FAMILIES,
     OTHER_LABEL,
     PURE_FAMILY_NAMES,
     canonicalize_label,
+    family_of,
 )
 
 # The loop never runs more than this many repair calls per scene.
@@ -106,15 +109,77 @@ class RepairTrace(BaseModel):
     stopped_reason: str = ""           # clean | cap_reached | no_change
 
 
+# ── Caption-entity completeness (rule 5's helper) ───────────────────────
+#
+# The caption is part of the system's INPUT, not an opinion: if it names a
+# tanker truck and the entity list has none, that mismatch is checkable
+# evidence (the C_tanker regression of 2026-07-21: the model returned ONE
+# entity for a captioned three-hazard scene, and no rule fired). We resolve
+# caption nouns through the same vocabulary + synonym map the labels use,
+# so this stays mechanical.
+#
+# Matching rule: a caption noun is satisfied by an entity with the SAME
+# canonical label, or, for living beings only (person / responder / animal
+# families), by any entity of the same family ("driver" in the caption is
+# satisfied by man_1). Vehicles and objects need the exact label: a caption
+# tanker_truck is NOT satisfied by car_1; that leniency was the round 1 bug.
+
+_LENIENT_FAMILIES = {"person", "responder", "animal"}
+
+
+def caption_labels(caption: str) -> dict[str, str]:
+    """Extract canonical vocabulary labels mentioned in the caption.
+
+    Returns {canonical_label: raw_phrase}. Bigrams are tried before
+    unigrams so "tanker truck" resolves as tanker_truck, not truck.
+    """
+    words = re.findall(r"[a-z]+", str(caption or "").lower())
+    found: dict[str, str] = {}
+    used: set[int] = set()
+    # Bigrams first (tanker truck, lifeguard chair, caution tape, ...).
+    for i in range(len(words) - 1):
+        if i in used or (i + 1) in used:
+            continue
+        phrase = f"{words[i]}_{words[i + 1]}"
+        canon, _, in_vocab, is_family = canonicalize_label(phrase)
+        if in_vocab and not is_family and canon != OTHER_LABEL:
+            found.setdefault(canon, f"{words[i]} {words[i + 1]}")
+            used.update({i, i + 1})
+    for i, w in enumerate(words):
+        if i in used:
+            continue
+        canon, _, in_vocab, is_family = canonicalize_label(w)
+        if in_vocab and not is_family and canon != OTHER_LABEL:
+            found.setdefault(canon, w)
+    return found
+
+
+def _caption_label_satisfied(wanted: str, entities: list[dict[str, Any]]) -> bool:
+    """Exact-label match; family-level match for living beings only."""
+    wanted_family = family_of(wanted)
+    for e in entities:
+        canon, _, in_vocab, _ = canonicalize_label(str(e.get("label", "")))
+        if canon == wanted:
+            return True
+        if (in_vocab and wanted_family in _LENIENT_FAMILIES
+                and family_of(canon) == wanted_family):
+            return True
+    return False
+
+
 # ── Step 1: detect violations (pure code, no model call) ────────────────
 
 
-def detect_violations(entities: list[dict[str, Any]]) -> list[Violation]:
+def detect_violations(
+    entities: list[dict[str, Any]], caption: str = ""
+) -> list[Violation]:
     """Run the interface rules over a raw entity list.
 
     Works on the model's RAW answers (before canonicalization rewrites
     them), because the repair prompt must quote what the model actually
     wrote. Each check mirrors a flag the perception contract records.
+    When a caption is given, rule 5 (completeness against the caption's
+    named entities) also runs.
     """
     from agentic.perception import state_kind  # local import: avoids cycle
 
@@ -177,6 +242,26 @@ def detect_violations(entities: list[dict[str, Any]]) -> list[Violation]:
                     f"pixel box [x1, y1, x2, y2] around it. Approximate is fine."
                 ),
             ))
+
+    # Rule 5: completeness against the caption. The caption is given input;
+    # an entity it names that the list lacks is checkable evidence of a
+    # dropped entity. The instruction explicitly allows the model to stand
+    # its ground when the thing is genuinely not visible: an honest refusal
+    # ends the loop via the no_change guard and stays flagged, it is never
+    # forced. (This is completeness against the INPUT, not perception
+    # coaching: we say what the caption names, never what to see in it.)
+    for wanted, raw_phrase in caption_labels(caption).items():
+        if not _caption_label_satisfied(wanted, entities):
+            violations.append(Violation(
+                entity_index=-1, raw_label=wanted,
+                kind="caption_entity_missing",
+                instruction=(
+                    f"The caption mentions \"{raw_phrase}\" but your list has "
+                    f"no '{wanted}' entity. Look at the image again and add it "
+                    f"with its state and bbox. If you truly cannot see it in "
+                    f"the image, leave your list unchanged."
+                ),
+            ))
     return violations
 
 
@@ -229,6 +314,7 @@ def repair_entities(
     entities: list[dict[str, Any]],
     query_fn: QueryFn,
     max_rounds: int = MAX_REPAIR_ROUNDS,
+    caption: str = "",
 ) -> tuple[list[dict[str, Any]], RepairTrace]:
     """Run Loop 1. Returns (final entities, full trace).
 
@@ -245,7 +331,7 @@ def repair_entities(
     trace = RepairTrace()
     current = [dict(e) for e in entities]
 
-    violations = detect_violations(current)
+    violations = detect_violations(current, caption)
     if not violations:
         trace.clean_on_arrival = True
         trace.stopped_reason = "clean"
@@ -269,7 +355,7 @@ def repair_entities(
             current, sort_keys=True
         )
         current = [dict(e) for e in answer]
-        remaining = detect_violations(current)
+        remaining = detect_violations(current, caption)
         trace.rounds.append(RepairRound(
             round_number=round_number, violations=violations,
             entities_after=current, changed=changed,

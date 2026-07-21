@@ -69,6 +69,64 @@ def test_clean_entity_no_violations():
                                "bbox": [5, 5, 50, 50]}]) == []
 
 
+# ── Rule 5: caption-entity completeness ─────────────────────────────────
+
+from agentic.repair_loop import caption_labels  # noqa: E402
+
+C_CAPTION = ("A tanker truck leaks fuel onto a rural road while a brush fire "
+             "burns nearby; the driver stands on the road making a phone call.")
+
+
+def test_caption_labels_resolve_through_vocabulary():
+    labels = caption_labels(C_CAPTION)
+    # Bigram beats unigram: tanker_truck, not truck. fuel->spill and
+    # driver->person resolve through the synonym map.
+    assert "tanker_truck" in labels and "spill" in labels
+    assert "person" in labels and "fire" in labels and "road" in labels
+
+
+def test_caption_missing_entity_fires():
+    """The C_tanker regression: one entity for a captioned multi-hazard
+    scene must fire caption_entity_missing for each named absentee."""
+    v = detect_violations(
+        [{"label": "fire", "state": "burning", "bbox": [0, 0, 9, 9]}],
+        caption=C_CAPTION,
+    )
+    kinds = {x.raw_label for x in v if x.kind == "caption_entity_missing"}
+    assert "tanker_truck" in kinds and "spill" in kinds and "person" in kinds
+    assert "fire" not in kinds                    # present, not flagged
+
+
+def test_caption_person_family_is_lenient():
+    """Caption 'driver' is satisfied by man_1 (person family)."""
+    v = detect_violations(
+        [{"label": "man", "state": "standing", "bbox": [0, 0, 9, 9]}],
+        caption="The driver stands on the road.",
+    )
+    kinds = [x for x in v if x.kind == "caption_entity_missing"]
+    assert all(x.raw_label != "person" for x in kinds)
+
+
+def test_caption_vehicle_needs_exact_label():
+    """Caption tanker_truck is NOT satisfied by car_1 (the round 1 bug)."""
+    v = detect_violations(
+        [{"label": "car", "state": "intact", "bbox": [0, 0, 9, 9]}],
+        caption="A tanker truck on the road.",
+    )
+    assert any(x.raw_label == "tanker_truck" and x.kind == "caption_entity_missing"
+               for x in v)
+
+
+def test_caption_instruction_allows_standing_ground():
+    v = detect_violations([], caption="A dog in the park.")
+    assert any("leave your list unchanged" in x.instruction for x in v)
+
+
+def test_no_caption_no_rule5():
+    assert detect_violations([{"label": "fire", "state": "burning",
+                               "bbox": [0, 0, 9, 9]}], caption="") == []
+
+
 def test_prompt_quotes_entities_and_numbers_problems():
     entities = [{"label": "vehicle", "state": "intact", "bbox": [0, 0, 9, 9]},
                 {"label": "person", "state": "floating", "bbox": [1, 1, 5, 5]}]

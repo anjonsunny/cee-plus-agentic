@@ -63,6 +63,9 @@ EXTRA_STATE_SYNONYMS = {
     "sitting": "resting",
     "spilled": "seeping",
     "spilling": "leaking",
+    # Emergency vehicles "attending" a scene (D_aerial run, 2026-07-21):
+    # semantically on-scene-responding, mechanically stationary.
+    "attending": "stationary",
 }
 
 # ── Contract ─────────────────────────────────────────────────────────────
@@ -472,7 +475,7 @@ def run_perception(
             def repair_query_fn(prompt_text: str) -> list[dict[str, Any]]:  # noqa: F811
                 return _query_vlm_raw(prompt_text, data_url)
 
-        entities, trace = repair_entities(entities, repair_query_fn)
+        entities, trace = repair_entities(entities, repair_query_fn, caption=caption)
         repair_trace = trace.model_dump()
 
     # Canonicalize labels; log drift; clamp anchor boxes.
