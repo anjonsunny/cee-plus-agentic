@@ -39,6 +39,37 @@ def test_keyword_fallback_empty_on_nonsense():
     assert _keyword_search("zzqx qwerty", 3) == []
 
 
+# ── Honest fallback: WHY did the real embedding not run? ────────────────
+
+def test_status_reports_fallback_reason_when_no_vector(monkeypatch):
+    """When the vector path can't run, status must say so AND why — a
+    keyword result should never be a silent mystery. Forced-off path."""
+    from agentic import rulebook_rag
+    monkeypatch.setattr(rulebook_rag, "HAVE_RAG", False)
+    st = rulebook_rag.rag_status()
+    assert st["real_embedding_live"] is False
+    assert st["backend"] == "keyword_fallback"
+    assert st["fallback_reason"] and "install" in st["fallback_reason"]
+    # the recorded reason is retrievable on its own too
+    assert rulebook_rag.last_backend_reason() == st["fallback_reason"]
+
+
+def test_search_records_reason_on_embedding_failure(monkeypatch):
+    """HAVE_RAG True but the index/embedding blows up (e.g. model download
+    blocked): search falls back to keyword AND records the real exception,
+    instead of hiding it behind a silent keyword result."""
+    from agentic import rulebook_rag
+
+    def _boom(*a, **k):
+        raise RuntimeError("model download blocked (403)")
+    monkeypatch.setattr(rulebook_rag, "HAVE_RAG", True)
+    monkeypatch.setattr(rulebook_rag, "_get_index", _boom)
+    hits = rulebook_rag.search("disaster with no supporting hazard", k=1)
+    assert hits and hits[0]["backend"] == "keyword_fallback"
+    reason = rulebook_rag.last_backend_reason()
+    assert reason and "RuntimeError" in reason and "403" in reason
+
+
 # ── Vector path (skipped cleanly when the stack is not installed) ───────
 
 pytestmark_rag = pytest.mark.skipif(not rulebook_rag.HAVE_RAG,
@@ -94,3 +125,14 @@ def test_index_builds_from_rulebook_without_duplication():
     retriever = idx.as_retriever(similarity_top_k=len(RULES))
     kinds = {h.metadata["kind"] for h in retriever.retrieve("rule")}
     assert kinds == set(RULES.keys())      # every rule indexed exactly once
+
+
+@pytestmark_rag
+def test_real_vector_run_clears_the_fallback_reason():
+    """When the real embedding path actually runs, status says it's live
+    and there is no fallback reason."""
+    from agentic import rulebook_rag
+    st = rulebook_rag.rag_status(embed_model=_hash_embedding())
+    assert st["backend"] == "llamaindex_chroma"
+    assert st["real_embedding_live"] is True
+    assert st["fallback_reason"] is None

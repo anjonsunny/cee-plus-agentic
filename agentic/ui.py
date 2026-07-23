@@ -149,6 +149,17 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
                    # every assess_verdict event, in order: [0] = canonical
                    # (pre-reflection), [-1] = final. The ledger diffs them.
                    "verdict_history": []},
+        # RAG shadow rows (rag/both retrieval mode): exact-key vs RAG top-1
+        # for the rules each stage actually quoted. Stage 1 (repair) and
+        # Stage 2 (assess/reflection) each get their own panel.
+        "retrieval_shadow": None,           # Stage 2 (assess)
+        "retrieval_shadow_perceive": None,  # Stage 1 (repair)
+        # why the RAG lookup used word-count instead of the real embedding
+        # (None when the real vector path ran). Same stack both stages.
+        "retrieval_backend_reason": None,
+        # Auto result diff (both/rag mode, only when a fired rule differs):
+        # whether RAG's rule choice actually moved the final answer.
+        "retrieval_result_diff": None,
     }
     for ev in events:
         t = ev.get("type")
@@ -223,6 +234,22 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
             d["bound"].pop(dropped, None)
             d["anchors"] = [a for a in d["anchors"]
                             if a.get("object_id") != dropped]
+        elif t == "retrieval_shadow":
+            # stage "perceive" -> Stage 1 panel; "assess" (or unset, for old
+            # replays) -> Stage 2 panel.
+            if ev.get("stage") == "perceive":
+                d["retrieval_shadow_perceive"] = ev.get("rows", [])
+            else:
+                d["retrieval_shadow"] = ev.get("rows", [])
+            if ev.get("backend_reason"):
+                d["retrieval_backend_reason"] = ev.get("backend_reason")
+        elif t == "retrieval_result_diff":
+            d["retrieval_result_diff"] = {
+                "changed": ev.get("changed"),
+                "rulebook_line": ev.get("rulebook_line"),
+                "rag_line": ev.get("rag_line"),
+                "error": ev.get("error"),
+            }
         elif t == "hazard_derived":
             line = (f"{ev.get('medium')} '{ev.get('was')}' → "
                     f"'{ev.get('now')}' — {ev.get('victim')} is "
@@ -697,21 +724,67 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
         try:
             from agentic.assessment import (DEFAULT_N_PROBES, run_assessment)
             from agentic.perception import run_perception
+            from agentic.retrieval import drain_shadow_log
             from agentic.uncertainty import _ollama_explain
+            drain_shadow_log()                    # clear any prior run's rows
             record = run_perception(image_path, caption=caption,
                                     out_dir=run_dir, on_event=sink)
+            # Stage 1 (repair P1-P6) quotes rules too, through the same
+            # retrieval switch — so in rag/both mode it fills the shadow.
+            # Drain it HERE, before Stage 2 runs, or Stage 2's drain would
+            # swallow these rows and Stage 1 would show nothing.
+            perceive_shadow = drain_shadow_log()
+            if perceive_shadow:
+                from agentic.rulebook_rag import last_backend_reason
+                sink({"type": "retrieval_shadow", "stage": "perceive",
+                      "rows": perceive_shadow,
+                      "backend_reason": last_backend_reason()})
+            # keep the assessed record so the on-screen RAG-diff button can
+            # re-run Stage 2 both ways on it later.
+            RUNS[run_id]["record"] = record.model_copy(deep=True)
             # Stage 2, full story: assess -> reflection -> (petition ->
             # cascade re-assessment) — the one ledgered image look-back.
             try:
                 from agentic.evals import _ollama_judge as _judge
             except Exception:
                 _judge = None
-            from agentic.petition import assess_with_petition
-            record, result, petitioned = assess_with_petition(
+            from agentic.graph_live import assess_with_control
+            record, result, petitioned = assess_with_control(
                 str(image_path), record, on_event=sink,
                 n_probes=DEFAULT_N_PROBES,
                 explain_fn=_ollama_explain,
                 runoff_judge_fn=_judge)
+            # Surface the RAG shadow (only populated in rag/both mode): the
+            # exact-key vs RAG top-1 comparison for the rules this run used.
+            shadow = drain_shadow_log()
+            if shadow:
+                from agentic.rulebook_rag import last_backend_reason
+                sink({"type": "retrieval_shadow", "stage": "assess",
+                      "rows": shadow,
+                      "backend_reason": last_backend_reason()})
+                # AUTO result diff (Both/RAG mode): only when a fired rule
+                # actually differs does the answer have any chance to move —
+                # if every fired rule agrees, the two runs are identical by
+                # construction, so we skip the extra model passes. When they
+                # DO differ, re-run Stage 2 both ways (probes off) and show
+                # whether RAG's rule choice moved the final answer. No button.
+                from agentic.retrieval import retrieval_mode
+                if (retrieval_mode() in ("both", "rag")
+                        and any(not r.get("agree") for r in shadow)):
+                    try:
+                        from agentic.retrieval import (compare_retrieval_modes,
+                                                       drain_shadow_log as _dr)
+                        _dr()                     # keep compare out of shadow
+                        diff = compare_retrieval_modes(
+                            RUNS[run_id]["record"], n_probes=0)
+                        _dr()
+                        sink({"type": "retrieval_result_diff",
+                              "changed": diff["changed"],
+                              "rulebook_line": diff["rulebook_line"],
+                              "rag_line": diff["rag_line"]})
+                    except Exception as exc:
+                        sink({"type": "retrieval_result_diff",
+                              "error": str(exc)[:200]})
             if petitioned:
                 (run_dir / "perception_petitioned.json").write_text(
                     record.model_dump_json(indent=2))
@@ -1072,6 +1145,115 @@ def gt_eval_overlay(d: dict[str, Any],
                                  R.get("u_before"), R.get("u_after"))}
 
 
+def rag_shadow_panel(shadow: list[dict[str, Any]] | None, stage_label: str,
+                     *, result_diff: dict[str, Any] | None = None,
+                     backend_reason: str | None = None):
+    """One RAG-shadow panel: exact-key vs RAG top-1 for the rules a stage
+    quoted, deduped with a ×N count. Used by BOTH Stage 1 (repair) and
+    Stage 2 (assess). result_diff is Stage-2-only — the auto answer diff
+    shown when a fired rule differs. backend_reason, when the engine is the
+    word-count fallback, explains WHY the real embedding didn't run.
+    Returns an html.Div, or None if the stage quoted no rules."""
+    if not shadow:
+        return None
+    # dedupe: one row per (kind, exact, rag), with a ×N count — a rule
+    # quoted for several entities shouldn't repeat.
+    uniq: dict[tuple, dict] = {}
+    for r in shadow:
+        key = (r.get("kind"), r.get("exact_rule_id"), r.get("rag_kind"))
+        if key in uniq:
+            uniq[key]["_n"] += 1
+        else:
+            uniq[key] = {**r, "_n": 1}
+    urows = list(uniq.values())
+    n = len(urows)
+    agree = sum(1 for r in urows if r.get("agree"))
+    eng = urows[0].get("backend") or "?"
+    # name the engine plainly: real embedding vs the word-count fallback
+    eng_plain = ("real embedding (semantic)" if eng == "llamaindex_chroma"
+                 else "word-count fallback" if eng == "keyword_fallback"
+                 else eng)
+    header = [html.Div([
+        html.Span(f"RAG SHADOW · {stage_label}", className="unc-tag"),
+        html.Span(f"  exact-key vs RAG top-1 · {agree}/{n} rules agree · "
+                  f"engine: {eng_plain}",
+                  style={"fontSize": "11px", "color": "#64748b"}),
+    ], style={"marginBottom": "4px"})]
+    # When we're on the fallback, say WHY the real embedding didn't run —
+    # so a keyword result is never a silent mystery.
+    if eng == "keyword_fallback" and backend_reason:
+        header.append(html.Div(
+            f"⚠ real embedding OFF — {backend_reason}",
+            style={"fontSize": "11px", "color": "#b45309",
+                   "marginBottom": "4px", "fontStyle": "italic"}))
+    rows = header
+    for r in urows:
+        ok = r.get("agree")
+        cnt = (f"  ×{r['_n']}" if r.get("_n", 1) > 1 else "")
+        rows.append(html.Div([
+            html.Span(f"{r.get('exact_rule_id') or '?'} "
+                      f"{r.get('kind')}",
+                      style={"fontWeight": "700", "fontSize": "12px"}),
+            html.Span("  →  RAG: ", style={"color": "#94a3b8",
+                                           "fontSize": "12px"}),
+            html.Span(f"{r.get('rag_rule_id') or '-'} "
+                      f"{r.get('rag_kind') or '-'}",
+                      style={"fontSize": "12px",
+                             "color": "#16a34a" if ok else "#b45309"}),
+            html.Span((" ✓ match" if ok else " ✗ differs") + cnt,
+                      style={"marginLeft": "auto", "fontSize": "11px",
+                             "fontWeight": "700",
+                             "color": "#16a34a" if ok else "#b45309"}),
+        ], style={"display": "flex", "alignItems": "baseline",
+                  "padding": "2px 0"}))
+    # When fired rules differ, the result diff was computed automatically
+    # (both/rag mode). Show it right here — no button, no command line.
+    # Stage 1 passes result_diff=None, so it only shows the "differ" count.
+    if agree < n:
+        rdiff = result_diff
+        if rdiff and rdiff.get("error"):
+            rows.append(html.Div(
+                f"→ {n - agree} rule(s) differ. Result diff could not "
+                f"run: {rdiff['error']}",
+                style={"fontSize": "11px", "color": "#b45309",
+                       "marginTop": "5px", "fontStyle": "italic"}))
+        elif rdiff:
+            changed = rdiff.get("changed")
+            dc = "#dc2626" if changed else "#16a34a"
+            head = ("↳ RAG's rule choice MOVED the answer:" if changed
+                    else "↳ but the final answer is identical — RAG's "
+                         "rule choice did NOT change it:")
+            rows.append(html.Div([
+                html.Div(f"{n - agree} rule(s) differ. " + head,
+                         style={"fontSize": "11px", "color": dc,
+                                "fontWeight": "700", "marginBottom": "3px"}),
+                html.Div([html.Span("exact-key: ",
+                                    style={"color": "#64748b"}),
+                          html.Span(rdiff.get("rulebook_line") or "-")],
+                         style={"fontSize": "12px"}),
+                html.Div([html.Span("RAG      : ",
+                                    style={"color": "#64748b"}),
+                          html.Span(rdiff.get("rag_line") or "-",
+                                    style={"color": dc})],
+                         style={"fontSize": "12px"}),
+            ], style={"marginTop": "6px", "padding": "6px 8px",
+                      "borderTop": "1px dashed #c4b5fd"}))
+        elif result_diff is None and stage_label.startswith("Stage 1"):
+            # Stage 1 has no verdict to move, so no result diff — just note it.
+            rows.append(html.Div(
+                f"→ {n - agree} rule(s) differ. (Repair has no verdict to "
+                f"move — the answer diff is a Stage 2 check.)",
+                style={"fontSize": "11px", "color": "#7c3aed",
+                       "marginTop": "5px", "fontStyle": "italic"}))
+        else:
+            rows.append(html.Div(
+                f"→ {n - agree} rule(s) differ. Comparing answers…",
+                style={"fontSize": "11px", "color": "#7c3aed",
+                       "marginTop": "5px", "fontStyle": "italic"}))
+    return html.Div(rows, className="unc-panel",
+                    style={"borderColor": "#a78bfa", "background": "#faf5ff"})
+
+
 def assess_component(d: dict[str, Any], unc_view: str = "both",
                      record_name: str | None = None,
                      judge_result: dict[str, Any] | None = None) -> list[Any]:
@@ -1084,6 +1266,16 @@ def assess_component(d: dict[str, Any], unc_view: str = "both",
         return [html.Div("waiting for perception to finish...",
                          className="ticket-empty")]
     out: list[Any] = []
+
+    # RAG SHADOW (rag/both retrieval mode only): exact-key vs RAG top-1 for
+    # the rules Stage 2 (assess + reflection) actually quoted. The auto
+    # result diff rides along here — it is a Stage 2 concept (it re-runs the
+    # verdict). Empty when mode is 'exact' or no rules were quoted.
+    panel = rag_shadow_panel(d.get("retrieval_shadow"), "Stage 2 · assess",
+                             result_diff=d.get("retrieval_result_diff"),
+                             backend_reason=d.get("retrieval_backend_reason"))
+    if panel is not None:
+        out.append(panel)
 
     # Medium-bound derivations: code overrode a state the model gave,
     # with the victim that caused it. Shown first — it changes the
@@ -1755,6 +1947,14 @@ def tickets_component(d: dict[str, Any]) -> html.Div:
                  if d["stop_reason"] == "clean" and not d["violations"]
                  else "waiting for the model's first answer...")
         cards = [html.Div(label, className="ticket-empty")]
+    # RAG shadow for STAGE 1 (repair): exact-key vs RAG top-1 for the P1-P6
+    # rules repair quoted. Same panel grammar as Stage 2, minus the answer
+    # diff (repair has no verdict to move). Empty unless rag/both mode.
+    panel = rag_shadow_panel(d.get("retrieval_shadow_perceive"),
+                             "Stage 1 · repair",
+                             backend_reason=d.get("retrieval_backend_reason"))
+    if panel is not None:
+        cards = [panel] + cards
     return html.Div(cards, className="tickets")
 
 
@@ -2189,6 +2389,20 @@ app.index_string = """<!DOCTYPE html>
   .speaker { font-size:10px; letter-spacing:2px; color:var(--faint); }
   .bubble { background:#f8fafc; border:1px solid var(--line); border-radius:10px; padding:9px;
       font-family:monospace; font-size:12px; white-space:pre-wrap; color:#334155; }
+  /* RAG result-diff button + panel */
+
+  /* Control-plane toggles in the controls row (light) */
+  .ctl-group{display:inline-flex; align-items:center; gap:7px;
+             background:#ffffff; border:1px solid #cbd5e1; border-radius:9px;
+             padding:5px 10px;}
+  .ctl-lbl{font-size:10px; font-weight:800; letter-spacing:.06em;
+           text-transform:uppercase; color:#64748b;}
+  .ctl-toggle{display:inline-flex; gap:10px;}
+  .ctl-toggle label{font-size:12px; font-weight:700; color:#334155;
+                    display:inline-flex; align-items:center; gap:4px;
+                    cursor:pointer;}
+  .ctl-toggle input{accent-color:#2563eb; cursor:pointer;}
+
   /* Live status badge on each stage card header */
   .phase-status { margin-left:auto; margin-right:8px; font-size:11px;
                   font-weight:700; letter-spacing:.02em; }
@@ -2291,6 +2505,25 @@ app.layout = html.Div([
         dcc.Dropdown(id="replay", options=saved_records(),
                      placeholder="or replay a saved run...",
                      style={"width": "260px", "color": "#111"}),
+        # Control-plane toggles (no restart, no env vars). Applied at the
+        # moment a run launches; both default to the safe/proven path.
+        html.Div([
+            html.Span("control", className="ctl-lbl"),
+            dcc.RadioItems(
+                id="control-mode", value="python", inline=True,
+                options=[{"label": "Python", "value": "python"},
+                         {"label": "LangGraph", "value": "langgraph"}],
+                className="ctl-toggle"),
+        ], className="ctl-group"),
+        html.Div([
+            html.Span("rule lookup", className="ctl-lbl"),
+            dcc.RadioItems(
+                id="retrieval-mode", value="rulebook", inline=True,
+                options=[{"label": "exact", "value": "rulebook"},
+                         {"label": "RAG", "value": "rag"},
+                         {"label": "both", "value": "both"}],
+                className="ctl-toggle"),
+        ], className="ctl-group"),
     ], className="controls"),
     html.Div(id="instruments"),
     html.Div([
@@ -2374,8 +2607,16 @@ def cache_upload(contents, filename):
 @app.callback(Output("run-id", "data"),
               Input("analyze", "n_clicks"), Input("replay", "value"),
               State("upload-cache", "data"), State("caption", "value"),
+              State("control-mode", "value"),
+              State("retrieval-mode", "value"),
               prevent_initial_call=True)
-def start_run(_clicks, replay_path, cached, caption):
+def start_run(_clicks, replay_path, cached, caption,
+              control_mode, retrieval_choice):
+    # Apply the on-screen toggles for this run (in-process override).
+    from agentic.graph_live import set_control
+    from agentic.retrieval import set_retrieval
+    set_control(control_mode)
+    set_retrieval(retrieval_choice)
     if ctx.triggered_id == "replay" and replay_path:
         return start_replay(replay_path)
     if ctx.triggered_id == "analyze" and cached and cached.get("contents"):

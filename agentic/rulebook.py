@@ -384,14 +384,29 @@ def retrieve(kind: str) -> RuleChunk | None:
     return RULES.get(_ALIASES.get(kind, kind))
 
 
-def instruction_for(kind: str, **evidence) -> str:
-    """Compose a repair instruction: the evidence-citing fix request, then
-    the retrieved rule, rationale, and worked example. This is the text a
-    ticket shows and the model receives; the rulebook speaks, not ad-hoc
-    phrasing."""
-    chunk = retrieve(kind)
+def _compose_instruction(chunk: RuleChunk | None, kind: str,
+                         evidence: dict) -> str:
+    """Format the fix request + rule text. Robust to a template whose
+    placeholders don't match the evidence — that happens ONLY in 'rag'
+    mode, when RAG returns a different rule than the kind that fired; we
+    then skip the fill-in and just teach the (wrongly-picked) rule."""
     if chunk is None:
         return f"Violation '{kind}': {evidence}"
-    ask = chunk.template.format(**evidence)
+    try:
+        ask = chunk.template.format(**evidence)
+    except (KeyError, IndexError):
+        ask = f"Problem ({kind}): {evidence}"
     return (f"{ask}\n  Rule {chunk.rule_id}: {chunk.rule}\n"
             f"  Why: {chunk.rationale}\n  Example: {chunk.example}")
+
+
+def instruction_for(kind: str, **evidence) -> str:
+    """Compose a repair instruction: the evidence-citing fix request, then
+    the retrieved rule, rationale, and worked example. The rule is fetched
+    through the retrieval switch (agentic/retrieval.py), so repair's
+    lookups honor rulebook|rag|both and join the RAG shadow. Default
+    'rulebook' mode returns the exact-key rule — byte-identical to before,
+    so repair behavior (and the LangGraph equivalence) is unchanged."""
+    from agentic.retrieval import retrieve_rule  # lazy: avoids import cycle
+    chunk, _meta = retrieve_rule(kind)
+    return _compose_instruction(chunk, kind, evidence)

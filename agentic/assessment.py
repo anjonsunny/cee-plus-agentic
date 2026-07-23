@@ -734,11 +734,11 @@ def main(argv: list[str] | None = None) -> None:
         record = PerceptionResult.model_validate_json(path.read_text())
         print(f"── {name}: {len(record.detected_objects)} entities")
         from agentic.evals import _ollama_judge
-        from agentic.petition import assess_with_petition
+        from agentic.graph_live import assess_with_control
         printer = (lambda e: print(f"   {e['type']}: "
                                    f"{ {k: v for k, v in e.items() if k != 'type'} }"))
         if Path(record.image_path).exists():
-            record, result, petitioned = assess_with_petition(
+            record, result, petitioned = assess_with_control(
                 record.image_path, record,
                 n_probes=DEFAULT_N_PROBES,
                 explain_fn=_ollama_explain,

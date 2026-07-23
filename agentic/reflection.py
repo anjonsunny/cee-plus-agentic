@@ -44,7 +44,15 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from agentic.geometry import spatial_hints  # noqa: E402
-from agentic.rulebook import retrieve  # noqa: E402
+from agentic.retrieval import retrieve_rule  # noqa: E402
+
+
+def retrieve(kind: str):
+    """Rule lookup, routed through the retrieval switch (AGENTIC_RETRIEVAL).
+    Default mode 'rulebook' is byte-identical to the old exact-key lookup,
+    so the pipeline (and the LangGraph equivalence) is unchanged; 'rag' /
+    'both' opt into the RAG shadow. See agentic/retrieval.py."""
+    return retrieve_rule(kind)[0]
 
 REFLECT_CAP = int(os.getenv("ASSESS_REFLECT_CAP", "2"))
 U_THRESHOLD = float(os.getenv("ASSESS_U_THRESHOLD", "0.2"))

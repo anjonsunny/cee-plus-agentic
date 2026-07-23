@@ -1,0 +1,46 @@
+EXACT-KEY vs RAG top-1 — retrieval agreement
+  engine: keyword_fallback
+  agreement: 11/18 = 61%
+
+  rule  kind                          RAG top-1                           
+  P1    family_name_as_label          P1 family_name_as_label         ok
+  P6    duplicate_entity              P6 duplicate_entity             ok
+  P2    label_out_of_vocab            P5 caption_entity_missing       MISS
+  P3    state_out_of_vocab            P3 state_out_of_vocab           ok
+  P4    missing_anchor_bbox           P4 missing_anchor_bbox          ok
+  P5    caption_entity_missing        P5 caption_entity_missing       ok
+  S8    threat_reason_victim_shaped   S8 threat_reason_victim_shaped  ok
+  S1    scenario_level_incoherent     S1 scenario_level_incoherent    ok
+  S2    missed_disaster_incoherence   P5 caption_entity_missing       MISS
+  S3    false_alarm_incoherence       S3 false_alarm_incoherence      ok
+  S6    hazard_not_in_threats         S8 threat_reason_victim_shaped  MISS
+  S7    hazard_as_at_risk             S7 hazard_as_at_risk            ok
+  S4    id_not_in_perception          S8 threat_reason_victim_shaped  MISS
+  S5    threat_state_not_hazardous    P5 caption_entity_missing       MISS
+  G1    geometry_adjacency            G1 geometry_adjacency           ok
+  G2    proximity_without_hazard      G4 at_risk_kind_mismatch        MISS
+  G3    geometry_is_a_hint            G3 geometry_is_a_hint           ok
+  G4    at_risk_kind_mismatch         S8 threat_reason_victim_shaped  MISS
+
+  mismatches (where RAG picked a different rule):
+    P2 label_out_of_vocab
+      query : "the object name is not in our allowed list of nouns"
+      RAG   : P5 caption_entity_missing (score 6.0)
+    S2 missed_disaster_incoherence
+      query : "the answer says nothing is wrong but dangerous conditions are present"
+      RAG   : P5 caption_entity_missing (score 5.0)
+    S6 hazard_not_in_threats
+      query : "a harmful entity was left out of the list of dangers"
+      RAG   : S8 threat_reason_victim_shaped (score 4.0)
+    S4 id_not_in_perception
+      query : "the answer cites an entity that does not exist in the record"
+      RAG   : S8 threat_reason_victim_shaped (score 7.0)
+    S5 threat_state_not_hazardous
+      query : "something named a source of danger is not in any harmful condition"
+      RAG   : P5 caption_entity_missing (score 2.0)
+    G2 proximity_without_hazard
+      query : "someone is marked in danger from nearness but nothing harmful is active"
+      RAG   : G4 at_risk_kind_mismatch (score 4.0)
+    G4 at_risk_kind_mismatch
+      query : "the victim category does not match what the entity's condition implies"
+      RAG   : S8 threat_reason_victim_shaped (score 6.0)

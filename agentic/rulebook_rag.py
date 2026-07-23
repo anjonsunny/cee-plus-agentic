@@ -66,6 +66,17 @@ def chunk_text(kind: str, chunk: RuleChunk) -> str:
 
 _STATE: dict[str, Any] = {"index": None, "embed": None}
 
+# Why the last real-vector attempt degraded to keyword (None = vector ran,
+# or was never attempted). Lets the UI/logs explain a keyword_fallback
+# instead of leaving it a silent mystery.
+_LAST_REASON: str | None = None
+
+
+def last_backend_reason() -> str | None:
+    """Why the most recent search() fell back to keyword, or None if the
+    real vector path ran (or hasn't been tried)."""
+    return _LAST_REASON
+
 
 def build_index(embed_model: Any = None) -> Any:
     """Build the Chroma-backed vector index over rulebook.RULES. Pass
@@ -130,13 +141,22 @@ def search(query: str, k: int = 2,
     question. Vector search when the stack is installed, keyword scoring
     when not; `backend` reports which one answered so a degraded result
     can never masquerade as a semantic one."""
+    global _LAST_REASON
     if not HAVE_RAG:
+        _LAST_REASON = ("llama_index/chromadb not importable — install "
+                        "llama-index-core, llama-index-vector-stores-chroma, "
+                        "llama-index-embeddings-huggingface, chromadb")
         return _keyword_search(query, k)
     try:
         retriever = _get_index(embed_model).as_retriever(similarity_top_k=k)
         hits = retriever.retrieve(query)
-    except Exception:
+    except Exception as exc:
+        # Most common real cause: the embedding model can't load/download
+        # (missing llama-index-embeddings-huggingface, or no network for
+        # BAAI/bge-small). Record it instead of hiding it.
+        _LAST_REASON = f"{type(exc).__name__}: {exc}"[:300]
         return _keyword_search(query, k)
+    _LAST_REASON = None                       # the real vector path ran
     out = []
     for h in hits:
         kind = h.metadata.get("kind", "")
@@ -149,11 +169,34 @@ def search(query: str, k: int = 2,
     return out
 
 
+def rag_status(embed_model: Any = None) -> dict[str, Any]:
+    """One-call health check: is the REAL embedding path live, or are we on
+    the word-count fallback, and why? Runs one probe query so the answer
+    reflects what a real lookup would actually get."""
+    probe = "disaster verdict with no supporting hazard"
+    hits = search(probe, k=1, embed_model=embed_model)
+    backend = hits[0]["backend"] if hits else None
+    return {
+        "have_rag_imports": HAVE_RAG,
+        "backend": backend,                       # llamaindex_chroma | keyword_fallback
+        "real_embedding_live": backend == "llamaindex_chroma",
+        "fallback_reason": last_backend_reason(),  # None when the real path ran
+    }
+
+
 if __name__ == "__main__":
+    st = rag_status()
+    print("RAG STATUS")
+    print(f"  libraries importable : {st['have_rag_imports']}")
+    print(f"  backend in use       : {st['backend']}")
+    print(f"  real embedding live  : {st['real_embedding_live']}")
+    if st["fallback_reason"]:
+        print(f"  why not vector       : {st['fallback_reason']}")
+    print()
     for q in ("severity contradicts the scenario",
               "the model invented an entity not in the vocabulary",
               "disaster verdict with no supporting hazard"):
-        print(f"\nQ: {q}")
+        print(f"Q: {q}")
         for hit in search(q, k=2):
             print(f"  {hit['rule_id']} ({hit['kind']}) "
                   f"score={hit['score']} [{hit['backend']}]")

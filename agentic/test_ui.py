@@ -968,3 +968,118 @@ def test_merged_duplicate_leaves_the_picture():
     assert all(a.get("object_id") != "person_2" for a in d["anchors"])
     assert "tanker_truck_1" in d["bound"]          # others untouched
     scene_component(d, "data:image/png;base64,x")  # renders fine
+
+
+def test_retrieval_shadow_renders():
+    """rag/both mode emits a retrieval_shadow event; the assess panel shows
+    the exact-key vs RAG top-1 comparison for the rules the run used."""
+    from agentic.ui import assess_component
+    ev = EVENTS + [
+        {"type": "stage_started", "stage": "assess"},
+        {"type": "assess_verdict", "scenario": "Yes", "disaster_type": "fire",
+         "level": 7, "bucket": "catastrophic", "self_confidence": 0.9,
+         "n_violations": 0, "threats": [], "at_risk": []},
+        {"type": "retrieval_shadow", "rows": [
+            {"kind": "hazard_not_in_threats", "exact_rule_id": "S6",
+             "rag_kind": "threat_reason_victim_shaped", "rag_rule_id": "S8",
+             "agree": False, "score": 4.0, "backend": "llamaindex_chroma"},
+            {"kind": "state_out_of_vocab", "exact_rule_id": "P3",
+             "rag_kind": "state_out_of_vocab", "rag_rule_id": "P3",
+             "agree": True, "score": 9.0, "backend": "llamaindex_chroma"}]},
+    ]
+    d = derive(ev)
+    assert d["retrieval_shadow"] and len(d["retrieval_shadow"]) == 2
+    out = str(assess_component(d, "both"))
+    assert "RAG SHADOW" in out and "1/2 rules agree" in out
+    assert "S6" in out and "S8" in out and "differs" in out
+    # a fired rule differs but the diff event hasn't landed yet -> "comparing"
+    assert "Comparing answers" in out
+
+
+def test_fallback_reason_shows_in_panel():
+    """When the RAG engine is the word-count fallback, the panel must say
+    WHY the real embedding didn't run — never a silent keyword result."""
+    from agentic.ui import tickets_component
+    ev = EVENTS + [
+        {"type": "retrieval_shadow", "stage": "perceive",
+         "backend_reason": "ProxyError: 403 Forbidden (bge download blocked)",
+         "rows": [
+             {"kind": "state_out_of_vocab", "exact_rule_id": "P3",
+              "rag_kind": "state_out_of_vocab", "rag_rule_id": "P3",
+              "agree": True, "score": 5.0, "backend": "keyword_fallback"}]},
+    ]
+    d = derive(ev)
+    assert d["retrieval_backend_reason"]
+    out = str(tickets_component(d))
+    assert "word-count fallback" in out          # engine named plainly
+    assert "real embedding OFF" in out           # and WHY
+    assert "403" in out
+
+
+def test_real_embedding_engine_named_plainly():
+    """When the real vector engine answered, the panel names it as the
+    semantic engine and shows no fallback warning."""
+    from agentic.ui import tickets_component
+    ev = EVENTS + [
+        {"type": "retrieval_shadow", "stage": "perceive",
+         "backend_reason": None,
+         "rows": [
+             {"kind": "state_out_of_vocab", "exact_rule_id": "P3",
+              "rag_kind": "state_out_of_vocab", "rag_rule_id": "P3",
+              "agree": True, "score": 0.8, "backend": "llamaindex_chroma"}]},
+    ]
+    out = str(tickets_component(derive(ev)))
+    assert "real embedding (semantic)" in out
+    assert "real embedding OFF" not in out
+
+
+def test_stage1_shadow_routes_to_perception_panel():
+    """A retrieval_shadow event tagged stage='perceive' must land in the
+    Stage 1 (repair) panel via tickets_component — NOT the Stage 2 panel.
+    This is the bug Sunny hit: repair quoted rules but the drain before
+    Stage 2 swallowed them, so Stage 1 showed nothing."""
+    from agentic.ui import assess_component, tickets_component
+    ev = EVENTS + [
+        {"type": "retrieval_shadow", "stage": "perceive", "rows": [
+            {"kind": "state_out_of_vocab", "exact_rule_id": "P3",
+             "rag_kind": "state_out_of_vocab", "rag_rule_id": "P3",
+             "agree": True, "score": 9.0, "backend": "llamaindex_chroma"}]},
+    ]
+    d = derive(ev)
+    assert d["retrieval_shadow_perceive"] and not d["retrieval_shadow"]
+    # shows in Stage 1 (tickets), not Stage 2 (assess)
+    assert "RAG SHADOW" in str(tickets_component(d))
+    assert "Stage 1" in str(tickets_component(d))
+    assert "RAG SHADOW" not in str(assess_component(d, "both"))
+
+
+def test_retrieval_result_diff_renders_automatically():
+    """When a fired rule differs, the worker auto-computes the result diff and
+    emits retrieval_result_diff. The shadow panel shows it inline — no button,
+    no command line. Both the 'moved' and 'identical' cases render."""
+    from agentic.ui import assess_component
+    base = EVENTS + [
+        {"type": "stage_started", "stage": "assess"},
+        {"type": "assess_verdict", "scenario": "Yes", "disaster_type": "fire",
+         "level": 7, "bucket": "catastrophic", "self_confidence": 0.9,
+         "n_violations": 0, "threats": [], "at_risk": []},
+        {"type": "retrieval_shadow", "rows": [
+            {"kind": "hazard_not_in_threats", "exact_rule_id": "S6",
+             "rag_kind": "threat_reason_victim_shaped", "rag_rule_id": "S8",
+             "agree": False, "score": 4.0, "backend": "llamaindex_chroma"}]},
+    ]
+    # answer moved
+    moved = derive(base + [
+        {"type": "retrieval_result_diff", "changed": True,
+         "rulebook_line": "Yes · fire · L7 · threats[building_1] · at_risk[-]",
+         "rag_line": "Yes · fire · L7 · threats[-] · at_risk[-]"}])
+    out = str(assess_component(moved, "both"))
+    assert "MOVED the answer" in out
+    assert "building_1" in out and "threats[-]" in out
+    assert "--diff" not in out and "Comparing answers" not in out
+    # answer identical
+    same = derive(base + [
+        {"type": "retrieval_result_diff", "changed": False,
+         "rulebook_line": "Yes · fire · L7 · threats[-] · at_risk[-]",
+         "rag_line": "Yes · fire · L7 · threats[-] · at_risk[-]"}])
+    assert "did NOT change it" in str(assess_component(same, "both"))

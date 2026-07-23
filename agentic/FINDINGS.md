@@ -475,3 +475,53 @@ Same precedent as enforce_kinds: identity at near-total overlap is a
 geometric fact, not a perception judgment. Also explains Sunny's
 overlay confusion: the officer boxes were EXACTLY underneath the
 person boxes, so only one label was visible per human.
+
+---
+
+## STAGE 2 — FROZEN (2026-07-23)
+
+Stage 2 (merged scene assessment) is closed. Six scenes calibrated live;
+findings F1–F14 each fixed and regression-tested; F_park_control passed
+the silence test (a safe scene produces nothing). Central result:
+**most defects were ours, not the model's — "fixing the interview, not
+the witness."** The model's true deficits: capitulates under
+authoritative pressure; unstable second looks; flat 0.95 self-confidence.
+
+From here, no behavioral changes to Stage 2. Next work is INFRASTRUCTURE
+(LangGraph control refactor, built alongside and proven output-identical)
+and then Stage 4 (recommendations / causal quads). Suggested git tag:
+`git tag stage2-frozen`.
+
+---
+
+## INFRA · LangGraph control + RAG shadow (2026-07-23)
+
+**LangGraph control (graph_live.py), built alongside — proven identical.**
+The Stage-2 + petition control (assess → router → re-look / re-ask →
+cascade) is now expressible as a LangGraph StateGraph. The petition
+router is a real 3-way conditional edge; the cascade is a back-edge.
+Selected with `AGENTIC_CONTROL=langgraph` (default `python`). The two
+paths are proven byte-identical on record, result, petitioned AND the
+event stream, across all three router branches, given the same mocked
+model answers (test_graph_live.py). "Exact same output" is hermetic —
+live runs can't match (probes are temp 0.7 by design). The two inner
+loops (repair, reflection) stay inside their functions for now;
+decomposing them into self-edges is a clean v2 guarded by the same test.
+
+**Retrieval switch + RAG shadow (retrieval.py).** `AGENTIC_RETRIEVAL` =
+rulebook (default, exact-key) | rag (RAG top-1) | both (exact-key
+authoritative, RAG recorded). Default 'rulebook' is byte-identical to
+the old lookup, so the pipeline and the LangGraph equivalence are
+unchanged. Reflection's rule-quoting now routes through the switch.
+
+**Agreement report — exact-key vs RAG top-1 (rag_agreement_report.txt).**
+On this cloud box HuggingFace is blocked (403), so the number shown is
+the **keyword-fallback** engine: **11/18 = 61%**. The 7 mismatches are
+exactly the near-neighbour confusions we predicted on a small rulebook
+— e.g. "missed a disaster" (S2) and "threat not hazardous" (S5) both
+pulled toward *caption_entity_missing*; the geometry/at-risk trio bled
+together. This is precisely why exact-key stays the pipeline default:
+when you hold the key, semantic search can only match it or get it
+wrong. Run `python -m agentic.retrieval` locally (HF available) for the
+real BAAI/bge-small number — expected higher than keyword, but the
+lesson stands. RAG's real home is Stage 4 (semantic checks, no key).
