@@ -1,0 +1,188 @@
+{
+  "assessment": {
+    "disaster_scenario": "Yes",
+    "disaster_type": "Swimming pool drowning incident",
+    "disaster_level": 9,
+    "severity_bucket": "catastrophic",
+    "threats": [
+      {
+        "object_id": "child_2",
+        "reason": "The child is described as being trapped and floating motionless face down, indicating they are in distress."
+      }
+    ],
+    "at_risk": [
+      {
+        "object_id": "child_1",
+        "kind": "distress",
+        "reason": "The child is described as being in the state of drowning"
+      },
+      {
+        "object_id": "child_2",
+        "kind": "distress",
+        "reason": "The child is described as being trapped and floating motionless face down, indicating they are in distress."
+      }
+    ],
+    "reasoning": "The child_1 entity is described as being in a state of drowning (at_risk), which indicates immediate danger. The child_2 entity is described as being trapped (at_risk) and floating motionless face down, also indicating an urgent situation. Both entities are at risk due to their states, but the presence of these states alone does not necessarily make them threats in a hazard-bearing sense according to Rule S5. However, given that both children are in distress or drowning, they can be considered as threats based on the severity and danger level indicated by the evidence.",
+    "self_confidence": null
+  },
+  "parse_notes": [
+    "reflect_r1:no_self_confidence_reported",
+    "reflect_r2:no_self_confidence_reported"
+  ],
+  "violations": [
+    {
+      "kind": "threat_state_not_hazardous",
+      "evidence": "child_2 listed as threat but its state 'trapped' is at_risk, not hazard_bearing"
+    }
+  ],
+  "raw_answer": {
+    "reasoning": "The child_1 entity is described as being in a state of drowning (at_risk), indicating immediate danger. The child_2 entity is described as being trapped (at_risk) and floating motionless face down, which also indicates an urgent situation. There are no active hazards near the entities based on the spatial hints provided.",
+    "disaster_scenario": "Yes",
+    "disaster_type": "Swimming pool drowning incident",
+    "disaster_level": 9,
+    "threats": [
+      {
+        "object_id": "child_1",
+        "reason": "The child is in a state of drowning, which poses an immediate threat to their life."
+      }
+    ],
+    "at_risk": [
+      {
+        "object_id": "child_1",
+        "kind": "distress",
+        "reason": "The child is described as being in the state of drowning"
+      },
+      {
+        "object_id": "child_2",
+        "kind": "distress",
+        "reason": "The child is described as being trapped and floating motionless face down, indicating they are in distress."
+      }
+    ],
+    "confidence": 0.95
+  },
+  "measured_uncertainty": {
+    "n_probes": 5,
+    "scenario_agreement": 1.0,
+    "type_agreement": 0.8,
+    "bucket_agreement": 1.0,
+    "level": {
+      "min": 7.0,
+      "max": 9.0,
+      "std": 0.8
+    },
+    "score": 0.057,
+    "drivers": [
+      {
+        "kind": "type_split",
+        "evidence": "probes split on disaster-type FAMILY: water×4, rescue×1 (raw wording: Water Drowning×1, Rescue×1, Swimming pool accident×1, Drowning×1, Drowning Incident×1)",
+        "action": "the declared entity states do not pin down the disaster type — candidate for caption clarification or (once built) contextual re-perception of the ambiguous region"
+      },
+      {
+        "kind": "threat_membership_split",
+        "evidence": "child_2 appears in only 4/5 probe threat lists",
+        "action": "reflect on child_2 specifically: quote its state, the geometry hint that nominates it, and ask for a decision with cited evidence (rules G1-G4)"
+      }
+    ],
+    "explanation": "The uncertainty in this verdict stems from a split among probes regarding the disaster type, with four probes categorizing it as related to water and one as rescue (type_split). Additionally, child_2's presence is only acknowledged by four out of five probes (threat_membership_split), indicating ambiguity. To reduce this uncertainty, we should clarify the disaster type through caption refinement or re-perception of the ambiguous region, and specifically address child_2 by quoting its state and geometry to gather more consistent evidence.",
+    "explainer": "llm",
+    "granular": {
+      "fields": {
+        "disaster_scenario": {
+          "u": 0.0,
+          "evidence": "Yes×5"
+        },
+        "disaster_type": {
+          "u": 0.2,
+          "evidence": "water×4, rescue×1"
+        },
+        "disaster_level": {
+          "u": 0.0,
+          "evidence": "levels 7×4, 9×1 -> buckets catastrophic×5"
+        }
+      },
+      "threats": {
+        "child_1": {
+          "u": 0.0,
+          "votes": "5/5"
+        },
+        "child_2": {
+          "u": 0.2,
+          "votes": "4/5"
+        }
+      },
+      "at_risk": {
+        "child_1": {
+          "u": 0.0,
+          "votes": "5/5"
+        },
+        "child_2": {
+          "u": 0.0,
+          "votes": "5/5"
+        }
+      }
+    }
+  },
+  "reflection_trace": {
+    "rounds": [
+      {
+        "round_number": 1,
+        "triggers": [
+          {
+            "type": "violation",
+            "kind": "threat_state_not_hazardous",
+            "evidence": "child_1 listed as threat but its state 'drowning' is at_risk, not hazard_bearing"
+          },
+          {
+            "type": "membership_split",
+            "list": "threats",
+            "object_id": "child_2",
+            "votes": "3/5"
+          },
+          {
+            "type": "field_instability",
+            "driver": "bucket_split",
+            "evidence": "probes straddle severity buckets: catastrophic×2, serious×2, minor×1 (levels 3-10)"
+          }
+        ],
+        "instruction": "You previously assessed this scene. Specific problems were found with your answer, each cited below with the rule it concerns and the evidence. Reconsider ONLY what the evidence demands; do not change what was not questioned.\n\nYOUR PREVIOUS ANSWER:\n{\n \"disaster_scenario\": \"Yes\",\n \"disaster_type\": \"Swimming pool drowning incident\",\n \"disaster_level\": 9,\n \"severity_bucket\": \"catastrophic\",\n \"threats\": [\n  {\n   \"object_id\": \"child_1\",\n   \"reason\": \"The child is in a state of drowning, which poses an immediate threat to their life.\"\n  }\n ],\n \"at_risk\": [\n  {\n   \"object_id\": \"child_1\",\n   \"kind\": \"distress\",\n   \"reason\": \"The child is described as being in the state of drowning\"\n  },\n  {\n   \"object_id\": \"child_2\",\n   \"kind\": \"distress\",\n   \"reason\": \"The child is described as being trapped and floating motionless face down, indicating they are in distress.\"\n  }\n ],\n \"reasoning\": \"The child_1 entity is described as being in a state of drowning (at_risk), indicating immediate danger. The child_2 entity is described as being trapped (at_risk) and floating motionless face down, which also indicates an urgent situation. There are no active hazards near the entities based on the spatial hints provided.\",\n \"self_confidence\": 0.95\n}\n\nPROBLEMS:\n- PROBLEM: child_1 listed as threat but its state 'drowning' is at_risk, not hazard_bearing\n  RULE S5: A threat must carry a hazard-bearing state (burning, leaking, spreading...); an entity in a normal state is not a source of harm.\n  WHY: A hazard IS a state on an entity. Calling a standing person a threat unmoors the causal analysis that suppression will later act on.\n  EXAMPLE: WRONG: threats=[person_1 (standing)]. RIGHT: threats=[house_1 (burning)].\n- UNSTABLE MEMBERSHIP: child_2 appeared in only 3/5 probe threats lists. Its declared state: trapped (at_risk). Geometry: no hazard nearby by declared boxes.\n  RULE G1: An entity whose box overlaps or sits adjacent to an active hazard's box is a PROXIMITY at-risk CANDIDATE.\n  RULE G3: Box adjacency is 2D image-plane evidence: it NOMINATES proximity candidates but never convicts; real closeness is 3D and may need a visual check.\n  DECIDE: does child_2 belong in threats? Cite the state and the spatial evidence either way.\n- VERIFY (bucket_split): re-derive this field from the evidence below, independently of any previous answer.\n  DECLARED DANGER STATES: child_1·drowning (at_risk), child_2·trapped (at_risk)\n  RULE S1: The verdict must agree with its own severity: scenario 'No' requires level 0 and type N/A; scenario 'Yes' requires level >= 1.\n  A scene whose declared states include active hazards or victims cannot be 'No'; a scene with neither cannot be 'Yes'. State which specific entity states your verdict and severity rest on.\n\nReply with the SAME JSON schema as before (reasoning, disaster_scenario, disaster_type, disaster_level, threats, at_risk, confidence), fully corrected. If you believe your original answer was right, return it unchanged and say why in 'reasoning'.",
+        "changed": true,
+        "violations_after": [
+          {
+            "kind": "threat_state_not_hazardous",
+            "evidence": "child_1 listed as threat but its state 'drowning' is at_risk, not hazard_bearing"
+          },
+          {
+            "kind": "threat_state_not_hazardous",
+            "evidence": "child_2 listed as threat but its state 'trapped' is at_risk, not hazard_bearing"
+          }
+        ]
+      },
+      {
+        "round_number": 2,
+        "triggers": [
+          {
+            "type": "violation",
+            "kind": "threat_state_not_hazardous",
+            "evidence": "child_1 listed as threat but its state 'drowning' is at_risk, not hazard_bearing"
+          },
+          {
+            "type": "violation",
+            "kind": "threat_state_not_hazardous",
+            "evidence": "child_2 listed as threat but its state 'trapped' is at_risk, not hazard_bearing"
+          }
+        ],
+        "instruction": "You previously assessed this scene. Specific problems were found with your answer, each cited below with the rule it concerns and the evidence. Reconsider ONLY what the evidence demands; do not change what was not questioned.\n\nYOUR PREVIOUS ANSWER:\n{\n \"disaster_scenario\": \"Yes\",\n \"disaster_type\": \"Swimming pool drowning incident\",\n \"disaster_level\": 9,\n \"severity_bucket\": \"catastrophic\",\n \"threats\": [\n  {\n   \"object_id\": \"child_1\",\n   \"reason\": \"The child is in a state of drowning, which poses an immediate threat to their life.\"\n  },\n  {\n   \"object_id\": \"child_2\",\n   \"reason\": \"The child is described as being trapped and floating motionless face down, indicating they are in distress.\"\n  }\n ],\n \"at_risk\": [\n  {\n   \"object_id\": \"child_1\",\n   \"kind\": \"distress\",\n   \"reason\": \"The child is described as being in the state of drowning\"\n  },\n  {\n   \"object_id\": \"child_2\",\n   \"kind\": \"distress\",\n   \"reason\": \"The child is described as being trapped and floating motionless face down, indicating they are in distress.\"\n  }\n ],\n \"reasoning\": \"The child_1 entity is described as being in a state of drowning (at_risk), which indicates immediate danger. The child_2 entity is described as being trapped (at_risk) and floating motionless face down, also indicating an urgent situation. Both entities are at risk due to their states, but the presence of these states alone does not necessarily make them threats in a hazard-bearing sense according to Rule S5. However, given that both children are in distress or drowning, they can be considered as threats based on the severity and danger level indicated by the evidence.\",\n \"self_confidence\": null\n}\n\nPROBLEMS:\n- PROBLEM: child_1 listed as threat but its state 'drowning' is at_risk, not hazard_bearing\n  RULE S5: A threat must carry a hazard-bearing state (burning, leaking, spreading...); an entity in a normal state is not a source of harm.\n  WHY: A hazard IS a state on an entity. Calling a standing person a threat unmoors the causal analysis that suppression will later act on.\n  EXAMPLE: WRONG: threats=[person_1 (standing)]. RIGHT: threats=[house_1 (burning)].\n- PROBLEM: child_2 listed as threat but its state 'trapped' is at_risk, not hazard_bearing\n  RULE S5: A threat must carry a hazard-bearing state (burning, leaking, spreading...); an entity in a normal state is not a source of harm.\n  WHY: A hazard IS a state on an entity. Calling a standing person a threat unmoors the causal analysis that suppression will later act on.\n  EXAMPLE: WRONG: threats=[person_1 (standing)]. RIGHT: threats=[house_1 (burning)].\n\nReply with the SAME JSON schema as before (reasoning, disaster_scenario, disaster_type, disaster_level, threats, at_risk, confidence), fully corrected. If you believe your original answer was right, return it unchanged and say why in 'reasoning'.",
+        "changed": true,
+        "violations_after": [
+          {
+            "kind": "threat_state_not_hazardous",
+            "evidence": "child_2 listed as threat but its state 'trapped' is at_risk, not hazard_bearing"
+          }
+        ]
+      }
+    ],
+    "stopped_reason": "cap_reached",
+    "u_before": 0.171,
+    "u_after": 0.057
+  }
+}

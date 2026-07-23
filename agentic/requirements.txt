@@ -5,3 +5,9 @@ pydantic>=2.0
 torch>=2.2
 transformers>=4.44
 langgraph>=0.2      # dialogue agent (and the Stage 2 pipeline graph to come)
+# Rulebook RAG (Stage 2): semantic retrieval over rule chunks.
+# If absent, rulebook_rag.search() degrades to keyword scoring (logged).
+llama-index-core>=0.11
+llama-index-vector-stores-chroma>=0.2
+llama-index-embeddings-huggingface>=0.3
+chromadb>=0.5

@@ -70,12 +70,22 @@ MAX_REPAIR_ROUNDS = 2
 # States the repair prompt may remind the model of. This is vocabulary
 # DISCIPLINE (which words are legal), not perception guidance (which word
 # is true for this entity). The model still chooses.
+# Ordering is deliberate (F10 follow-up, the road·burning autopsy): VLMs
+# have positional bias, and the old rendering chained "...what you see:
+# hazard-bearing: burning" — the colon structure plus first-position
+# hazard words primed scene-congruent drama ('paved' became 'burning').
+# NORMAL leads now: most entities in most scenes ARE normal, so
+# first-position bias pulls toward the statistically honest prior.
 _STATE_WORD_REMINDER = (
-    "hazard-bearing: burning, burnt, collapsed, collapsing, fallen, crushed, "
-    "flooded, leaking, spreading, billowing, rising, seeping, engulfing / "
-    "at-risk: injured, bleeding, fleeing, trapped, cowering, drowning, "
-    "suffocating, unconscious / normal: intact, standing, upright, dry, "
-    "sealed, stationary, resting, healthy, stable, swimming, walking, running"
+    "(any group is a valid choice - most entities in most scenes are "
+    "normal)\n"
+    "  normal: intact, standing, upright, dry, sealed, stationary, "
+    "resting, healthy, stable, swimming, walking, running, parked, paved\n"
+    "  at-risk: injured, bleeding, fleeing, trapped, cowering, drowning, "
+    "suffocating, unconscious\n"
+    "  hazard-bearing: burning, burnt, collapsed, collapsing, fallen, "
+    "crushed, flooded, leaking, spreading, billowing, rising, seeping, "
+    "engulfing"
 )
 
 
@@ -127,6 +137,26 @@ class RepairTrace(BaseModel):
 
 _LENIENT_FAMILIES = {"person", "responder", "animal"}
 
+# P6: near-total overlap between two same-group living beings reads as
+# one individual listed twice. 0.8 is a prior; calibrated on E_collapse
+# (true duplicates measured IoU ≈ 0.9+; distinct adjacent officers ≈ 0.1).
+DUPLICATE_IOU = 0.8
+
+
+def _iou(a: Any, b: Any) -> float:
+    try:
+        ax1, ay1, ax2, ay2 = a
+        bx1, by1, bx2, by2 = b
+    except (TypeError, ValueError):
+        return 0.0
+    ix = min(ax2, bx2) - max(ax1, bx1)
+    iy = min(ay2, by2) - max(ay1, by1)
+    if ix <= 0 or iy <= 0:
+        return 0.0
+    inter = ix * iy
+    union = ((ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter)
+    return inter / union if union > 0 else 0.0
+
 
 def caption_labels(caption: str) -> dict[str, str]:
     """Extract canonical vocabulary labels mentioned in the caption.
@@ -168,6 +198,54 @@ def _caption_label_satisfied(wanted: str, entities: list[dict[str, Any]]) -> boo
     return False
 
 
+# ── Fluid-convention-aware caption satisfaction (F9, 2026-07-22) ────────
+#
+# The A_fire regression: the caption "a house on fire" made the naive
+# matcher demand a 'fire' entity, contradicting the fluid convention the
+# perception prompt itself teaches (fire attached to a burning object is
+# a STATE, not an entity). Loop 1 manufactured a redundant fire_1, S6
+# then prosecuted the model for not listing it as a threat, and only the
+# model's STOOD kept the answer GT-correct (at the cost of U 0.114->0.275).
+# When two of our rules collide, the bug is in the lawbook, never the
+# defendant.
+#
+# Fix, deliberately NARROW: a caption mention of a medium is satisfied by
+# an entity already carrying the attached state — but only for media whose
+# attachment the convention recognizes, and only for attached-sounding
+# phrases. Free-burning phrasings ("brush fire", "wildfire") stay strict:
+# no attached state accounts for a free fire. smoke/dust/gas stay strict
+# (always diffuse). spill stays strict (producer-and-medium rule REQUIRES
+# the spill entity beside the leaking producer). Residual risk, accepted
+# and ledgered in F9: a caption saying just "fire" for a scene with BOTH a
+# burning structure AND a separate free fire will not ticket the free
+# fire — that gap belongs to the petition layer and the GT harness.
+
+_ATTACHED_STATE_SATISFIERS: dict[str, dict[str, set[str]]] = {
+    "fire": {
+        "phrases": {"fire", "flame", "flames", "blaze"},
+        "states": {"burning", "burnt"},
+    },
+    "water": {
+        "phrases": {"water", "flood", "floodwater", "flood water"},
+        "states": {"flooded"},
+    },
+}
+
+
+def _satisfied_by_attached_state(
+    wanted: str, raw_phrase: str, entities: list[dict[str, Any]]
+) -> bool:
+    spec = _ATTACHED_STATE_SATISFIERS.get(wanted)
+    if spec is None or str(raw_phrase).lower() not in spec["phrases"]:
+        return False
+    from agentic.perception import canonicalize_state, normalize_state
+    for e in entities:
+        s = canonicalize_state(normalize_state(str(e.get("state", ""))))
+        if s in spec["states"]:
+            return True
+    return False
+
+
 # ── Step 1: detect violations (pure code, no model call) ────────────────
 
 
@@ -182,7 +260,7 @@ def detect_violations(
     When a caption is given, rule 5 (completeness against the caption's
     named entities) also runs.
     """
-    from agentic.perception import state_kind  # local import: avoids cycle
+    from agentic.perception import resolve_state, state_kind  # local: avoids cycle
 
     violations: list[Violation] = []
     for i, e in enumerate(entities):
@@ -199,7 +277,13 @@ def detect_violations(
                 kind="family_name_as_label",
                 instruction=rulebook.instruction_for(
                     "family_name_as_label",
-                    index=i, raw_label=raw_label, members=members),
+                    index=i, raw_label=raw_label, members=members,
+                    # The model's own words — the evidence that unlocks
+                    # the right label when it lives in ANOTHER family
+                    # (E_collapse: 'infrastructure' described as "police
+                    # car with flashing lights"; the old members-only
+                    # menu was a locked room).
+                    description=str(e.get("description", ""))[:80]),
             ))
 
         # Rule P2: label outside vocabulary and synonym map. The model may
@@ -214,9 +298,11 @@ def detect_violations(
             ))
 
         # Rule P3: state word outside the state vocabulary (after synonyms
-        # and extensions). We list the legal words; we NEVER suggest which
-        # one is true for this entity - that would be coaching perception.
-        if state_kind(e.get("state", "")) == "unknown":
+        # and extensions — including LABEL-AWARE ones: spill·'active' is
+        # legal English for seeping, so it must not draw a ticket). We
+        # list the legal words; we NEVER suggest which one is true for
+        # this entity - that would be coaching perception.
+        if state_kind(resolve_state(canon, e.get("state", ""))) == "unknown":
             violations.append(Violation(
                 entity_index=i, raw_label=raw_label,
                 kind="state_out_of_vocab",
@@ -236,6 +322,43 @@ def detect_violations(
                     "missing_anchor_bbox", index=i, raw_label=raw_label),
             ))
 
+    # Rule P6: duplicate living individuals (E_collapse ui_20fb0754: the
+    # model listed the two officers as person_2/person_3, then a P5
+    # ticket for 'police_officer' made it ADD them again — five humans
+    # in a three-human scene). Same life group + near-total box overlap
+    # = one individual listed twice, absent an explicit reason. The
+    # model resolves it (merge under the better label, or keep both and
+    # disambiguate the descriptions) — code only points.
+    lifelike = []
+    for i, e in enumerate(entities):
+        canon, _, _, _ = canonicalize_label(str(e.get("label", "")))
+        fam = family_of(canon)
+        group = ("human" if fam in ("person", "responder")
+                 else "animal" if fam == "animal" else None)
+        box = e.get("bbox") or e.get("anchor_bbox")
+        if group and box:
+            lifelike.append((i, e, group, box))
+    for x in range(len(lifelike)):
+        for y in range(x + 1, len(lifelike)):
+            ia, ea, ga, ba = lifelike[x]
+            ib, eb, gb, bb = lifelike[y]
+            if ga != gb:
+                continue
+            iou = _iou(ba, bb)
+            if iou >= DUPLICATE_IOU:
+                violations.append(Violation(
+                    entity_index=ia,
+                    raw_label=str(ea.get("label", "")),
+                    kind="duplicate_entity",
+                    instruction=rulebook.instruction_for(
+                        "duplicate_entity",
+                        index_a=ia, label_a=ea.get("label", ""),
+                        desc_a=str(ea.get("description", ""))[:60],
+                        index_b=ib, label_b=eb.get("label", ""),
+                        desc_b=str(eb.get("description", ""))[:60],
+                        iou=f"{iou:.2f}"),
+                ))
+
     # Rule 5: completeness against the caption. The caption is given input;
     # an entity it names that the list lacks is checkable evidence of a
     # dropped entity. The instruction explicitly allows the model to stand
@@ -244,6 +367,8 @@ def detect_violations(
     # forced. (This is completeness against the INPUT, not perception
     # coaching: we say what the caption names, never what to see in it.)
     for wanted, raw_phrase in caption_labels(caption).items():
+        if _satisfied_by_attached_state(wanted, raw_phrase, entities):
+            continue    # "a house on fire" + house·burning: already told
         if not _caption_label_satisfied(wanted, entities):
             violations.append(Violation(
                 entity_index=-1, raw_label=wanted,

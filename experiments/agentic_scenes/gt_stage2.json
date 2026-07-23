@@ -1,0 +1,319 @@
+{
+  "_comment": [
+    "Working GT for the six frozen scenes (GROUND_TRUTH_PROTOCOL: Claude",
+    "proposes, Sunny verifies; a cross-model reference, not strict truth).",
+    "stage1 = SCENE-truth key entities (label-based; what perception should",
+    "have declared). stage2 = CONDITIONED on the frozen perception records:",
+    "the correct assessment GIVEN what Stage 1 actually declared - a",
+    "text-only stage cannot cite entities that were never perceived.",
+    "That split is what makes error ATTRIBUTION possible: a stage2 miss",
+    "that traces to a stage1 GT miss is perception's fault, and is the",
+    "measured justification for re-perception.",
+    "required = must appear (recall). optional = tolerated (not spurious,",
+    "not required). Anything outside required+optional counts against",
+    "precision. bucket_acceptable tolerates one defensible neighbor.",
+    "VERIFIED by Sunny 2026-07-22. Stated principle (Sunny, verbatim intent):",
+    "a person in DISTRESS (drowning, unconscious, ...) WITHOUT a visible",
+    "active hazard is a legitimate scene shape - threats may be EMPTY on a",
+    "Yes verdict. Distress needs no declared source entity; the model must",
+    "not be pressured to invent one (B_pool: drafting a child into the",
+    "threat slot is the error, not the empty list)."
+  ],
+  "A_fire": {
+    "stage1": {
+      "required": [
+        {
+          "label": "house",
+          "state": "burning",
+          "state_kind": "hazard_bearing"
+        },
+        {
+          "label": "person",
+          "state_kind": "normal"
+        },
+        {
+          "label": "dog",
+          "state_kind": "normal"
+        }
+      ],
+      "optional": [
+        {
+          "label": "smoke",
+          "state": "billowing",
+          "state_kind": "hazard_bearing"
+        },
+        {
+          "label": "car"
+        },
+        {
+          "label": "house",
+          "state": "intact"
+        }
+      ],
+      "expect_hazard": true
+    },
+    "stage2": {
+      "disaster_scenario": "Yes",
+      "type_families": [
+        "fire"
+      ],
+      "bucket": "catastrophic",
+      "bucket_acceptable": [
+        "serious",
+        "catastrophic"
+      ],
+      "threats": [
+        "house_1"
+      ],
+      "threats_optional": [],
+      "at_risk": {
+        "person_1": "proximity",
+        "dog_1": "proximity"
+      },
+      "at_risk_optional": {
+        "car_1": "proximity",
+        "house_2": "proximity"
+      }
+    }
+  },
+  "B_pool": {
+    "stage1": {
+      "required": [
+        {
+          "label": "child",
+          "state": "drowning",
+          "state_kind": "at_risk"
+        },
+        {
+          "label": "child",
+          "state_kind": "at_risk"
+        },
+        {
+          "label": "pool",
+          "state_kind": "hazard_bearing",
+          "_why": "the engulfing water IS the hazard; its absence is the known Stage-1 miss and the re-perception exhibit"
+        }
+      ],
+      "optional": [
+        {
+          "label": "water",
+          "state_kind": "hazard_bearing"
+        },
+        {
+          "label": "lifeguard_chair"
+        }
+      ],
+      "expect_hazard": true
+    },
+    "stage2": {
+      "disaster_scenario": "Yes",
+      "type_families": [
+        "water"
+      ],
+      "bucket": "catastrophic",
+      "bucket_acceptable": [
+        "catastrophic"
+      ],
+      "threats": [],
+      "_threats_why": "VERIFIED principle: distress without a visible active hazard is fine - threats stays empty. The model inventing 'pool'/child threats is the error (and the petition-perception signal), never the empty list.",
+      "threats_optional": [],
+      "at_risk": {
+        "child_1": "distress",
+        "child_2": "distress"
+      },
+      "at_risk_optional": {}
+    }
+  },
+  "C_tanker_fire": {
+    "stage1": {
+      "required": [
+        {
+          "label": "tanker_truck",
+          "state": "leaking",
+          "state_kind": "hazard_bearing"
+        },
+        {
+          "label": "spill",
+          "state_kind": "hazard_bearing"
+        },
+        {
+          "label": "fire",
+          "state_kind": "hazard_bearing"
+        },
+        {
+          "label": "person",
+          "state_kind": "normal"
+        }
+      ],
+      "optional": [
+        {
+          "label": "road"
+        },
+        {
+          "label": "smoke",
+          "state_kind": "hazard_bearing"
+        }
+      ],
+      "expect_hazard": true
+    },
+    "stage2": {
+      "disaster_scenario": "Yes",
+      "type_families": [
+        "hazmat",
+        "fire"
+      ],
+      "bucket": "catastrophic",
+      "bucket_acceptable": [
+        "serious",
+        "catastrophic"
+      ],
+      "threats": [
+        "tanker_truck_1",
+        "spill_1",
+        "fire_1"
+      ],
+      "threats_optional": [],
+      "at_risk": {
+        "person_1": "proximity"
+      },
+      "at_risk_optional": {}
+    }
+  },
+  "D_aerial_spill": {
+    "stage1": {
+      "required": [
+        {
+          "label": "tanker_truck",
+          "state": "fallen",
+          "state_kind": "hazard_bearing"
+        },
+        {
+          "label": "spill",
+          "state": "leaking",
+          "state_kind": "hazard_bearing"
+        },
+        {
+          "label": "hazmat_worker",
+          "state_kind": "normal"
+        }
+      ],
+      "optional": [
+        {
+          "label": "fire_truck"
+        },
+        {
+          "label": "ambulance"
+        },
+        {
+          "label": "police_car"
+        }
+      ],
+      "expect_hazard": true
+    },
+    "stage2": {
+      "disaster_scenario": "Yes",
+      "type_families": [
+        "hazmat"
+      ],
+      "bucket": "serious",
+      "bucket_acceptable": [
+        "serious",
+        "catastrophic"
+      ],
+      "threats": [
+        "tanker_truck_1",
+        "spill_1"
+      ],
+      "threats_optional": [],
+      "at_risk": {
+        "hazmat_worker_1": "proximity",
+        "hazmat_worker_2": "proximity"
+      },
+      "at_risk_optional": {}
+    }
+  },
+  "E_collapse": {
+    "stage1": {
+      "required": [
+        {
+          "label": "building",
+          "state_kind": "hazard_bearing"
+        },
+        {
+          "label": "person",
+          "state": "trapped",
+          "state_kind": "at_risk"
+        },
+        {
+          "label": "dust",
+          "state_kind": "hazard_bearing"
+        }
+      ],
+      "optional": [
+        {
+          "label": "responder"
+        },
+        {
+          "label": "car"
+        },
+        {
+          "label": "caution_tape"
+        }
+      ],
+      "expect_hazard": true
+    },
+    "stage2": {
+      "disaster_scenario": "Yes",
+      "type_families": [
+        "collapse"
+      ],
+      "bucket": "catastrophic",
+      "bucket_acceptable": [
+        "serious",
+        "catastrophic"
+      ],
+      "threats": [
+        "building_1",
+        "dust_1"
+      ],
+      "threats_optional": [],
+      "at_risk": {
+        "person_1": "distress"
+      },
+      "at_risk_optional": {
+        "responder_1": "proximity",
+        "responder_2": "proximity"
+      }
+    }
+  },
+  "F_park_control": {
+    "stage1": {
+      "required": [
+        {
+          "label": "person",
+          "state_kind": "normal"
+        },
+        {
+          "label": "dog",
+          "state_kind": "normal"
+        }
+      ],
+      "optional": [],
+      "expect_hazard": false
+    },
+    "stage2": {
+      "disaster_scenario": "No",
+      "type_families": [
+        "none"
+      ],
+      "bucket": "none",
+      "bucket_acceptable": [
+        "none"
+      ],
+      "threats": [],
+      "threats_optional": [],
+      "at_risk": {},
+      "at_risk_optional": {}
+    }
+  }
+}

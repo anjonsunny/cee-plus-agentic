@@ -1,0 +1,204 @@
+{
+  "assessment": {
+    "disaster_scenario": "Yes",
+    "disaster_type": "Chemical Spill",
+    "disaster_level": 7,
+    "severity_bucket": "catastrophic",
+    "threats": [
+      {
+        "object_id": "spill_1",
+        "reason": "Leaking chemicals pose a significant hazard to nearby entities."
+      },
+      {
+        "object_id": "tanker_truck_1",
+        "reason": "The tanker truck is in a fallen state with hazardous materials leaking, posing an immediate threat."
+      }
+    ],
+    "at_risk": [
+      {
+        "object_id": "hazmat_worker_1",
+        "kind": "proximity",
+        "reason": "Hazardous materials are leaking near the hazmat worker, putting them at risk of exposure."
+      },
+      {
+        "object_id": "hazmat_worker_2",
+        "kind": "proximity",
+        "reason": "Hazardous materials are leaking near the second hazmat worker, putting them at risk of exposure."
+      }
+    ],
+    "reasoning": "The tanker_truck_1 is in a fallen state with hazardous chemicals leaking, and hazmat workers are standing nearby. The fire truck, ambulance, and police car are stationary but adjacent to this hazard. This scene indicates an emergency situation where hazardous materials are leaking from the overturned tanker truck.",
+    "self_confidence": null
+  },
+  "parse_notes": [
+    "reflect_r1:no_self_confidence_reported",
+    "reflect_r2:no_self_confidence_reported"
+  ],
+  "violations": [],
+  "raw_answer": {
+    "reasoning": "The tanker_truck_1 is in a fallen state with a hazardous bearing (leaking chemicals), and hazmat workers are standing near it. The fire truck, ambulance, and police car are stationary but adjacent to the hazard. This scene indicates an emergency situation where hazardous materials are leaking from the overturned tanker truck.",
+    "disaster_scenario": "Yes",
+    "disaster_type": "Chemical Spill",
+    "disaster_level": 7,
+    "threats": [
+      {
+        "object_id": "spill_1",
+        "reason": "Leaking chemicals pose a significant hazard to nearby entities."
+      }
+    ],
+    "at_risk": [
+      {
+        "object_id": "hazmat_worker_1",
+        "kind": "proximity",
+        "reason": "Hazardous materials are leaking near the hazmat worker, putting them at risk of exposure."
+      },
+      {
+        "object_id": "hazmat_worker_2",
+        "kind": "proximity",
+        "reason": "Hazardous materials are leaking near the second hazmat worker, putting them at risk of exposure."
+      }
+    ],
+    "confidence": 0.95
+  },
+  "measured_uncertainty": {
+    "n_probes": 5,
+    "scenario_agreement": 1.0,
+    "type_agreement": 1.0,
+    "bucket_agreement": 1.0,
+    "level": {
+      "min": 7.0,
+      "max": 9.0,
+      "std": 0.8
+    },
+    "score": 0.345,
+    "drivers": [
+      {
+        "kind": "threat_membership_split",
+        "evidence": "tanker_truck_1 appears in only 2/5 probe threat lists",
+        "action": "reflect on tanker_truck_1 specifically: quote its state, the geometry hint that nominates it, and ask for a decision with cited evidence (rules G1-G4)"
+      },
+      {
+        "kind": "at_risk_membership_split",
+        "evidence": "ambulance_1 appears in only 1/5 probe at_risk lists",
+        "action": "reflect on ambulance_1 specifically: quote its state, the geometry hint that nominates it, and ask for a decision with cited evidence (rules G1-G4)"
+      },
+      {
+        "kind": "at_risk_membership_split",
+        "evidence": "fire_truck_1 appears in only 1/5 probe at_risk lists",
+        "action": "reflect on fire_truck_1 specifically: quote its state, the geometry hint that nominates it, and ask for a decision with cited evidence (rules G1-G4)"
+      },
+      {
+        "kind": "at_risk_membership_split",
+        "evidence": "police_car_1 appears in only 1/5 probe at_risk lists",
+        "action": "reflect on police_car_1 specifically: quote its state, the geometry hint that nominates it, and ask for a decision with cited evidence (rules G1-G4)"
+      },
+      {
+        "kind": "at_risk_membership_split",
+        "evidence": "tanker_truck_1 appears in only 1/5 probe at_risk lists",
+        "action": "reflect on tanker_truck_1 specifically: quote its state, the geometry hint that nominates it, and ask for a decision with cited evidence (rules G1-G4)"
+      }
+    ],
+    "explanation": "The uncertainty in this verdict stems from the inconsistent inclusion of certain vehicles in the probe re-asks, specifically tanker_truck_1 and ambulance_1 to fire_truck_1 and police_car_1, which each appear in only 1 out of 5 probes for at-risk membership. This split indicates that these entities are not consistently identified as being at risk, contributing to the uncertainty score of 0.345. To reduce this uncertainty, it is recommended to reflect on each specific vehicle's state and the geometry hints that nominate them, then ask for a decision with cited evidence using rules G1-G4.",
+    "explainer": "llm",
+    "granular": {
+      "fields": {
+        "disaster_scenario": {
+          "u": 0.0,
+          "evidence": "Yes×5"
+        },
+        "disaster_type": {
+          "u": 0.0,
+          "evidence": "hazmat×5"
+        },
+        "disaster_level": {
+          "u": 0.0,
+          "evidence": "levels 7×4, 9×1 -> buckets catastrophic×5"
+        }
+      },
+      "threats": {
+        "spill_1": {
+          "u": 0.0,
+          "votes": "5/5"
+        },
+        "tanker_truck_1": {
+          "u": 0.6,
+          "votes": "2/5"
+        }
+      },
+      "at_risk": {
+        "ambulance_1": {
+          "u": 0.8,
+          "votes": "1/5"
+        },
+        "fire_truck_1": {
+          "u": 0.8,
+          "votes": "1/5"
+        },
+        "hazmat_worker_1": {
+          "u": 0.0,
+          "votes": "5/5"
+        },
+        "hazmat_worker_2": {
+          "u": 0.0,
+          "votes": "5/5"
+        },
+        "police_car_1": {
+          "u": 0.8,
+          "votes": "1/5"
+        },
+        "tanker_truck_1": {
+          "u": 0.8,
+          "votes": "1/5"
+        }
+      }
+    }
+  },
+  "reflection_trace": {
+    "rounds": [
+      {
+        "round_number": 1,
+        "triggers": [
+          {
+            "type": "violation",
+            "kind": "hazard_not_in_threats",
+            "evidence": "tanker_truck_1 carries hazard-bearing state 'fallen' but is absent from threats"
+          },
+          {
+            "type": "membership_split",
+            "list": "at_risk",
+            "object_id": "ambulance_1",
+            "votes": "1/5"
+          },
+          {
+            "type": "field_instability",
+            "driver": "bucket_split",
+            "evidence": "probes straddle severity buckets: catastrophic×3, serious×2 (levels 5-8)"
+          }
+        ],
+        "instruction": "You previously assessed this scene. Specific problems were found with your answer, each cited below with the rule it concerns and the evidence. Reconsider ONLY what the evidence demands; do not change what was not questioned.\n\nYOUR PREVIOUS ANSWER:\n{\n \"disaster_scenario\": \"Yes\",\n \"disaster_type\": \"Chemical Spill\",\n \"disaster_level\": 7,\n \"severity_bucket\": \"catastrophic\",\n \"threats\": [\n  {\n   \"object_id\": \"spill_1\",\n   \"reason\": \"Leaking chemicals pose a significant hazard to nearby entities.\"\n  }\n ],\n \"at_risk\": [\n  {\n   \"object_id\": \"hazmat_worker_1\",\n   \"kind\": \"proximity\",\n   \"reason\": \"Hazardous materials are leaking near the hazmat worker, putting them at risk of exposure.\"\n  },\n  {\n   \"object_id\": \"hazmat_worker_2\",\n   \"kind\": \"proximity\",\n   \"reason\": \"Hazardous materials are leaking near the second hazmat worker, putting them at risk of exposure.\"\n  }\n ],\n \"reasoning\": \"The tanker_truck_1 is in a fallen state with a hazardous bearing (leaking chemicals), and hazmat workers are standing near it. The fire truck, ambulance, and police car are stationary but adjacent to the hazard. This scene indicates an emergency situation where hazardous materials are leaking from the overturned tanker truck.\",\n \"self_confidence\": 0.95\n}\n\nPROBLEMS:\n- PROBLEM: tanker_truck_1 carries hazard-bearing state 'fallen' but is absent from threats\n  RULE S6: On a 'Yes' verdict, every declared hazard-bearing entity belongs in threats — or the answer must argue concretely why it is not currently a source of harm.\n  WHY: A declared hazard the threat list forgets can never be suppressed at Stage 8 and silently corrupts coverage. Forgetting is invisible; arguing is auditable.\n  EXAMPLE: C_tanker_fire: spill_1 (seeping) declared, threats list only tanker_truck_1 and fire_1 — the spill is the spreading medium and belongs in threats.\n- UNSTABLE MEMBERSHIP: ambulance_1 appeared in only 1/5 probe at_risk lists. Its declared state: stationary (normal). Geometry: no hazard nearby by declared boxes.\n  RULE G1: An entity whose box overlaps or sits adjacent to an active hazard's box is a PROXIMITY at-risk CANDIDATE.\n  RULE G3: Box adjacency is 2D image-plane evidence: it NOMINATES proximity candidates but never convicts; real closeness is 3D and may need a visual check.\n  DECIDE: does ambulance_1 belong in at_risk? Cite the state and the spatial evidence either way.\n- VERIFY (bucket_split): re-derive this field from the evidence below, independently of any previous answer.\n  DECLARED DANGER STATES: tanker_truck_1·fallen (hazard_bearing), spill_1·leaking (hazard_bearing)\n  RULE S1: The verdict must agree with its own severity: scenario 'No' requires level 0 and type N/A; scenario 'Yes' requires level >= 1.\n  A scene whose declared states include active hazards or victims cannot be 'No'; a scene with neither cannot be 'Yes'. State which specific entity states your verdict and severity rest on.\n\nReply with the SAME JSON schema as before (reasoning, disaster_scenario, disaster_type, disaster_level, threats, at_risk, confidence), fully corrected. If you believe your original answer was right, return it unchanged and say why in 'reasoning'.",
+        "changed": true,
+        "violations_after": [
+          {
+            "kind": "hazard_not_in_threats",
+            "evidence": "tanker_truck_1 carries hazard-bearing state 'fallen' but is absent from threats"
+          }
+        ]
+      },
+      {
+        "round_number": 2,
+        "triggers": [
+          {
+            "type": "violation",
+            "kind": "hazard_not_in_threats",
+            "evidence": "tanker_truck_1 carries hazard-bearing state 'fallen' but is absent from threats"
+          }
+        ],
+        "instruction": "You previously assessed this scene. Specific problems were found with your answer, each cited below with the rule it concerns and the evidence. Reconsider ONLY what the evidence demands; do not change what was not questioned.\n\nYOUR PREVIOUS ANSWER:\n{\n \"disaster_scenario\": \"Yes\",\n \"disaster_type\": \"Chemical Spill\",\n \"disaster_level\": 7,\n \"severity_bucket\": \"catastrophic\",\n \"threats\": [\n  {\n   \"object_id\": \"spill_1\",\n   \"reason\": \"Leaking chemicals pose a significant hazard to nearby entities.\"\n  }\n ],\n \"at_risk\": [\n  {\n   \"object_id\": \"hazmat_worker_1\",\n   \"kind\": \"proximity\",\n   \"reason\": \"Hazardous materials are leaking near the hazmat worker, putting them at risk of exposure.\"\n  },\n  {\n   \"object_id\": \"hazmat_worker_2\",\n   \"kind\": \"proximity\",\n   \"reason\": \"Hazardous materials are leaking near the second hazmat worker, putting them at risk of exposure.\"\n  }\n ],\n \"reasoning\": \"The tanker_truck_1 is in a fallen state with a hazardous bearing (leaking chemicals), and hazmat workers are standing near it. The fire truck, ambulance, and police car are stationary but adjacent to the hazard. This scene indicates an emergency situation where hazardous materials are leaking from the overturned tanker truck.\",\n \"self_confidence\": null\n}\n\nPROBLEMS:\n- PROBLEM: tanker_truck_1 carries hazard-bearing state 'fallen' but is absent from threats\n  RULE S6: On a 'Yes' verdict, every declared hazard-bearing entity belongs in threats — or the answer must argue concretely why it is not currently a source of harm.\n  WHY: A declared hazard the threat list forgets can never be suppressed at Stage 8 and silently corrupts coverage. Forgetting is invisible; arguing is auditable.\n  EXAMPLE: C_tanker_fire: spill_1 (seeping) declared, threats list only tanker_truck_1 and fire_1 — the spill is the spreading medium and belongs in threats.\n\nReply with the SAME JSON schema as before (reasoning, disaster_scenario, disaster_type, disaster_level, threats, at_risk, confidence), fully corrected. If you believe your original answer was right, return it unchanged and say why in 'reasoning'.",
+        "changed": true,
+        "violations_after": []
+      }
+    ],
+    "stopped_reason": "cap_reached",
+    "u_before": 0.171,
+    "u_after": 0.345
+  }
+}

@@ -256,3 +256,182 @@ def test_run_perception_standin_without_repair_fn_skips_loop(tmp_path, fake_geom
         out_dir=tmp_path / "out",
     )
     assert result.repair_trace is None       # loop not run, honestly recorded
+
+# ── F9: fluid-convention-aware caption completeness ─────────────────────
+#
+# The A_fire regression: "a house on fire" must not demand a fire entity
+# when the house already carries state 'burning' — the caption's fire IS
+# the house's state (fluid convention). Free-burning phrasings and always-
+# diffuse media stay strict.
+
+
+def test_attached_fire_satisfies_caption_mention():
+    """The exact A_fire failure: house·burning present, caption says
+    'on fire' -> NO caption_entity_missing for fire."""
+    v = detect_violations(
+        [{"label": "house", "state": "burning", "bbox": [0, 0, 9, 9]},
+         {"label": "person", "state": "standing", "bbox": [1, 1, 9, 9]}],
+        caption="A house on fire at night; a person stands nearby.",
+    )
+    assert not any(x.raw_label == "fire" and x.kind == "caption_entity_missing"
+                   for x in v)
+
+
+def test_caption_fire_still_fires_when_nothing_burns():
+    v = detect_violations(
+        [{"label": "house", "state": "intact", "bbox": [0, 0, 9, 9]}],
+        caption="A fire near the house.",
+    )
+    assert any(x.raw_label == "fire" and x.kind == "caption_entity_missing"
+               for x in v)
+
+
+def test_free_burning_phrases_stay_strict():
+    """'brush fire' is free-burning: a burning house does NOT account for
+    it — the fire entity is still owed."""
+    v = detect_violations(
+        [{"label": "house", "state": "burning", "bbox": [0, 0, 9, 9]}],
+        caption="A brush fire burns behind a house.",
+    )
+    assert any(x.raw_label == "fire" and x.kind == "caption_entity_missing"
+               for x in v)
+
+
+def test_diffuse_media_stay_strict():
+    """smoke is always its own entity; a burning house never satisfies a
+    caption's smoke mention."""
+    v = detect_violations(
+        [{"label": "house", "state": "burning", "bbox": [0, 0, 9, 9]}],
+        caption="Smoke rises from a house on fire.",
+    )
+    kinds = {x.raw_label for x in v if x.kind == "caption_entity_missing"}
+    assert "smoke" in kinds and "fire" not in kinds
+
+
+def test_spill_stays_strict_beside_leaking_producer():
+    """Producer-and-medium rule: tanker·leaking does NOT satisfy the
+    caption's fuel/spill — the spill entity is separately owed."""
+    v = detect_violations(
+        [{"label": "tanker_truck", "state": "leaking", "bbox": [0, 0, 9, 9]}],
+        caption="A tanker truck leaks fuel.",
+    )
+    assert any(x.raw_label == "spill" and x.kind == "caption_entity_missing"
+               for x in v)
+
+
+def test_flood_satisfied_by_flooded_entity():
+    v = detect_violations(
+        [{"label": "car", "state": "flooded", "bbox": [0, 0, 9, 9]},
+         {"label": "road", "state": "flooded", "bbox": [0, 0, 9, 9]}],
+        caption="Floodwater covers the road; a flooded car sits in it.",
+    )
+    assert not any(x.raw_label == "water" for x in v)
+
+
+# ── F10 follow-up: de-priming the P3 word list (road·burning autopsy) ───
+
+
+def test_state_reminder_normal_family_leads():
+    """VLM positional bias: NORMAL must be the first group offered, and
+    the burning-first colon chain ('what you see: hazard-bearing:
+    burning') must be gone."""
+    from agentic.repair_loop import _STATE_WORD_REMINDER
+    assert _STATE_WORD_REMINDER.index("normal:") \
+        < _STATE_WORD_REMINDER.index("at-risk:") \
+        < _STATE_WORD_REMINDER.index("hazard-bearing:")
+    assert "most entities in most scenes are normal" in _STATE_WORD_REMINDER
+
+
+def test_p3_instruction_names_entity_own_condition():
+    v = detect_violations(
+        [{"label": "road", "state": "muddy", "bbox": [0, 0, 9, 9]}],
+        caption="")
+    ins = next(x.instruction for x in v if x.kind == "state_out_of_vocab")
+    assert "THIS entity's own condition" in ins
+    assert "not the scene's overall situation" in ins
+    # no colon chain: "what you see: hazard-bearing" must not appear
+    assert "what you see: hazard-bearing" not in ins
+
+
+def test_paved_is_now_a_legal_normal_state():
+    """The model's honest answer for the road no longer draws a ticket."""
+    from agentic import perception
+    assert perception.state_kind("paved") == "normal"
+    v = detect_violations(
+        [{"label": "road", "state": "paved", "bbox": [0, 0, 9, 9]}],
+        caption="A house on fire on a residential street.")
+    assert not any(x.kind == "state_out_of_vocab" for x in v)
+
+
+def test_spill_active_draws_no_p3_ticket():
+    """Label-aware synonym reaches P3: the model's honest 'active' for a
+    spill is legal; a car·'active' still tickets."""
+    v = detect_violations(
+        [{"label": "spill", "state": "active", "bbox": [0, 0, 9, 9]}],
+        caption="")
+    assert not any(x.kind == "state_out_of_vocab" for x in v)
+    v2 = detect_violations(
+        [{"label": "car", "state": "active", "bbox": [0, 0, 9, 9]}],
+        caption="")
+    assert any(x.kind == "state_out_of_vocab" for x in v2)
+
+
+# ── P1 fix + P6 duplicate check (E_collapse ui_20fb0754) ────────────────
+
+
+def test_family_name_ticket_quotes_description_and_opens_full_vocab():
+    """The police-car steering bug: the ticket must carry the model's own
+    description and permit ANY family, not just the misused one."""
+    v = detect_violations(
+        [{"label": "infrastructure", "state": "stationary",
+          "description": "police car with flashing lights",
+          "bbox": [138, 687, 591, 935]}],
+        caption="")
+    ins = next(x.instruction for x in v if x.kind == "family_name_as_label")
+    assert "police car with flashing lights" in ins
+    assert "ANY family" in ins
+    assert "road" in ins                       # members list stays, as courtesy
+
+
+def test_duplicate_humans_flagged():
+    """Sunny's exact run: person_2 ≈ police_officer_1 (IoU ~0.94)."""
+    v = detect_violations(
+        [{"label": "person", "state": "standing",
+          "description": "police officer behind caution tape",
+          "bbox": [443, 660, 558, 941]},
+         {"label": "police_officer", "state": "standing",
+          "description": "police officer behind caution tape",
+          "bbox": [438, 658, 563, 937]}],
+        caption="")
+    dup = [x for x in v if x.kind == "duplicate_entity"]
+    assert len(dup) == 1
+    assert "police officer behind caution tape" in dup[0].instruction
+    assert "IoU" in dup[0].instruction
+
+
+def test_distinct_adjacent_officers_not_flagged():
+    v = detect_violations(
+        [{"label": "police_officer", "state": "standing",
+          "bbox": [438, 658, 563, 937]},
+         {"label": "police_officer", "state": "standing",
+          "bbox": [576, 650, 699, 937]}],       # side by side, IoU ~0
+        caption="")
+    assert not any(x.kind == "duplicate_entity" for x in v)
+
+
+def test_cross_group_overlap_not_flagged():
+    """A dog overlapping a person (carried dog) is NOT a duplicate."""
+    v = detect_violations(
+        [{"label": "person", "state": "standing", "bbox": [10, 10, 100, 200]},
+         {"label": "dog", "state": "healthy", "bbox": [12, 12, 98, 198]}],
+        caption="")
+    assert not any(x.kind == "duplicate_entity" for x in v)
+
+
+def test_duplicate_check_survives_malformed_boxes():
+    v = detect_violations(
+        [{"label": "person", "state": "standing", "bbox": [7]},
+         {"label": "person", "state": "standing", "bbox": None},
+         {"label": "responder", "state": "standing"}],
+        caption="")
+    assert not any(x.kind == "duplicate_entity" for x in v)

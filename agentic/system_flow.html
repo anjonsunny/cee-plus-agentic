@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CEE+ Agentic — System Flow</title>
+<style>
+  :root{
+    --s1:#0d9488; --s1bg:#ecfdf5; --s1line:#5eead4;
+    --s2:#2563eb; --s2bg:#eff6ff; --s2line:#93c5fd;
+    --pet:#d97706; --petbg:#fffbeb; --petline:#fcd34d;
+    --flag:#dc2626; --measure:#0ea5e9; --advise:#7c3aed;
+    --dev:#64748b;
+    --ink:#0f172a; --muted:#64748b; --faint:#94a3b8;
+    --line:#e2e8f0; --card:#ffffff;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:#f1f5f9; color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.5; padding:32px 20px 80px;
+  }
+  .wrap{max-width:1120px; margin:0 auto;}
+  h1{font-size:26px; margin:0 0 4px; letter-spacing:-.01em;}
+  .sub{color:var(--muted); font-size:14px; margin:0 0 24px;}
+
+  /* legend */
+  .legend{
+    display:flex; flex-wrap:wrap; gap:10px 22px; align-items:center;
+    background:var(--card); border:1px solid var(--line); border-radius:14px;
+    padding:14px 18px; margin-bottom:14px;
+  }
+  .legend b{font-size:11px; letter-spacing:.08em; color:var(--faint); text-transform:uppercase; margin-right:4px;}
+  .lg{display:inline-flex; align-items:center; gap:7px; font-size:12.5px; font-weight:600;}
+  .sw{width:13px; height:13px; border-radius:4px; display:inline-block;}
+  .dot{width:11px;height:11px;border-radius:50%;display:inline-block;}
+
+  /* authority banner */
+  .authority{
+    background:linear-gradient(90deg,#fff, #f8fafc);
+    border:1px solid var(--line); border-left:5px solid var(--ink);
+    border-radius:12px; padding:12px 18px; margin-bottom:26px; font-size:13.5px;
+  }
+  .authority b{color:var(--ink);}
+  .tag{display:inline-block; font-size:11px; font-weight:800; letter-spacing:.05em;
+       padding:2px 8px; border-radius:6px; color:#fff; vertical-align:middle;}
+  .t-flag{background:var(--flag);} .t-measure{background:var(--measure);} .t-advise{background:var(--advise);}
+
+  /* stage container */
+  .stage{border-radius:20px; padding:20px 22px 22px; margin-bottom:14px; border:2px solid;}
+  .stage.s1{background:var(--s1bg); border-color:var(--s1line);}
+  .stage.s2{background:var(--s2bg); border-color:var(--s2line);}
+  .stage-hd{display:flex; align-items:baseline; gap:12px; margin-bottom:16px; flex-wrap:wrap;}
+  .stage-hd .n{font-size:12px; font-weight:800; letter-spacing:.09em; color:#fff; padding:4px 11px; border-radius:8px;}
+  .s1 .n{background:var(--s1);} .s2 .n{background:var(--s2);}
+  .stage-hd h2{font-size:19px; margin:0; letter-spacing:-.01em;}
+  .stage-hd .note{font-size:12.5px; color:var(--muted); font-style:italic;}
+
+  /* main spine: steps in a row */
+  .spine{display:flex; align-items:stretch; gap:0; flex-wrap:wrap;}
+  .step{
+    background:var(--card); border:1.5px solid; border-radius:13px;
+    padding:11px 14px; min-width:150px; flex:1; position:relative;
+  }
+  .s1 .step{border-color:var(--s1line);} .s2 .step{border-color:var(--s2line);}
+  .step .k{font-size:14px; font-weight:800; margin-bottom:3px;}
+  .step .d{font-size:11.5px; color:var(--muted); line-height:1.4;}
+  .arrow{display:flex; align-items:center; justify-content:center; width:30px; color:var(--faint); font-size:18px; flex:0 0 auto;}
+  .loop-badge{position:absolute; top:-9px; right:10px; background:var(--card);
+    border:1.5px solid; border-radius:20px; padding:1px 8px; font-size:10.5px; font-weight:800;}
+  .s1 .loop-badge{color:var(--s1); border-color:var(--s1line);}
+  .s2 .loop-badge{color:var(--s2); border-color:var(--s2line);}
+
+  /* detail grid under the spine */
+  .details{display:grid; gap:12px; margin-top:16px;}
+  .g2{grid-template-columns:1fr 1fr;}
+  .g3{grid-template-columns:1fr 1fr 1fr;}
+  .panel{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:13px 15px;}
+  .panel.dashed{border-style:dashed;}
+  .panel h4{margin:0 0 9px; font-size:12px; letter-spacing:.05em; text-transform:uppercase; display:flex; align-items:center; gap:8px;}
+  .panel h4 .mini{font-size:10px; font-weight:800; letter-spacing:.04em; padding:1px 7px; border-radius:5px; color:#fff;}
+
+  /* check rows */
+  .chk{display:flex; gap:9px; font-size:12px; padding:3px 0; align-items:baseline;}
+  .chk .id{font-weight:800; color:var(--flag); min-width:26px; font-variant-numeric:tabular-nums;}
+  .chk .id.g{color:var(--advise);}
+  .chk .tx{color:#334155;}
+  .chk .tx b{color:var(--ink);}
+  .pet-star{color:var(--pet); font-weight:800;}
+
+  .rowitem{font-size:12px; padding:4px 0; color:#334155;}
+  .rowitem b{color:var(--ink);}
+  .rowitem .lead{font-weight:800;}
+  .measure-lead{color:var(--measure);}
+  .advise-lead{color:var(--advise);}
+
+  /* connector between stages */
+  .flow-down{display:flex; flex-direction:column; align-items:center; margin:2px 0;}
+  .flow-down .bar{width:2px; height:16px; background:var(--faint);}
+  .flow-down .cap{color:var(--faint); font-size:18px; line-height:1; margin-top:-4px;}
+
+  /* petition */
+  .stage.pet{background:var(--petbg); border-color:var(--petline);}
+  .pet .n{background:var(--pet);}
+  .route-q{background:var(--card); border:1.5px solid var(--petline); border-radius:12px;
+    padding:12px 16px; font-size:13.5px; font-weight:700; text-align:center; margin-bottom:14px;}
+  .routes{display:grid; grid-template-columns:1fr 1fr; gap:14px;}
+  .route{background:var(--card); border:1.5px solid var(--petline); border-radius:12px; padding:14px 16px;}
+  .route .h{font-size:13px; font-weight:800; margin-bottom:8px; display:flex; align-items:center; gap:8px;}
+  .route .h .pill{font-size:10px; font-weight:800; letter-spacing:.04em; color:#fff; background:var(--pet); padding:2px 8px; border-radius:6px;}
+  .route .when{font-size:12px; color:var(--muted); margin-bottom:9px;}
+  .route ul{margin:0; padding-left:16px;}
+  .route li{font-size:12px; margin:4px 0; color:#334155;}
+  .route li b{color:var(--ink);}
+
+  /* tools + evals side panels */
+  .cols{display:grid; grid-template-columns:1.15fr .85fr; gap:14px; margin-top:14px;}
+  .toolmap{background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px 18px;}
+  .toolmap h3, .evalbox h3{margin:0 0 12px; font-size:13px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink);}
+  .tool{display:flex; gap:11px; padding:7px 0; border-top:1px solid var(--line); font-size:12.5px;}
+  .tool:first-of-type{border-top:none;}
+  .tool .nm{font-weight:800; min-width:118px; color:var(--ink);}
+  .tool .nm span{display:block; font-weight:600; font-size:10.5px; color:var(--faint);}
+  .tool .use{color:#334155;}
+  .evalbox{background:#f8fafc; border:1px dashed var(--faint); border-radius:14px; padding:16px 18px;}
+  .evalbox .cap{font-size:11px; font-weight:800; letter-spacing:.05em; color:var(--dev); background:#e2e8f0; display:inline-block; padding:2px 9px; border-radius:6px; margin-bottom:10px;}
+  .ev{font-size:12px; padding:5px 0; color:#334155; border-top:1px solid #e2e8f0;}
+  .ev:first-of-type{border-top:none;}
+  .ev b{color:var(--ink);}
+  .quad{display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:8px;}
+  .quad div{font-size:10.5px; padding:5px 7px; border-radius:7px; font-weight:700; text-align:center;}
+  .q-good{background:#dcfce7; color:#166534;} .q-bad{background:#fee2e2; color:#991b1b;}
+  .q-mid{background:#fef9c3; color:#854d0e;} .q-mid2{background:#e0e7ff; color:#3730a3;}
+
+  .foot{margin-top:20px; font-size:11.5px; color:var(--faint); text-align:center;}
+  .next{margin-top:14px; border:2px dashed var(--faint); border-radius:16px; padding:14px 18px; background:#f8fafc; color:var(--muted);}
+  .next b{color:var(--dev);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>CEE+ Agentic — how the system actually flows</h1>
+  <p class="sub">Two staged loops and a two-route petition. Read color as <b>authority</b>: every part either flags, measures, or advises — and only reflection speaks to the model.</p>
+
+  <div class="legend">
+    <span><b>Stages</b></span>
+    <span class="lg"><span class="sw" style="background:var(--s1)"></span>Stage 1 · Perception</span>
+    <span class="lg"><span class="sw" style="background:var(--s2)"></span>Stage 2 · Assessment</span>
+    <span class="lg"><span class="sw" style="background:var(--pet)"></span>Petition</span>
+    <span style="width:1px;height:20px;background:var(--line)"></span>
+    <span><b>Authority</b></span>
+    <span class="lg"><span class="dot" style="background:var(--flag)"></span>FLAG · triggers a fix</span>
+    <span class="lg"><span class="dot" style="background:var(--measure)"></span>MEASURE · informs</span>
+    <span class="lg"><span class="dot" style="background:var(--advise)"></span>ADVISE · never overwrites</span>
+    <span class="lg"><span class="dot" style="background:var(--dev)"></span>DEV-only · never touches the run</span>
+  </div>
+
+  <div class="authority">
+    <b>The one rule that makes the chart readable:</b> no component ever overwrites the answer.
+    Code checks <span class="tag t-flag">FLAG</span> problems, probes <span class="tag t-measure">MEASURE</span> stability,
+    judges <span class="tag t-advise">ADVISE</span> — but only the <b>reflection loop</b> carries any of it back to the model,
+    and only the <b>model</b> revises its own answer. The <span style="color:var(--pet);font-weight:800">petition</span> is the one exception that may re-open an earlier stage.
+  </div>
+
+  <!-- ===================== STAGE 1 ===================== -->
+  <div class="stage s1">
+    <div class="stage-hd">
+      <span class="n">STAGE 1</span>
+      <h2>Perception</h2>
+      <span class="note">the only stage that sees the image → builds the shared record</span>
+    </div>
+
+    <div class="spine">
+      <div class="step">
+        <div class="k">Perceive</div>
+        <div class="d">Qwen2.5-VL names every entity + a one-word state + a rough box.</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step">
+        <div class="loop-badge">↺ capped 2</div>
+        <div class="k">Loop 1 · Repair</div>
+        <div class="d">Code finds format breaks → re-asks the model → re-checks. The model may <b>stand its ground</b>.</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step">
+        <div class="k">Ground → Mask</div>
+        <div class="d">GroundingDINO snaps each box; SAM cuts the mask.</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step">
+        <div class="k">Assemble → Record</div>
+        <div class="d">Two code-only fixes, then freeze the shared record.</div>
+      </div>
+    </div>
+
+    <div class="details g2">
+      <div class="panel">
+        <h4><span class="mini" style="background:var(--flag)">FLAG</span> Loop-1 checks · pure code, one law taught by the rulebook</h4>
+        <div class="chk"><span class="id">P1</span><span class="tx"><b>family name as label</b> — "vehicle" is a category, not a noun. Ticket quotes the model's own description so it can pick from <b>any</b> family.</span></div>
+        <div class="chk"><span class="id">P2</span><span class="tx"><b>label out of vocabulary</b> — unknown noun → keep as "other", counted.</span></div>
+        <div class="chk"><span class="id">P3</span><span class="tx"><b>state out of vocabulary</b> — word-list shown <i>normal-first</i> to fight scene bias.</span></div>
+        <div class="chk"><span class="id">P4</span><span class="tx"><b>missing anchor box</b> — every entity needs a rough box to ground.</span></div>
+        <div class="chk"><span class="id">P5</span><span class="tx"><b>caption entity missing</b> — a noun in the caption with no entity (fluid-aware: "on fire" ✔ by a burning house).</span></div>
+        <div class="chk"><span class="id">P6</span><span class="tx"><b>duplicate being</b> — two same-kind lives at IoU ≥ 0.8 = one person twice.</span></div>
+      </div>
+      <div class="panel">
+        <h4>Assemble · deterministic derivations <span class="mini" style="background:var(--dev)">CODE</span></h4>
+        <div class="rowitem"><span class="lead">Medium-bound hazard.</span> A child <b>drowning</b> makes the <b>pool the hazard</b> — derived in code (the model would never say "engulfing"), with a provenance note.</div>
+        <div class="rowitem"><span class="lead">Duplicate merge.</span> A P6 duplicate the model refused to fix is merged here: the more specific label wins (responder&nbsp;&gt;&nbsp;person), the dropped copy is noted, never silently dropped.</div>
+        <div class="rowitem" style="color:var(--muted); margin-top:6px;"><b>Stop reasons for Loop 1:</b> clean · STOOD (model held) · cap reached.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="flow-down"><div class="bar"></div><div class="cap">▼</div></div>
+
+  <!-- ===================== STAGE 2 ===================== -->
+  <div class="stage s2">
+    <div class="stage-hd">
+      <span class="n">STAGE 2</span>
+      <h2>Assessment</h2>
+      <span class="note">text-only · never sees the image · reads the shared record</span>
+    </div>
+
+    <div class="spine">
+      <div class="step">
+        <div class="k">Verdict</div>
+        <div class="d">Temp-0 answer: disaster Yes/No · type · level 0–10 → bucket · threats · at-risk (with kind).</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step">
+        <div class="k">Check + Measure</div>
+        <div class="d">Code checks + geometry + 5 probes run over the answer.</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step">
+        <div class="loop-badge">↺ capped 2</div>
+        <div class="k">Reflection</div>
+        <div class="d">Quotes the rule + evidence back → model re-answers. Guarded against capitulation.</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step">
+        <div class="k">Final + Judges log</div>
+        <div class="d">Final verdict; judges recorded pre-vs-post.</div>
+      </div>
+    </div>
+
+    <div class="details g3">
+      <!-- checks -->
+      <div class="panel">
+        <h4><span class="mini" style="background:var(--flag)">FLAG</span> Code checks → trigger reflection</h4>
+        <div class="chk"><span class="id">S1</span><span class="tx">verdict vs its own level must agree</span></div>
+        <div class="chk"><span class="id">S2</span><span class="tx">"No" while danger states exist <span class="pet-star">★</span></span></div>
+        <div class="chk"><span class="id">S3</span><span class="tx">"Yes" with no danger anywhere <span class="pet-star">★</span></span></div>
+        <div class="chk"><span class="id">S4</span><span class="tx">cites an id not in the record</span></div>
+        <div class="chk"><span class="id">S5</span><span class="tx">threat whose state isn't hazardous <span class="pet-star">★</span></span></div>
+        <div class="chk"><span class="id">S6</span><span class="tx">a hazard left out of threats</span></div>
+        <div class="chk"><span class="id">S7</span><span class="tx">hazard listed as a victim (living beings exempt)</span></div>
+        <div class="chk"><span class="id">S8</span><span class="tx">a threat whose reason describes a <b>victim</b> <span class="pet-star">★</span></span></div>
+        <div class="chk"><span class="id g">G2</span><span class="tx">"near a hazard" but no hazard exists</span></div>
+        <div class="chk"><span class="id g">G4</span><span class="tx">at-risk kind ≠ what the state implies</span></div>
+        <div class="rowitem" style="color:var(--pet); margin-top:7px;"><b>★ petitionable</b> — if it survives reflection, it can re-open a stage.</div>
+      </div>
+
+      <!-- probes -->
+      <div class="panel">
+        <h4><span class="mini" style="background:var(--measure)">MEASURE</span> Probes → measured uncertainty</h4>
+        <div class="rowitem"><span class="lead measure-lead">5 re-asks at temp 0.7.</span> How much the model's own answer wobbles when asked again.</div>
+        <div class="rowitem"><span class="lead measure-lead">Granular.</span> A vote per field and per entity ("dust in threats 2/5"). Splits &gt; 0.2 point reflection at the exact shaky entity.</div>
+        <div class="rowitem"><span class="lead measure-lead">Weak-reason floor.</span> A reason that never names the declared state is flagged for reflection (round 1 only — no rumination).</div>
+        <div class="rowitem"><span class="lead measure-lead">Geometry.</span> Box math nominates who is near a hazard (overlap %, gap px). It <b>suggests</b>, never convicts.</div>
+        <div class="rowitem" style="color:var(--muted); margin-top:6px;">Self-reported confidence is recorded but <b>never trusted</b> (it's a flat 0.95).</div>
+      </div>
+
+      <!-- judges -->
+      <div class="panel">
+        <h4><span class="mini" style="background:var(--advise)">ADVISE</span> Judges (llama3.1 · different family)</h4>
+        <div class="rowitem"><span class="lead advise-lead">Runoff.</span> When uncertainty is high, blind-judges the model's <b>top-2 own readings</b>. Winner becomes <i>context</i> for reflection — not the answer.</div>
+        <div class="rowitem"><span class="lead advise-lead">Pairwise.</span> Blind pre-vs-post: did reflection actually help? Runs <b>only</b> when the decision truly changed (prose-only tweaks are skipped, so ties never pollute the record).</div>
+        <div class="rowitem"><span class="lead advise-lead">Rubric R1/R2.</span> On demand: does each reason cite the declared state (R1) and a specific mechanism (R2)? Scores reason quality.</div>
+        <div class="rowitem" style="color:var(--advise); margin-top:6px; font-weight:700;">All three flag &amp; measure. None may overwrite. Authority is earned per-utterance, not granted by role.</div>
+      </div>
+    </div>
+
+    <div class="details" style="margin-top:12px;">
+      <div class="panel">
+        <h4>Reflection loop · how it carries the message</h4>
+        <div class="rowitem">Triggers gather from all three columns → each is quoted back with <b>its rulebook rule + the evidence</b> (never "you were wrong", never the right answer). If the answer changes, probes re-run for a fresh uncertainty reading.</div>
+        <div class="rowitem" style="color:var(--muted)"><b>Stops:</b> clean · STOOD (model justified holding) · cap · capitulation-guard. <b>Open watch:</b> "reflection jitter" — uncertainty can rise when reflection installs a claim the model's own probes don't reproduce.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="flow-down"><div class="bar"></div><div class="cap">▼</div></div>
+
+  <!-- ===================== PETITION ===================== -->
+  <div class="stage pet">
+    <div class="stage-hd">
+      <span class="n">PETITION</span>
+      <h2>Router — re-open a stage, but only with cause</h2>
+      <span class="note">runs at most once · fires only if a ★ check survived reflection, or a caption ticket stood</span>
+    </div>
+
+    <div class="route-q">The routing question: &nbsp;<span style="color:var(--pet)">where does the evidence point — at the facts, or at the sorting?</span></div>
+
+    <div class="routes">
+      <div class="route">
+        <div class="h"><span class="pill">ROUTE A</span> the entity list may be wrong → re-look the IMAGE</div>
+        <div class="when">Chosen when the record can't support the verdict: a <b>caption noun nobody found</b> stood, or the verdict wants a danger source but the record has <b>no hazard at all</b>.</div>
+        <ul>
+          <li>Re-asks Qwen-VL to look again (non-leading: shows the previous answer + the problem, invites "unchanged if you stand by it").</li>
+          <li><b>Two-witness merge</b> — an added entity only joins if GroundingDINO also grounds it.</li>
+          <li><b>No-erasure</b> — anything the second look drops is kept and logged as a dispute.</li>
+          <li>Cascade: <b>both stages re-run</b> on the merged record.</li>
+        </ul>
+      </div>
+      <div class="route">
+        <div class="h"><span class="pill">ROUTE B</span> the facts are fine, the sorting is wrong → re-ask the QUESTION</div>
+        <div class="when">Chosen when the record already holds a <b>legal hazard</b> and the states are right, but something is in the wrong list (e.g. a trapped man placed in <i>threats</i>).</div>
+        <ul>
+          <li>One fresh re-ask of the assessment question — <b>no image</b>, no dialogue history (that channel is what caused the error).</li>
+          <li>Shows the previous answer + the problems + the rules; "return unchanged if you stand by it".</li>
+          <li>The <b>shared record is never touched</b>. One model call, then done.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== TOOLS + EVALS ===================== -->
+  <div class="cols">
+    <div class="toolmap">
+      <h3>Skills / tools — where each one plugs in</h3>
+      <div class="tool"><div class="nm">Qwen2.5-VL<span>subject VLM · Ollama</span></div><div class="use">Perceive · Loop-1 re-ask · Stage-2 verdict · reflection re-ask · the 5 probes · Route A re-look · Route B re-ask. <b>It is the witness under test.</b></div></div>
+      <div class="tool"><div class="nm">GroundingDINO<span>open-vocab detector</span></div><div class="use">Grounds every rough box; the independent second witness for Route-A additions.</div></div>
+      <div class="tool"><div class="nm">SAM<span>segment anything</span></div><div class="use">Cuts the mask per grounded box (for overlays and future inpainting).</div></div>
+      <div class="tool"><div class="nm">Rulebook<span>exact-key lookup</span></div><div class="use">One law, two engines: code detects a break — the break's <b>name is the key</b> — and the rule's text is fetched by that key and quoted into the repair / reflection prompt. No embeddings needed. <span style="color:var(--faint)">(A LlamaIndex + Chroma semantic path exists in <i>rulebook_rag.py</i> but is dormant — not wired into any run.)</span></div></div>
+      <div class="tool"><div class="nm">Qwen2.5<span>dialogue model</span></div><div class="use">Narrates the uncertainty explanation; powers "ask the analyst". Never the subject — kept separate.</div></div>
+      <div class="tool"><div class="nm">llama3.1<span>judge · different family</span></div><div class="use">Runoff · pairwise · rubric. Deliberately a different model family so it isn't judging its own habits.</div></div>
+      <div class="tool"><div class="nm">LangGraph<span>graph orchestration</span></div><div class="use">Powers the <b>"ask the analyst"</b> dialogue agent and the <i>graph.py</i> StateGraph. <span style="color:var(--faint)">The live UI run's Stage-1/2 loop control (caps, stops, cascade) is plain Python in the perception/assessment/petition modules.</span></div></div>
+    </div>
+
+    <div class="evalbox">
+      <span class="cap">DEV-ONLY · never feeds the pipeline</span>
+      <h3 style="margin-top:4px;">Evals — how we grade the whole thing</h3>
+      <div class="ev"><b>Stage-1 / Stage-2 vs GT.</b> Recall on the six calibration scenes; Stage-2 graded on the frozen perception so errors localize.</div>
+      <div class="ev"><b>Error score.</b> Weighted distance to truth (verdict 3 · type-family 1 · bucket step 1 · missed/spurious 1 · kind 0.5).</div>
+      <div class="ev"><b>Citation counts.</b> Do reasons cite the declared state? Lists the vague and the victim-shaped ones.</div>
+      <div class="ev" style="border-top:1px solid #e2e8f0; padding-top:8px;"><b>Reflection quadrant</b> — ΔerrorvsGT × Δuncertainty, the sharpest lens:</div>
+      <div class="quad">
+        <div class="q-good">REFINEMENT<br><span style="font-weight:500">truer &amp; steadier</span></div>
+        <div class="q-bad">FALSE CERTAINTY<br><span style="font-weight:500">wronger, yet surer</span></div>
+        <div class="q-mid2">noisy improvement<br><span style="font-weight:500">truer but shakier</span></div>
+        <div class="q-mid">destabilization<br><span style="font-weight:500">no truer, shakier</span></div>
+      </div>
+      <div class="ev" style="margin-top:8px; color:var(--dev);">Ground truth calibrates in dev and is <b>absent in production</b> — it may never touch a live run.</div>
+    </div>
+  </div>
+
+  <div class="next"><b>STAGE 4 · NEXT (not built)</b> — recommendations &amp; causal quads, where Arm A's frozen scoring meets Arm B. Ratified plan: states stay on nodes (the computational currency); a mechanism-on-edge is added only where natural language and the ontology diverge (e.g. the drowning / engulfing case).</div>
+
+  <p class="foot">CEE+ Agentic · Arm B · living system chart — grows with the build (iron rule 9). Snapshot: through F14, six scenes calibrated.</p>
+
+</div>
+</body>
+</html>

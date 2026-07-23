@@ -250,3 +250,197 @@ def test_duplicate_labels_distinct_ids(tmp_path, fake_models):
     assert [o.object_id for o in result.detected_objects] == ["house_1", "house_2"]
     boxes = [tuple(o.bbox) for o in result.detected_objects if o.bbox]
     assert len(set(boxes)) == len(boxes)                 # never share a box
+
+
+# ── Medium-bound hazard derivation (Sunny 2026-07-22) ───────────────────
+#
+# "No one says 'water engulfing a kid'. It's just a kid drowning in the
+# pool." The pool's hazard role is derived in code, never demanded of
+# the model.
+
+
+def _dob(oid, label, state, bbox=None, **kw):
+    return perception.DetectedObject(
+        object_id=oid, label=label, family=family_of(label), state=state,
+        state_kind=perception.state_kind(state), bbox=bbox, **kw)
+
+
+def _rec(objs):
+    return perception.PerceptionResult(
+        image_path="x.jpg", image_size=[640, 480], entity_source="standin",
+        detected_objects=objs)
+
+
+def test_drowning_derives_pool_hazard():
+    """The F7 core case: child drowning, pool declared 'normal' (qwen's
+    honest answer about English) -> code derives pool·engulfing."""
+    rec = _rec([_dob("child_1", "child", "drowning"),
+                _dob("pool_1", "pool", "normal")])
+    events = perception.derive_medium_hazards(rec)
+    pool = rec.detected_objects[1]
+    assert pool.state == "engulfing"
+    assert pool.state_kind == "hazard_bearing"
+    assert "child_1" in pool.state_note and "normal" in pool.state_note
+    assert events == [{"medium": "pool_1", "was": "normal",
+                       "now": "engulfing", "victim": "child_1",
+                       "victim_state": "drowning"}]
+    assert any("derived_hazard" in n for n in rec.notes)
+
+
+def test_derivation_is_idempotent():
+    rec = _rec([_dob("child_1", "child", "drowning"),
+                _dob("pool_1", "pool", "normal")])
+    perception.derive_medium_hazards(rec)
+    again = perception.derive_medium_hazards(rec)
+    assert again == []                     # already hazardous -> untouched
+    assert len(rec.notes) == 1
+
+
+def test_no_water_body_no_derivation():
+    """Sunny's principle preserved: distress with no visible medium is
+    legal — threats may be empty. Nothing is invented."""
+    rec = _rec([_dob("child_1", "child", "drowning")])
+    assert perception.derive_medium_hazards(rec) == []
+    assert rec.notes == []
+
+
+def test_already_hazardous_medium_untouched():
+    """water·rising (floodwater) is already hazard_bearing; the derivation
+    never rewrites a state the model got right."""
+    rec = _rec([_dob("person_1", "person", "drowning"),
+                _dob("water_1", "water", "rising")])
+    assert perception.derive_medium_hazards(rec) == []
+    assert rec.detected_objects[1].state == "rising"
+    assert rec.detected_objects[1].state_note == ""
+
+
+def test_geometry_picks_the_hosting_pool():
+    """Two pools; the victim's bbox touches only one -> only that one is
+    derived (the other stays what the model said)."""
+    rec = _rec([_dob("child_1", "child", "drowning", bbox=[100, 100, 140, 140]),
+                _dob("pool_1", "pool", "normal", bbox=[50, 50, 300, 300]),
+                _dob("pool_2", "pool", "normal", bbox=[400, 50, 600, 300])])
+    events = perception.derive_medium_hazards(rec)
+    assert [e["medium"] for e in events] == ["pool_1"]
+    assert rec.detected_objects[1].state == "engulfing"
+    assert rec.detected_objects[2].state == "normal"
+
+
+def test_no_geometry_derives_all_candidates():
+    """No bboxes at all: every candidate water body is derived — the
+    victim is in one of them."""
+    rec = _rec([_dob("child_1", "child", "drowning"),
+                _dob("pool_1", "pool", "normal"),
+                _dob("water_1", "water", "still")])
+    events = perception.derive_medium_hazards(rec)
+    assert {e["medium"] for e in events} == {"pool_1", "water_1"}
+
+
+def test_nonliving_drowning_never_triggers():
+    """A mislabeled 'car·drowning' (malformed model output) must not turn
+    the pool hazardous — only living beings drown."""
+    rec = _rec([_dob("car_1", "car", "drowning"),
+                _dob("pool_1", "pool", "normal")])
+    assert perception.derive_medium_hazards(rec) == []
+    assert rec.detected_objects[1].state == "normal"
+
+
+def test_malformed_bbox_falls_back_to_all_candidates():
+    """Garbage bboxes (1-element, None mix) never crash; geometry simply
+    fails to disambiguate and all candidates are derived."""
+    rec = _rec([_dob("child_1", "child", "drowning", bbox=[7]),
+                _dob("pool_1", "pool", "normal", bbox=None)])
+    events = perception.derive_medium_hazards(rec)
+    assert [e["medium"] for e in events] == ["pool_1"]
+
+
+# ── Label-aware state synonyms (C_tanker: spill·"active") ───────────────
+
+
+def test_resolve_state_is_label_aware():
+    assert perception.resolve_state("spill", "active") == "seeping"
+    assert perception.resolve_state("fire", "active") == "spreading"
+    assert perception.resolve_state("smoke", "active") == "billowing"
+    assert perception.resolve_state("water", "active") == "rising"
+    # non-medium labels: "active" stays itself (still out of vocab)
+    assert perception.resolve_state("car", "active") == "active"
+    # global synonyms still apply underneath
+    assert perception.resolve_state("spill", "pooling") == "seeping"
+    assert perception.resolve_state("car", "overturned") == "fallen"
+
+
+def test_spill_active_lands_hazardous_in_record(tmp_path, fake_models):
+    """The C_tanker regression: spill·'active' must enter the record as
+    seeping·hazard_bearing, closing the unknown-kind blind spot."""
+    img_path = tmp_path / "scene.jpg"
+    Image.new("RGB", (300, 200), "gray").save(img_path)
+    entities = [{"label": "spill", "state": "active", "bbox": [10, 10, 90, 90]}]
+    result = perception.run_perception(
+        img_path, entities=entities, with_masks=False, out_dir=tmp_path / "out")
+    spill = result.detected_objects[0]
+    assert spill.state == "seeping"
+    assert spill.state_kind == "hazard_bearing"
+
+
+def test_compound_spill_synonyms():
+    """D_aerial regression: 'chemical_spill' must canonicalize to spill
+    (it fell to 'other', broke DINO grounding, stood a caption ticket,
+    and triggered a petition — all from one missing synonym)."""
+    for raw in ("chemical_spill", "oil_spill", "fuel_spill", "spillage"):
+        label, note, in_vocab, fam = canonicalize_label(raw)
+        assert label == "spill" and in_vocab, raw
+    # bigram path: caption/model phrase "chemical spill"
+    assert canonicalize_label("chemical spill")[0] == "spill"
+
+
+# ── Post-loop duplicate merge (E_collapse re-run ui_bcc80931) ───────────
+
+
+def _human(oid, label, family, bbox, conf=0.9, src="dino_matched"):
+    return perception.DetectedObject(
+        object_id=oid, label=label, family=family, state="standing",
+        state_kind="normal", bbox=bbox, box_source=src,
+        box_confidence=conf)
+
+
+def test_stood_duplicates_merge_in_code():
+    """Sunny's exact run: person_2/3 ≡ police_officer_1/2 survived the
+    P6 tickets (cap ran out). Code merges; the officers win."""
+    objs = [
+        _human("person_1", "person", "person", [1092, 97, 1160, 180]),
+        _human("person_2", "person", "person", [443, 660, 558, 941]),
+        _human("person_3", "person", "person", [583, 653, 696, 941]),
+        _human("police_officer_1", "police_officer", "responder",
+               [439, 659, 562, 939]),
+        _human("police_officer_2", "police_officer", "responder",
+               [576, 651, 699, 938]),
+    ]
+    kept, notes, events = perception.merge_duplicate_lifeforms(objs)
+    ids = [o.object_id for o in kept]
+    assert ids == ["person_1", "police_officer_1", "police_officer_2"]
+    assert len(events) == 2
+    assert {e["dropped"] for e in events} == {"person_2", "person_3"}
+    assert all("nothing about the scene was lost" in n for n in notes)
+
+
+def test_distinct_people_never_merge():
+    objs = [_human("police_officer_1", "police_officer", "responder",
+                   [439, 659, 562, 939]),
+            _human("police_officer_2", "police_officer", "responder",
+                   [576, 651, 699, 938])]        # side by side, IoU ~0.1
+    kept, notes, events = perception.merge_duplicate_lifeforms(objs)
+    assert len(kept) == 2 and not events
+
+
+def test_person_dog_overlap_never_merges():
+    objs = [_human("person_1", "person", "person", [10, 10, 100, 200]),
+            _human("dog_1", "dog", "animal", [12, 12, 98, 198])]
+    kept, _, events = perception.merge_duplicate_lifeforms(objs)
+    assert len(kept) == 2 and not events
+
+
+def test_merge_survives_malformed_boxes():
+    objs = [_human("person_1", "person", "person", None),
+            _human("person_2", "person", "person", [7])]
+    kept, _, events = perception.merge_duplicate_lifeforms(objs)
+    assert len(kept) == 2 and not events

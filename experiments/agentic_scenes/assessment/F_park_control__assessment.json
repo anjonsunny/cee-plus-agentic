@@ -1,0 +1,62 @@
+{
+  "assessment": {
+    "disaster_scenario": "No",
+    "disaster_type": "N/A",
+    "disaster_level": 0,
+    "severity_bucket": "none",
+    "threats": [],
+    "at_risk": [],
+    "reasoning": "The scene depicts a park with families relaxing on a sunny afternoon. The entities present include people resting or standing in various states of activity, and a dog running. There is no indication of any active hazards or distress among the entities. All entities appear to be in normal states without any signs of harm or danger.",
+    "self_confidence": 1.0
+  },
+  "parse_notes": [],
+  "violations": [],
+  "raw_answer": {
+    "reasoning": "The scene depicts a park with families relaxing on a sunny afternoon. The entities present include people resting or standing in various states of activity, and a dog running. There is no indication of any active hazards or distress among the entities. All entities appear to be in normal states without any signs of harm or danger.",
+    "disaster_scenario": "No",
+    "disaster_type": "N/A",
+    "disaster_level": 0,
+    "threats": [],
+    "at_risk": [],
+    "confidence": 1
+  },
+  "measured_uncertainty": {
+    "n_probes": 5,
+    "scenario_agreement": 1.0,
+    "type_agreement": 1.0,
+    "bucket_agreement": 1.0,
+    "level": {
+      "min": 0.0,
+      "max": 0.0,
+      "std": 0.0
+    },
+    "score": 0.0,
+    "drivers": [],
+    "explanation": "probes unanimous across all 5 re-asks; no measured instability",
+    "explainer": "deterministic",
+    "granular": {
+      "fields": {
+        "disaster_scenario": {
+          "u": 0.0,
+          "evidence": "No×5"
+        },
+        "disaster_type": {
+          "u": 0.0,
+          "evidence": "none×5"
+        },
+        "disaster_level": {
+          "u": 0.0,
+          "evidence": "levels 0×5 -> buckets none×5"
+        }
+      },
+      "threats": {},
+      "at_risk": {}
+    }
+  },
+  "reflection_trace": {
+    "rounds": [],
+    "stopped_reason": "clean",
+    "u_before": 0.0,
+    "u_after": null
+  }
+}

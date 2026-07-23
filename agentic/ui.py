@@ -69,7 +69,12 @@ for _mod in ("pandas", "numpy", "PIL.Image"):
 
 SCENES_DIR = REPO_ROOT / "experiments" / "agentic_scenes"
 PERCEPTION_DIR = SCENES_DIR / "perception"
+ASSESSMENT_DIR = SCENES_DIR / "assessment"
 STAGES = ["Perceive", "Repair", "Ground", "Bind", "Mask", "Assemble"]
+
+# Severity buckets tint the verdict ribbon and the PHASE 1 card accents.
+BUCKET_CSS = {"none": "#16a34a", "minor": "#eab308",
+              "serious": "#f97316", "catastrophic": "#ef4444"}
 
 STATE_KIND_CSS = {
     "hazard_bearing": "#ef4444",
@@ -130,6 +135,20 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
         # True between repair_round_started and its round_done: the open
         # violations are literally being fixed right now.
         "round_in_progress": False,
+        # ── Stage 2 (PHASE 1 · ASSESS) ──────────────────────────────────
+        # status pending|active|done; verdict = the SceneAssessment dict;
+        # uncertainty = the assess_uncertainty event payload (channel 2);
+        # probes/notes/violations accumulate for the activity feed.
+        "assess": {"status": "pending", "verdict": None, "uncertainty": None,
+                   "context": {}, "probes": [], "notes": [],
+                   "violations": [], "activities": [],
+                   # Stage-1-style lifecycle tickets for assessment
+                   # violations: kind|evidence -> {kind, evidence, status:
+                   # open|fixing|fixed|stood}
+                   "tickets": {},
+                   # every assess_verdict event, in order: [0] = canonical
+                   # (pre-reflection), [-1] = final. The ledger diffs them.
+                   "verdict_history": []},
     }
     for ev in events:
         t = ev.get("type")
@@ -181,6 +200,283 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
             d["result"] = ev.get("result")
         elif t == "run_error":
             d["error"] = ev.get("message", "unknown error")
+
+        # ── Stage 2 events (stage name "assess" is not in the Phase 0
+        # STAGES list, so the generic stage handlers above ignore it). ──
+        A = d["assess"]
+        if t == "stage_started" and ev.get("stage") == "assess":
+            A["status"] = "active"
+            A["activities"].append("judging the scene from declared state "
+                                   "(text-only, no image)...")
+            d["activity"] = {"text": "assessing the scene from state...",
+                             "oid": None, "busy": True}
+        elif t == "duplicate_merged":
+            line = (f"same individual counted twice: {ev.get('dropped')} "
+                    f"merged into {ev.get('kept')} (IoU {ev.get('iou')})")
+            d["stage_activities"]["Assemble"].append(line)
+            d["activity"] = {"text": line, "oid": ev.get("kept"),
+                             "busy": True}
+            # The dropped copy leaves the PICTURE too (Sunny: person_2/3
+            # boxes stayed on the image after the merge — the scene draws
+            # from the bind-step accumulators, which predate the merge).
+            dropped = ev.get("dropped")
+            d["bound"].pop(dropped, None)
+            d["anchors"] = [a for a in d["anchors"]
+                            if a.get("object_id") != dropped]
+        elif t == "hazard_derived":
+            line = (f"{ev.get('medium')} '{ev.get('was')}' → "
+                    f"'{ev.get('now')}' — {ev.get('victim')} is "
+                    f"{ev.get('victim_state')} (medium-bound rule, "
+                    f"derived in code)")
+            A.setdefault("derived_hazards", []).append(line)
+            A["activities"].append(f"⚑ derived hazard: {line}")
+        elif t == "assess_context":
+            A["context"] = {"n_entities": ev.get("n_entities"),
+                            "hazard_ids": ev.get("hazard_ids", []),
+                            "at_risk_ids": ev.get("at_risk_ids", []),
+                            "n_spatial_hints": ev.get("n_spatial_hints"),
+                            "spatial_pairs": ev.get("spatial_pairs", [])}
+            hz = ", ".join(ev.get("hazard_ids", []) or []) or "none"
+            ar = ", ".join(ev.get("at_risk_ids", []) or []) or "none"
+            A["activities"].append(f"evidence in: hazards [{hz}] · "
+                                   f"at-risk [{ar}]")
+        elif t == "assess_parse_note":
+            A["notes"].append(ev.get("note", ""))
+            A["activities"].append(f"coerced: {ev.get('note', '')}")
+        elif t == "assess_violation":
+            A["violations"].append({"kind": ev.get("kind"),
+                                    "evidence": ev.get("evidence", "")})
+            key = f"{ev.get('kind')}|{ev.get('evidence', '')[:60]}"
+            A["tickets"].setdefault(key, {"kind": ev.get("kind"),
+                                          "evidence": ev.get("evidence", ""),
+                                          "status": "open"})
+            A["activities"].append(f"found: {str(ev.get('kind', '')).replace('_', ' ')}")
+            d["activity"] = {"text": f"verdict violation: "
+                                     f"{str(ev.get('kind', '')).replace('_', ' ')}",
+                             "oid": None, "busy": True}
+        elif t == "assess_verdict":
+            A["verdict"] = {k: ev.get(k) for k in
+                            ("scenario", "disaster_type", "level", "bucket",
+                             "self_confidence", "n_violations",
+                             "threats", "at_risk")}
+            A["verdict_history"].append(dict(A["verdict"]))
+            A["activities"].append(
+                f"verdict: {ev.get('scenario')} · {ev.get('disaster_type')} "
+                f"· level {ev.get('level')} ({ev.get('bucket')})")
+            d["activity"] = {"text": f"verdict: {ev.get('scenario')} · "
+                                     f"{ev.get('disaster_type')} · "
+                                     f"level {ev.get('level')}",
+                             "oid": None, "busy": False}
+        elif t == "assess_probe":
+            A["probes"].append({k: ev.get(k) for k in
+                                ("index", "scenario", "level", "bucket",
+                                 "threat_ids", "at_risk_ids")})
+            A["activities"].append(f"probe {int(ev.get('index', 0)) + 1}: "
+                                   f"{ev.get('scenario')} · level "
+                                   f"{ev.get('level')} ({ev.get('bucket')})")
+            d["activity"] = {"text": f"probing verdict stability "
+                                     f"({int(ev.get('index', 0)) + 1})...",
+                             "oid": None, "busy": True}
+        elif t == "petition_started" and ev.get("target") == "stage2":
+            import copy as _copy
+            # Stage-2 petition: the image and the record are untouched,
+            # so the perception panels stay live. Freeze only the
+            # assessment as epoch 0 and let the fresh answer build below.
+            d["epoch0"] = {"assess": _copy.deepcopy(d["assess"])}
+            A = d["assess"] = {"status": "active", "verdict": None,
+                               "uncertainty": None, "context": {},
+                               "probes": [], "notes": [],
+                               "violations": [], "activities": [],
+                               "tickets": {}, "verdict_history": []}
+            A["petition"] = {"status": "in_flight", "target": "stage2",
+                             "reasons": ev.get("reasons", []),
+                             "added": [], "removed": [], "outcome": None}
+            why = ", ".join(str(r.get("kind", "?")).replace("_", " ")
+                            for r in ev.get("reasons", []))
+            A["activities"].append(f"PETITION within Stage 2: asking the "
+                                   f"question again, fresh — unresolved: "
+                                   f"{why}")
+            d["activity"] = {"text": "re-asking the assessment question "
+                                     "(fresh, one try)...",
+                             "oid": None, "busy": True}
+        elif t == "petition_started":
+            import copy as _copy
+            # Freeze the ENTIRE first pass as epoch 0 — both stages —
+            # then reset the live accumulators so the re-run builds its
+            # own panels underneath. Nothing is overwritten: the before/
+            # after comparison is the petition's whole evidentiary value.
+            d["epoch0"] = _copy.deepcopy({
+                "stages": d["stages"], "violations": d["violations"],
+                "rounds_used": d["rounds_used"],
+                "stop_reason": d["stop_reason"],
+                "perceive_entities": d["perceive_entities"],
+                "stage_activities": d["stage_activities"],
+                "anchors": d["anchors"], "bound": d["bound"],
+                "result": d["result"],
+                "repair_entities_latest": d["repair_entities_latest"],
+                "round_in_progress": False,
+                "activity": {"text": "", "oid": None, "busy": False},
+                "assess": d["assess"],
+            })
+            d["stages"] = {st: {"status": "pending", "seconds": None,
+                                "info": ""} for st in STAGES}
+            d["violations"] = {}
+            d["rounds_used"] = 0
+            d["stop_reason"] = None
+            d["perceive_entities"] = []
+            d["stage_activities"] = {st: [] for st in STAGES}
+            d["anchors"] = []
+            d["bound"] = {}
+            d["result"] = None
+            d["repair_entities_latest"] = []
+            A = d["assess"] = {"status": "pending", "verdict": None,
+                               "uncertainty": None, "context": {},
+                               "probes": [], "notes": [],
+                               "violations": [], "activities": [],
+                               "tickets": {}, "verdict_history": []}
+            A["petition"] = {"status": "in_flight", "target": "stage1",
+                             "reasons": ev.get("reasons", []),
+                             "added": [], "removed": [], "outcome": None}
+            why = ", ".join(str(r.get("kind", "?")).replace("_", " ")
+                            for r in ev.get("reasons", []))
+            A["activities"].append(f"PETITION to Stage 1: re-perceiving — "
+                                   f"unresolved: {why}")
+            d["activity"] = {"text": f"STAGE 2 petitions STAGE 1: "
+                                     f"re-perceiving ({why})",
+                             "oid": None, "busy": True}
+        elif t == "petition_done":
+            P = A.get("petition") or {}
+            P.update(status="merged", added=ev.get("added", []),
+                     removed=ev.get("removed", []),
+                     disputed=ev.get("disputed", []),
+                     note=ev.get("note"))
+            A["petition"] = P
+            A["activities"].append(
+                f"petition merged: +{ev.get('added')} "
+                f"-{ev.get('removed')} "
+                f"({ev.get('n_petitioned', 0)} petitioned entit(ies))")
+        elif t == "petition_failed":
+            A["petition"] = {**(A.get("petition") or {}),
+                             "status": "failed",
+                             "error": ev.get("error", "")}
+            A["activities"].append(f"petition FAILED: {ev.get('error', '')[:60]}"
+                                   f" — proceeding on the original record")
+        elif t == "petition_outcome":
+            P = A.get("petition") or {}
+            P["outcome"] = {"resolved": ev.get("resolved"),
+                            "before": ev.get("violations_before", []),
+                            "after": ev.get("violations_after", [])}
+            A["petition"] = P
+            how = ("the fresh re-ask" if P.get("target") == "stage2"
+                   else "re-perception")
+            verdict = (f"pressure RESOLVED by {how}"
+                       if ev.get("resolved")
+                       else f"pressure remains after {how}")
+            A["activities"].append(f"petition outcome: {verdict}")
+            d["activity"] = {"text": f"petition: {verdict}",
+                             "oid": None, "busy": False}
+        elif t == "assess_runoff":
+            A["runoff"] = {k: ev.get(k) for k in
+                           ("winner", "raw", "top1_votes", "top2_votes",
+                            "top1_line", "top2_line")}
+            A["activities"].append(
+                f"runoff: judge preferred the {ev.get('winner')} reading "
+                f"({ev.get('top1_votes')} vs {ev.get('top2_votes')})")
+        elif t == "assess_runoff_error":
+            A["activities"].append(f"runoff judge unavailable: "
+                                   f"{ev.get('error', '')[:60]}")
+        elif t == "assess_probe_error":
+            A["activities"].append(f"probe {int(ev.get('index', 0)) + 1} "
+                                   f"failed: {ev.get('error', '')}")
+        elif t == "assess_uncertainty":
+            d["activity"] = {"text": f"stability measured: U = "
+                                     f"{ev.get('score')}",
+                             "oid": None, "busy": False}
+            A["uncertainty"] = {k: ev.get(k) for k in
+                                ("score", "n_probes", "scenario_agreement",
+                                 "type_agreement", "bucket_agreement",
+                                 "granular", "drivers", "explanation",
+                                 "explainer")}
+            A["activities"].append(f"measured U={ev.get('score')} "
+                                   f"(drivers: "
+                                   f"{', '.join(ev.get('drivers', [])) or 'none'})")
+        elif t == "reflect_round_started":
+            A.setdefault("reflection", {"rounds": [], "stopped": None,
+                                        "u_before": None, "u_after": None})
+            trigs = ev.get("triggers", [])
+
+            def _tglabel(tg):
+                if tg.get("type") == "violation":
+                    return str(tg.get("kind", "?"))
+                if tg.get("type") == "membership_split":
+                    return f"{tg.get('object_id')} {tg.get('votes')}"
+                if tg.get("type") == "field_instability":
+                    return str(tg.get("driver", "?"))
+                if tg.get("type") == "candidate_runoff":
+                    return f"runoff advice ({tg.get('winner')})"
+                return str(tg.get("type", "?"))
+            summary = ", ".join(_tglabel(tg) for tg in trigs)
+            A["reflection"]["rounds"].append(
+                {"round": ev.get("round"), "triggers": trigs,
+                 "summary": summary, "changed": None,
+                 "instruction": ev.get("instruction", "")})
+            for tk in A["tickets"].values():
+                if tk["status"] == "open":
+                    tk["status"] = "fixing"
+            A["activities"].append(f"reflection round {ev.get('round')}: "
+                                   f"{ev.get('n_triggers')} problem(s) — "
+                                   f"{summary}")
+            d["activity"] = {"text": f"reflecting: {summary}",
+                             "oid": None, "busy": True}
+        elif t == "reflect_round_done":
+            R = A.get("reflection") or {}
+            if R.get("rounds"):
+                R["rounds"][-1]["changed"] = ev.get("changed")
+                R["rounds"][-1]["violations_after"] = ev.get("violations_after")
+            remaining = set(ev.get("violations_after_kinds") or [])
+            for tk in A["tickets"].values():
+                if tk["status"] in ("open", "fixing"):
+                    tk["status"] = "open" if tk["kind"] in remaining else "fixed"
+            verdict = ("model revised its answer" if ev.get("changed")
+                       else "model stood its ground")
+            A["activities"].append(f"reflection round {ev.get('round')}: "
+                                   f"{verdict}, "
+                                   f"{ev.get('violations_after', 0)} "
+                                   f"problem(s) remain")
+        elif t == "reflect_error":
+            A["activities"].append(f"reflection failed: {ev.get('error')}")
+        elif t == "reflect_stopped":
+            A.setdefault("reflection", {"rounds": [], "stopped": None,
+                                        "u_before": None, "u_after": None})
+            A["reflection"].update(stopped=ev.get("reason"),
+                                   u_before=ev.get("u_before"),
+                                   u_after=ev.get("u_after"))
+            for tk in A["tickets"].values():
+                if tk["status"] in ("open", "fixing"):
+                    tk["status"] = ("fixed" if ev.get("reason") == "clean"
+                                    else "stood")
+            stamp = {"clean": "all problems resolved",
+                     "no_change": "model stood its ground",
+                     "cap_reached": "round cap reached",
+                     "model_error": "model unavailable"}.get(
+                ev.get("reason"), ev.get("reason", ""))
+            d["activity"] = {"text": f"reflection: {stamp}", "oid": None,
+                             "busy": False}
+            if ev.get("rounds"):
+                A["activities"].append(f"reflection stopped: {stamp}")
+            if ev.get("u_after") is not None:
+                A["activities"].append(
+                    f"uncertainty U {ev.get('u_before')} -> "
+                    f"{ev.get('u_after')} after reflection")
+        elif t == "stage_done" and ev.get("stage") == "assess":
+            A["status"] = "done"
+            v = A.get("verdict") or {}
+            if v:
+                d["activity"] = {"text": f"assessment done: "
+                                         f"{v.get('scenario')} · "
+                                         f"{v.get('disaster_type')} · "
+                                         f"level {v.get('level')}",
+                                 "oid": None, "busy": False}
 
         # Per-station narration lines.
         def act(stage: str, text: str) -> None:
@@ -234,7 +530,9 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
                         f"(conf {ev.get('confidence', 0):.2f})")
 
         # Activity ribbon: a one-liner for the scene, updated per event.
-        if t == "stage_started":
+        # (assess events set their own ribbon text in the block above; the
+        # generic handler must not blank it.)
+        if t == "stage_started" and ev.get("stage") != "assess":
             text = {"Perceive": "model reading the scene...",
                     "Repair": "rulebook checking the answer...",
                     "Ground": "detector searching for the named entities...",
@@ -397,9 +695,74 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
 
     def worker() -> None:
         try:
+            from agentic.assessment import (DEFAULT_N_PROBES, run_assessment)
             from agentic.perception import run_perception
-            run_perception(image_path, caption=caption, out_dir=run_dir,
-                           on_event=sink)
+            from agentic.uncertainty import _ollama_explain
+            record = run_perception(image_path, caption=caption,
+                                    out_dir=run_dir, on_event=sink)
+            # Stage 2, full story: assess -> reflection -> (petition ->
+            # cascade re-assessment) — the one ledgered image look-back.
+            try:
+                from agentic.evals import _ollama_judge as _judge
+            except Exception:
+                _judge = None
+            from agentic.petition import assess_with_petition
+            record, result, petitioned = assess_with_petition(
+                str(image_path), record, on_event=sink,
+                n_probes=DEFAULT_N_PROBES,
+                explain_fn=_ollama_explain,
+                runoff_judge_fn=_judge)
+            if petitioned:
+                (run_dir / "perception_petitioned.json").write_text(
+                    record.model_dump_json(indent=2))
+            (run_dir / "assessment.json").write_text(result.model_dump_json(indent=2))
+            # PAIRWISE JUDGE policy: auto-run exactly when reflection
+            # CHANGED the answer — that is the only moment a pre-vs-post
+            # comparison exists. Unchanged run -> nothing to judge; high
+            # U alone is the probe meter's business, not the pairwise
+            # judge's. Best-effort: a missing judge model never breaks
+            # the run (the card just says "not yet run").
+            tr = result.reflection_trace or {}
+            if any(r.get("changed") for r in tr.get("rounds", [])):
+                RUNS[run_id]["judge"] = {"status": "running"}
+                try:
+                    from agentic.assessment import parse_assessment
+                    from agentic.evals import judge_pairwise, substantive_key
+                    pre, _n = parse_assessment(result.raw_answer)
+
+                    def _vline(v):
+                        th = ",".join(t.object_id for t in v.threats) or "-"
+                        return (f"{v.disaster_scenario}·"
+                                f"L{v.disaster_level} threats[{th}]")
+                    pre_d = pre.model_dump()
+                    post_d = result.assessment.model_dump()
+                    # SUBSTANTIVE-CHANGE GATE (C_tanker ui_529ce417):
+                    # prose-only reflection changes give the judge an
+                    # undefined question — a forced choice between
+                    # identical decisions is noise wearing an F4
+                    # costume. Skip, and say so on the card.
+                    if substantive_key(pre_d) == substantive_key(post_d):
+                        sink({"type": "pairwise_skipped",
+                              "reason": "no substantive change "
+                                        "(narration only)"})
+                        RUNS[run_id]["judge"] = {
+                            "winner": "skipped",
+                            "raw": "reflection changed narration only — "
+                                   "decision layer identical, nothing "
+                                   "to adjudicate",
+                            "pre_line": _vline(pre),
+                            "post_line": _vline(result.assessment)}
+                    else:
+                        j = judge_pairwise(
+                            pre_d, post_d,
+                            record.model_dump(),
+                            RUNS[run_id]["record_name"])
+                        j["pre_line"] = _vline(pre)
+                        j["post_line"] = _vline(result.assessment)
+                        RUNS[run_id]["judge"] = j
+                except Exception as exc:
+                    RUNS[run_id]["judge"] = {"winner": "error",
+                                             "raw": str(exc)[:120]}
         except Exception as exc:  # surfaced as a card, never a dead screen
             sink({"type": "run_error", "message": str(exc)})
             RUNS[run_id]["error"] = str(exc)
@@ -431,13 +794,92 @@ def start_replay(json_path: str) -> str:
                         "record_name": path.parent.name}
         return run_id
     record = json.loads(path.read_text())
+    name = path.name.replace("__perception.json", "")
+    events = build_replay_events(record)
+    events += build_assess_replay_events(name, record)
     RUNS[run_id] = {
-        "events": build_replay_events(record),
+        "events": events,
         "image_src": image_src_for_record(path),
         "done": True, "error": None,
-        "record_name": path.name.replace("__perception.json", ""),
+        "record_name": name,
     }
     return run_id
+
+
+def build_assess_replay_events(name: str,
+                               record: dict[str, Any]) -> list[dict[str, Any]]:
+    """Synthesize Stage 2 events from a frozen assessment record (written
+    by `python -m agentic.assessment`), so replaying a frozen scene shows
+    PHASE 1 exactly as a live run would. Probe-by-probe order is not
+    stored; the verdict, violations, and measured uncertainty are."""
+    path = ASSESSMENT_DIR / f"{name}__assessment.json"
+    if not path.exists():
+        return []
+    try:
+        rec = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return []
+    a = rec.get("assessment", {})
+    mu = rec.get("measured_uncertainty")
+    objs = record.get("detected_objects", [])
+    from agentic.geometry import spatial_hints as _sh2
+    ev: list[dict[str, Any]] = [
+        {"type": "stage_started", "stage": "assess"},
+        {"type": "assess_context", "n_entities": len(objs),
+         "hazard_ids": [o.get("object_id") for o in objs
+                        if o.get("state_kind") == "hazard_bearing"],
+         "at_risk_ids": [o.get("object_id") for o in objs
+                         if o.get("state_kind") == "at_risk"],
+         "n_spatial_hints": len(_sh2(objs, record.get("image_size"))),
+         "spatial_pairs": [f"{h['other']} ↔ {h['hazard']} "
+                           f"({h['relation']}, {h['gap_px']:.0f}px)"
+                           for h in _sh2(objs, record.get("image_size"))]},
+    ]
+    for note in rec.get("parse_notes", []):
+        ev.append({"type": "assess_parse_note", "note": note})
+    for v in rec.get("violations", []):
+        ev.append({"type": "assess_violation", **v})
+    ev.append({"type": "assess_verdict",
+               "scenario": a.get("disaster_scenario"),
+               "disaster_type": a.get("disaster_type"),
+               "level": a.get("disaster_level"),
+               "bucket": a.get("severity_bucket"),
+               "self_confidence": a.get("self_confidence"),
+               "threats": a.get("threats", []),
+               "at_risk": a.get("at_risk", []),
+               "n_violations": len(rec.get("violations", []))})
+    if mu:
+        ev.append({"type": "assess_uncertainty",
+                   "score": mu.get("score"), "n_probes": mu.get("n_probes"),
+                   "granular": mu.get("granular") or {},
+                   "scenario_agreement": mu.get("scenario_agreement"),
+                   "type_agreement": mu.get("type_agreement"),
+                   "bucket_agreement": mu.get("bucket_agreement"),
+                   "drivers": [d.get("kind") for d in mu.get("drivers", [])],
+                   "explanation": mu.get("explanation", ""),
+                   "explainer": mu.get("explainer", "")})
+    trace = rec.get("reflection_trace") or {}
+    for r in trace.get("rounds", []):
+        trigs = r.get("triggers", [])
+        ev.append({"type": "reflect_round_started",
+                   "round": r.get("round_number"),
+                   "triggers": trigs,
+                   "instruction": r.get("instruction", ""),
+                   "n_triggers": len(trigs)})
+        ev.append({"type": "reflect_round_done",
+                   "round": r.get("round_number"),
+                   "changed": r.get("changed"),
+                   "violations_after": len(r.get("violations_after", [])),
+                   "violations_after_kinds": [v.get("kind") for v in
+                                              r.get("violations_after", [])]})
+    if trace:
+        ev.append({"type": "reflect_stopped",
+                   "reason": trace.get("stopped_reason"),
+                   "rounds": len(trace.get("rounds", [])),
+                   "u_before": trace.get("u_before"),
+                   "u_after": trace.get("u_after")})
+    ev.append({"type": "stage_done", "stage": "assess"})
+    return ev
 
 
 # ── Components (each a pure function of the derived state) ──────────────
@@ -552,7 +994,735 @@ def rail_component(d: dict[str, Any]) -> html.Div:
         # user's toggles from being reset by the refresh interval.)
         items.append(html.Details(body, className=cls,
                                   open=(st["status"] != "pending")))
+
+    # FINAL PERCEPTION list (Sunny 2026-07-22: "the right side panel
+    # needs to show what entities and their states after the final
+    # perception step — currently we only show on image"). Every entity
+    # the record ends with, plain: id · state, colored by kind.
+    res = d.get("result")
+    if res and res.get("detected_objects"):
+        rows: list[Any] = [html.Div(
+            "FINAL PERCEPTION — what the scene contains",
+            className="unc-tag", style={"marginTop": "8px"})]
+        for o in res["detected_objects"]:
+            color = STATE_KIND_CSS.get(o.get("state_kind"), "#94a3b8")
+            extra = ""
+            if o.get("state_note"):
+                extra = " (state derived in code)"
+            elif o.get("provenance") == "petition":
+                extra = " (added by petition)"
+            rows.append(html.Div([
+                html.Span("●", style={"color": color,
+                                      "marginRight": "6px"}),
+                html.Span(o.get("object_id", "?"),
+                          style={"fontWeight": "700"}),
+                html.Span(f" · {o.get('state')}{extra}",
+                          style={"color": "#475569",
+                                 "fontSize": "12px"}),
+            ], style={"padding": "1px 0"}))
+        for n in res.get("notes") or []:
+            if n.startswith("duplicate merged"):
+                rows.append(html.Div(f"⚭ {n}",
+                                     style={"fontSize": "11px",
+                                            "color": "#b45309"}))
+        items.append(html.Div(rows, className="unc-panel",
+                              style={"borderColor": "#16a34a"}))
     return html.Div(items, className="rail")
+
+
+def _verdict_to_assessment(v: dict[str, Any]) -> dict[str, Any]:
+    """Map an assess_verdict event payload to eval_stage2's input shape."""
+    return {"disaster_scenario": v.get("scenario"),
+            "disaster_type": v.get("disaster_type"),
+            "severity_bucket": v.get("bucket"),
+            "threats": v.get("threats") or [],
+            "at_risk": v.get("at_risk") or []}
+
+
+def gt_eval_overlay(d: dict[str, Any],
+                    record_name: str | None) -> dict[str, Any] | None:
+    """DEV-ONLY overlay: GT-based scoring for calibration scenes. Returns
+    None when no GT exists for this scene — which is every production
+    scene; the overlay is a lab instrument, never a shipped feature."""
+    try:
+        from agentic.evals import eval_stage1, eval_stage2, load_gt, quadrant
+        gt = load_gt()
+    except Exception:
+        return None
+    matched_by = None
+    if record_name in gt:
+        matched_by = "scene"
+    else:
+        stem = Path(str(d.get("image_name") or "")).stem
+        if stem in gt:
+            record_name, matched_by = stem, "image_name"
+    if matched_by is None:
+        return None
+    hist = d["assess"].get("verdict_history") or []
+    if not hist:
+        return None
+    pre = eval_stage2(_verdict_to_assessment(hist[0]), gt[record_name]["stage2"])
+    post = eval_stage2(_verdict_to_assessment(hist[-1]), gt[record_name]["stage2"])
+    s1 = (eval_stage1(d["result"], gt[record_name]["stage1"])
+          if d.get("result") else None)
+    R = d["assess"].get("reflection") or {}
+    return {"pre": pre, "post": post, "stage1": s1,
+            "matched_by": matched_by,
+            "quadrant": quadrant(pre["error_score"], post["error_score"],
+                                 R.get("u_before"), R.get("u_after"))}
+
+
+def assess_component(d: dict[str, Any], unc_view: str = "both",
+                     record_name: str | None = None,
+                     judge_result: dict[str, Any] | None = None) -> list[Any]:
+    """PHASE 1 · ASSESS body: verdict banner, the two uncertainty channels
+    (view chosen by the toggle: model's self-report vs measured vs both,
+    side-by-side being the calibration view), causal drivers, and the
+    stage's activity timeline — same grammar as the Phase 0 stations."""
+    A = d["assess"]
+    if A["status"] == "pending" and not A.get("petition"):
+        return [html.Div("waiting for perception to finish...",
+                         className="ticket-empty")]
+    out: list[Any] = []
+
+    # Medium-bound derivations: code overrode a state the model gave,
+    # with the victim that caused it. Shown first — it changes the
+    # evidence the whole assessment reads.
+    for line in A.get("derived_hazards") or []:
+        out.append(html.Div(
+            f"⚑ DERIVED HAZARD — {line}",
+            style={"background": "#fef2f2", "border": "1px solid #ef4444",
+                   "borderRadius": "8px", "padding": "5px 10px",
+                   "margin": "2px 0 6px", "fontSize": "12px",
+                   "color": "#b91c1c", "fontWeight": "600"}))
+
+    v = A.get("verdict")
+    if v:
+        color = BUCKET_CSS.get(v.get("bucket"), "#64748b")
+        text = (f"{'DISASTER' if v.get('scenario') == 'Yes' else 'NO DISASTER'}"
+                f" · {v.get('disaster_type')} · level {v.get('level')} · "
+                f"{str(v.get('bucket', '')).upper()}")
+        out.append(html.Div(text, className="verdict-banner",
+                            style={"background": f"{color}18",
+                                   "border": f"1px solid {color}",
+                                   "color": color, "fontWeight": "700",
+                                   "borderRadius": "10px",
+                                   "padding": "8px 14px",
+                                   "margin": "4px 0 8px"}))
+
+    # Threats and at-risk lists (merged stage), each entity wearing its
+    # granular membership-U so the SOURCE of instability is pinpointable.
+    mu = A.get("uncertainty")
+    gran = (mu or {}).get("granular") or {}
+
+    def entity_rows(entries, table, color, kind_label):
+        erows = []
+        for e in entries or []:
+            oid = e.get("object_id", "?")
+            g = (table or {}).get(oid, {})
+            u = g.get("u")
+            if u is None and mu is not None and mu.get("n_probes"):
+                # In the final answer but in ZERO probe lists: maximal
+                # membership instability, not "no data" (house_1 case).
+                u = 1.0
+                g = {"votes": f"0/{mu.get('n_probes')}"}
+            badge = None
+            if u is not None:
+                badge = html.Span(
+                    f"U {u} ({g.get('votes', '')})",
+                    style={"marginLeft": "auto", "fontSize": "11px",
+                           "fontWeight": "700",
+                           "color": "#b45309" if u > 0.2 else "#16a34a"})
+            kind = e.get("kind")
+            desc = (f" · {kind}" if kind else "") + \
+                   (f" — {e.get('reason')}" if e.get("reason") else "")
+            erows.append(html.Div(
+                [html.Span("●", style={"color": color, "marginRight": "6px"}),
+                 html.Span(oid, style={"fontWeight": "700"}),
+                 html.Span(desc, style={"color": "#64748b",
+                                        "fontSize": "12px",
+                                        "marginLeft": "4px"})]
+                + ([badge] if badge is not None else []),
+                style={"display": "flex", "alignItems": "baseline",
+                       "padding": "2px 0"}))
+        if erows:
+            erows.insert(0, html.Div(kind_label, className="unc-tag",
+                                     style={"marginTop": "6px"}))
+        return erows
+
+    if v:
+        out += entity_rows(v.get("threats"), gran.get("threats"),
+                           "#ef4444", "THREATS")
+        out += entity_rows(v.get("at_risk"), gran.get("at_risk"),
+                           "#f97316", "AT RISK")
+        # Entities that FLICKER in probes but missed the canonical lists
+        # are instability the canonical answer hides — surface them.
+        cited = {e.get("object_id") for e in
+                 (v.get("threats") or []) + (v.get("at_risk") or [])}
+        ghosts = [(oid, g) for table in
+                  (gran.get("threats") or {}, gran.get("at_risk") or {})
+                  for oid, g in table.items() if oid not in cited]
+        for oid, g in ghosts:
+            out.append(html.Div(
+                f"◌ {oid} appeared in {g.get('votes')} probe lists but NOT "
+                f"in the final answer — unstable membership",
+                style={"fontSize": "12px", "color": "#b45309",
+                       "padding": "2px 0 2px 4px"}))
+
+    # The uncertainty panel: channel 1 (model's claim) vs channel 2 (ours).
+    rows: list[Any] = []
+    if unc_view in ("self", "both") and v is not None:
+        claim = v.get("self_confidence")
+        rows.append(html.Div([
+            html.Span("model says", className="unc-tag"),
+            html.Span("—" if claim is None else f"{claim:.2f} confident",
+                      className="unc-val"),
+            html.Span("(self-reported: recorded, never trusted)",
+                      className="unc-note"),
+        ], className="unc-row"))
+    if unc_view in ("measured", "both") and mu is not None:
+        rows.append(html.Div([
+            html.Span("we measured", className="unc-tag"),
+            html.Span(f"U = {mu.get('score')}", className="unc-val"),
+            html.Span(f"disaster scenario {mu.get('scenario_agreement')} · "
+                      f"type {mu.get('type_agreement')} · "
+                      f"bucket {mu.get('bucket_agreement')} "
+                      f"({mu.get('n_probes') or len(A.get('probes', []))} probes)",
+                      className="unc-note"),
+        ], className="unc-row"))
+        if mu.get("explanation"):
+            rows.append(html.Div(f"why: {mu['explanation']}",
+                                 className="unc-why"))
+    if unc_view == "both" and mu is not None and v is not None \
+            and v.get("self_confidence") is not None:
+        gap = round(abs(v["self_confidence"] - (1 - mu.get("score", 0))), 2)
+        rows.append(html.Div(
+            f"calibration gap: claims {v['self_confidence']:.2f}, probes "
+            f"support {1 - mu.get('score', 0):.2f} (gap {gap})",
+            className="unc-gap",
+            style={"color": "#b45309" if gap > 0.15 else "#16a34a"}))
+    if rows:
+        out.append(html.Div(rows, className="unc-panel"))
+
+    # Assessment tickets: same lifecycle grammar as Stage 1 (OPEN ->
+    # FIXING during a reflection round -> FIXED / STOOD). Body quotes the
+    # rulebook chunk, so the ticket shows WHICH law and WHY.
+    from agentic.rulebook import retrieve as _retrieve
+    for tk in A.get("tickets", {}).values():
+        status = tk["status"]
+        stamp = {"open": ("OPEN", "stamp open"),
+                 "fixing": ("FIXING…", "stamp fixing"),
+                 "fixed": ("FIXED", "stamp fixed"),
+                 "stood": ("STOOD ITS GROUND", "stamp stood")}[status]
+        chunk = _retrieve(tk["kind"])
+        body_lines = [html.Div("EVIDENCE", className="speaker rulebook"),
+                      html.Div(tk["evidence"], className="bubble rulebook-bubble")]
+        if chunk:
+            body_lines += [
+                html.Div(f"RULE {chunk.rule_id}", className="speaker rulebook"),
+                html.Div(f"{chunk.rule} — {chunk.rationale}",
+                         className="bubble rulebook-bubble")]
+        out.append(html.Details([
+            html.Summary([
+                html.Span(str(tk["kind"]).replace("_", " "),
+                          className="ticket-kind"),
+                html.Span(stamp[0], className=stamp[1]),
+            ]),
+            html.Div(body_lines, className="ticket-body"),
+        ], className=f"ticket {status}"))
+
+    # The reflection ledger: rounds, verdicts, and the U0->U1 strip.
+    R = A.get("reflection")
+    if R and (R.get("rounds") or R.get("u_after") is not None):
+        rrows: list[Any] = [html.Div("REFLECTION", className="unc-tag",
+                                     style={"marginTop": "8px"})]
+        for r in R.get("rounds", []):
+            glyph = ("✓" if r.get("changed")
+                     else "■" if r.get("changed") is False else "…")
+            verdict = ("revised" if r.get("changed")
+                       else "stood its ground" if r.get("changed") is False
+                       else "in flight")
+            # THE JUDGES of this round, as cards: every mechanism that
+            # contributed a verdict, and what it decided (Sunny: not just
+            # printed text — separate cards per judge).
+            trigs = r.get("triggers", [])
+            viols = [t for t in trigs if t.get("type") == "violation"]
+            membs = [t for t in trigs if t.get("type") == "membership_split"]
+            fields = [t for t in trigs if t.get("type") == "field_instability"]
+
+            def _card(title, color, lines):
+                return html.Div(
+                    [html.Div(title, style={
+                        "fontSize": "9px", "fontWeight": "800",
+                        "letterSpacing": ".08em", "color": "#fff",
+                        "background": color, "padding": "2px 8px",
+                        "borderRadius": "6px 6px 0 0"})]
+                    + [html.Div(x, style={"fontSize": "10px",
+                                          "padding": "1px 8px",
+                                          "color": "#334155"})
+                       for x in lines],
+                    style={"border": f"1px solid {color}55",
+                           "borderRadius": "6px", "background": "#fff",
+                           "minWidth": "120px", "maxWidth": "180px",
+                           "paddingBottom": "4px"})
+
+            from agentic.rulebook import retrieve as _rb
+            cards: list[Any] = []
+            if viols:
+                cards.append(_card("⚖ CODE CHECKS", "#dc2626",
+                                   [f"found: {vt.get('kind', '?').replace('_', ' ')}"
+                                    for vt in viols]))
+            rule_ids: list[str] = []
+            for vt in viols:
+                ch = _rb(vt.get("kind", ""))
+                if ch and ch.rule_id not in rule_ids:
+                    rule_ids.append(ch.rule_id)
+            if membs:
+                rule_ids += [x for x in ("G1", "G3") if x not in rule_ids]
+            if fields:
+                rule_ids += [x for x in ("S1",) if x not in rule_ids]
+            if rule_ids:
+                cards.append(_card("⚖ RULEBOOK", "#7c3aed",
+                                   [f"cited: {', '.join(rule_ids)}"]))
+            if membs:
+                cards.append(_card("⚖ PROBE METER", "#0ea5e9",
+                                   [f"{m.get('object_id')}: only "
+                                    f"{m.get('votes')} lists"
+                                    for m in membs]))
+                cards.append(_card("⚖ GEOMETRY", "#16a34a",
+                                   ["nominated candidates from",
+                                    "declared boxes (2D hints)"]))
+            if fields:
+                cards.append(_card("⚖ PROBE METER" if not membs else
+                                   "⚖ FIELD STABILITY", "#f59e0b",
+                                   [f"{f.get('driver', '?')}: "
+                                    f"{str(f.get('evidence', ''))[:48]}"
+                                    for f in fields]))
+            detail: list[Any] = []
+            if cards:
+                detail.append(html.Div(cards, style={
+                    "display": "flex", "gap": "6px", "flexWrap": "wrap",
+                    "margin": "4px 0"}))
+            if r.get("instruction"):
+                detail.append(html.Div("WHAT THE RULEBOOK SENT:",
+                                       className="unc-tag",
+                                       style={"marginTop": "4px"}))
+                detail.append(html.Pre(
+                    r["instruction"],
+                    style={"fontSize": "10px", "whiteSpace": "pre-wrap",
+                           "maxHeight": "220px", "overflowY": "auto",
+                           "background": "#f1f5f9", "padding": "8px",
+                           "borderRadius": "8px", "margin": "2px 0"}))
+            rrows.append(html.Details([
+                html.Summary(f"{glyph} round {r.get('round')}: "
+                             f"{r.get('summary')} — {verdict}",
+                             style={"fontSize": "12px", "cursor": "pointer"}),
+                html.Div(detail, style={"padding": "2px 0 4px 12px"}),
+            ], style={"padding": "1px 0"}))
+        # Verdict diff: what reflection actually changed, [0] -> [-1].
+        hist = A.get("verdict_history", [])
+        if len(hist) > 1:
+            def _ids(v, key):
+                return {t.get("object_id", "?") for t in v.get(key) or []}
+
+            def vline(v):
+                th = ",".join(sorted(_ids(v, "threats"))) or "-"
+                ar = ",".join(sorted(_ids(v, "at_risk"))) or "-"
+                return (f"{v.get('scenario')} · {v.get('disaster_type')} · "
+                        f"L{v.get('level')} | threats: {th} | at-risk: {ar}")
+
+            # WHAT CHANGED, as chips: +added (green) / -removed (red).
+            chips: list[Any] = [html.Span("VERDICT CHANGE:",
+                                          className="unc-tag")]
+            b, a_ = hist[0], hist[-1]
+            if (b.get("scenario"), b.get("level")) != (a_.get("scenario"),
+                                                       a_.get("level")):
+                chips.append(html.Span(
+                    f"{b.get('scenario')}·L{b.get('level')} → "
+                    f"{a_.get('scenario')}·L{a_.get('level')}",
+                    style={"fontWeight": "700", "fontSize": "11px",
+                           "marginRight": "6px"}))
+            for key in ("threats", "at_risk"):
+                added = _ids(a_, key) - _ids(b, key)
+                removed = _ids(b, key) - _ids(a_, key)
+                for oid in sorted(added):
+                    chips.append(html.Span(
+                        f"+{oid} ({key})",
+                        style={"background": "#dcfce7", "color": "#166534",
+                               "borderRadius": "6px", "padding": "1px 6px",
+                               "fontSize": "11px", "fontWeight": "700",
+                               "marginRight": "4px"}))
+                for oid in sorted(removed):
+                    chips.append(html.Span(
+                        f"−{oid} ({key})",
+                        style={"background": "#fee2e2", "color": "#991b1b",
+                               "borderRadius": "6px", "padding": "1px 6px",
+                               "fontSize": "11px", "fontWeight": "700",
+                               "marginRight": "4px"}))
+            if len(chips) == 1:
+                chips.append(html.Span("wording/reasons only",
+                                       style={"fontSize": "11px",
+                                              "color": "#64748b"}))
+            rrows.append(html.Div([
+                html.Div(chips, style={"marginTop": "4px"}),
+                html.Div("BEFORE: " + vline(hist[0]),
+                         style={"fontSize": "11px", "color": "#94a3b8"}),
+                html.Div("AFTER:    " + vline(hist[-1]),
+                         style={"fontSize": "11px", "fontWeight": "600",
+                                "color": "#0f172a"}),
+            ], style={"marginTop": "4px", "borderTop": "1px dashed #e2e8f0",
+                      "paddingTop": "4px"}))
+        stamp = {"clean": ("CLEAN", "#16a34a"),
+                 "no_change": ("STOOD", "#64748b"),
+                 "cap_reached": ("CAP REACHED", "#b45309"),
+                 "model_error": ("MODEL ERROR", "#dc2626")}.get(
+            R.get("stopped"), ("", "#64748b"))
+        line: list[Any] = [html.Span(stamp[0], style={
+            "fontWeight": "700", "color": stamp[1], "fontSize": "12px"})]
+        if R.get("u_after") is not None:
+            delta = round((R.get("u_before") or 0) - R["u_after"], 3)
+            arrow_color = "#16a34a" if delta > 0 else "#b45309"
+            line.append(html.Span(
+                f"  U {R.get('u_before')} → {R['u_after']} "
+                f"({'−' if delta > 0 else '+'}{abs(delta)})",
+                style={"fontWeight": "700", "color": arrow_color,
+                       "marginLeft": "10px", "fontSize": "12px"}))
+            line.append(html.Span(
+                " (ΔU alone is not proof of improvement — check the "
+                "verdict change)",
+                style={"color": "#94a3b8", "fontSize": "11px",
+                       "marginLeft": "6px"}))
+        rrows.append(html.Div(line, style={"marginTop": "2px"}))
+        out.append(html.Div(rrows, className="unc-panel"))
+
+    # ── The petition panel: Stage 2's ledgered look-back at Stage 1 ────
+    P = A.get("petition")
+    if P:
+        pcolor = {"in_flight": "#7c3aed", "merged": "#16a34a",
+                  "failed": "#dc2626"}.get(P.get("status"), "#64748b")
+        ptitle = ("PETITION → SAME STAGE (question re-asked fresh, cap 1 "
+                  "— the image was fine, the sorting was questioned)"
+                  if P.get("target") == "stage2" else
+                  "PETITION → STAGE 1 (contextual re-perception, cap 1)")
+        prows: list[Any] = [html.Div(
+            ptitle, className="unc-tag",
+            style={"marginTop": "8px", "color": pcolor})]
+        for r in P.get("reasons", []):
+            prows.append(html.Div(
+                f"reason: {str(r.get('kind', '')).replace('_', ' ')} — "
+                f"{str(r.get('evidence', ''))[:90]}",
+                style={"fontSize": "12px"}))
+        if P.get("status") == "in_flight":
+            prows.append(html.Div("re-perceiving the image…",
+                                  className="working",
+                                  style={"fontSize": "12px"}))
+        elif P.get("status") == "merged":
+            for x in P.get("added", []):
+                prows.append(html.Span(f"+{x}", style={
+                    "background": "#ede9fe", "color": "#5b21b6",
+                    "borderRadius": "6px", "padding": "1px 6px",
+                    "fontSize": "11px", "fontWeight": "700",
+                    "marginRight": "4px"}))
+            for x in P.get("removed", []):
+                prows.append(html.Span(f"−{x}", style={
+                    "background": "#fee2e2", "color": "#991b1b",
+                    "borderRadius": "6px", "padding": "1px 6px",
+                    "fontSize": "11px", "fontWeight": "700",
+                    "marginRight": "4px"}))
+            for x in P.get("disputed", []):
+                prows.append(html.Div(
+                    f"⚠ second look omitted {x} — DISPUTED, not erased "
+                    f"(petitions add, never delete)",
+                    style={"fontSize": "11px", "color": "#b45309"}))
+            if P.get("note"):
+                prows.append(html.Div(P["note"],
+                                      style={"fontSize": "11px",
+                                             "color": "#64748b"}))
+        elif P.get("status") == "failed":
+            prows.append(html.Div(
+                f"FAILED: {P.get('error', '')[:80]} — recorded as "
+                f"pathology signal, run proceeds on the original record",
+                style={"fontSize": "12px", "color": "#dc2626"}))
+        oc = P.get("outcome")
+        if oc:
+            prows.append(html.Div(
+                ("✓ RESOLVED — the violation pressure vanished on the "
+                 "merged record" if oc.get("resolved") else
+                 f"■ UNRESOLVED — still standing: {oc.get('after')}"),
+                style={"fontSize": "12px", "fontWeight": "700",
+                       "color": "#16a34a" if oc.get("resolved")
+                       else "#b45309", "marginTop": "3px"}))
+        # Cross-epoch comparison: the petition's evidentiary payoff.
+        e0 = d.get("epoch0")
+        after_v = A.get("verdict")          # never trust loop-scope names
+
+        def _short(vv):
+            th = ",".join(t.get("object_id", "?")
+                          for t in vv.get("threats") or []) or "-"
+            return (f"{vv.get('scenario')}·L{vv.get('level')} "
+                    f"threats[{th}]")
+
+        hist0 = ((e0 or {}).get("assess") or {}).get("verdict_history") or []
+
+        def _full(vv):
+            th = ", ".join(t.get("object_id", "?")
+                           for t in vv.get("threats") or []) or "none"
+            ar = ", ".join(
+                f"{r.get('object_id', '?')}"
+                + (f" ({r.get('kind')})" if r.get("kind") else "")
+                for r in vv.get("at_risk") or []) or "none"
+            return (f"{vv.get('scenario')} · level {vv.get('level')} · "
+                    f"threats: {th} · at-risk: {ar}")
+
+        # THE ENDING, always (Sunny: no scrolling back to find what the
+        # decision ended up being). One grey BEFORE line, one loud
+        # FINAL line — whether the answer changed or stood.
+        final_v = after_v or (hist0[-1] if hist0 else None)
+        if hist0 and final_v:
+            prows.append(html.Div([
+                html.Span("BEFORE: ", className="unc-tag"),
+                html.Span(_full(hist0[-1]),
+                          style={"fontSize": "11px", "color": "#94a3b8"}),
+            ], style={"marginTop": "5px"}))
+            changed = (after_v is not None
+                       and _full(after_v) != _full(hist0[-1]))
+            fcolor = BUCKET_CSS.get((final_v or {}).get("bucket"),
+                                    "#334155")
+            prows.append(html.Div(
+                ("FINAL DECISION: " if changed
+                 else "FINAL DECISION (unchanged): ") + _full(final_v),
+                style={"background": f"{fcolor}14",
+                       "border": f"1px solid {fcolor}",
+                       "color": fcolor, "fontWeight": "700",
+                       "fontSize": "12px", "borderRadius": "8px",
+                       "padding": "6px 10px", "marginTop": "4px"}))
+        out.append(html.Div(prows, className="unc-panel",
+                            style={"borderColor": pcolor}))
+
+    # ── THE JUDGES: task-allocation roster, every mechanism that judges
+    # this stage, as cards (Sunny). Uniform anatomy: TASK / AUTHORITY /
+    # THIS RUN. Iron rule on every card: judges flag, measure, and
+    # advise — none may overwrite the model's answer; only reflection
+    # carries the message and only the model revises.
+    def _jcard(title, color, task, authority, verdict_lines, dev=False):
+        head_style = {"fontSize": "10px", "fontWeight": "800",
+                      "letterSpacing": ".08em", "color": "#fff",
+                      "background": color, "padding": "3px 10px",
+                      "borderRadius": "8px 8px 0 0"}
+        rows = [html.Div(("⚗ " if dev else "⚖ ") + title, style=head_style),
+                html.Div([html.Span("TASK ", className="unc-tag"),
+                          html.Span(task, style={"fontSize": "10px"})],
+                         style={"padding": "3px 8px 0"}),
+                html.Div([html.Span("AUTHORITY ", className="unc-tag"),
+                          html.Span(authority,
+                                    style={"fontSize": "10px",
+                                           "fontStyle": "italic"})],
+                         style={"padding": "0 8px"})]
+        rows.append(html.Div([html.Span("THIS RUN ", className="unc-tag")]
+                             + [html.Div(x, style={"fontSize": "11px",
+                                                   "fontWeight": "600",
+                                                   "color": "#0f172a"})
+                                for x in verdict_lines],
+                             style={"padding": "0 8px 6px"}))
+        return html.Div(rows, style={
+            "border": f"1px solid {color}66", "borderRadius": "8px",
+            "background": "#fff", "width": "215px",
+            "boxShadow": "0 1px 4px rgba(15,23,42,.06)"})
+
+    cards: list[Any] = []
+    tickets = list(A.get("tickets", {}).values())
+    if A["status"] != "pending":
+        by_status: dict[str, int] = {}
+        for tk in tickets:
+            by_status[tk["status"]] = by_status.get(tk["status"], 0) + 1
+        tk_lines = ([f"{tk['kind'].replace('_', ' ')} → {tk['status'].upper()}"
+                     for tk in tickets[:3]]
+                    + ([f"+{len(tickets) - 3} more"] if len(tickets) > 3
+                       else [])) or ["clean — nothing to flag"]
+        cards.append(_jcard(
+            "CODE CHECKS", "#dc2626",
+            "decidable rule violations (S1-S7, G2, G4)",
+            "flags -> triggers reflection; never edits",
+            tk_lines))
+        cited = []
+        for tk in tickets:
+            from agentic.rulebook import retrieve as _rb2
+            ch = _rb2(tk["kind"])
+            if ch and ch.rule_id not in cited:
+                cited.append(ch.rule_id)
+        R0 = A.get("reflection") or {}
+        for r in R0.get("rounds", []):
+            for tg in r.get("triggers", []):
+                if tg.get("type") == "membership_split":
+                    cited += [x for x in ("G1", "G3") if x not in cited]
+                if tg.get("type") == "field_instability" and "S1" not in cited:
+                    cited.append("S1")
+        rb_lines = []
+        for tk in tickets[:2]:
+            from agentic.rulebook import retrieve as _rb3
+            ch3 = _rb3(tk["kind"])
+            if ch3:
+                rb_lines.append(f"{ch3.rule_id} → for "
+                                f"{tk['kind'].replace('_', ' ')}")
+        extra_rules = [x for x in cited if x not in
+                       {ln.split(" ")[0] for ln in rb_lines}]
+        if extra_rules:
+            rb_lines.append(f"{', '.join(extra_rules)} → for probe splits")
+        cards.append(_jcard(
+            "RULEBOOK", "#7c3aed",
+            "speaks the law: statement + why + worked example",
+            "advises — words only, quoted into reflection",
+            rb_lines or ["not consulted"]))
+        if mu is not None:
+            n_split = sum(1 for dr in (mu.get("drivers") or [])
+                          if "split" in str(dr))
+            gran0 = mu.get("granular") or {}
+            splits = []
+            for lname in ("threats", "at_risk"):
+                for oid, g in (gran0.get(lname) or {}).items():
+                    if g.get("u", 0) > 0.2:
+                        splits.append(f"{oid}: {g.get('votes')} "
+                                      f"{lname} lists")
+            cards.append(_jcard(
+                "PROBE METER", "#0ea5e9",
+                "stability: re-asks the same question, counts votes",
+                "measures -> triggers reflection above U 0.2",
+                [f"U = {mu.get('score')} over {mu.get('n_probes')} probes"]
+                + splits[:3]
+                + ([f"+{len(splits) - 3} more splits"]
+                   if len(splits) > 3 else [])))
+        ctx0 = A.get("context") or {}
+        nh = ctx0.get("n_spatial_hints")
+        pair_lines = list(ctx0.get("spatial_pairs") or [])[:3]
+        if nh and len(ctx0.get("spatial_pairs") or []) > 3:
+            pair_lines.append(f"+{nh - 3} more pairs")
+        cards.append(_jcard(
+            "GEOMETRY", "#16a34a",
+            "nominates proximity candidates from declared boxes",
+            "advises — nominates, never convicts (G3)",
+            pair_lines or (["no pairs near a hazard"] if nh == 0
+                           else ["hints fed into the prompt"])))
+        # Talking points: computed live, judge-free.
+        v_now = A.get("verdict")
+        if v_now and d.get("result"):
+            try:
+                from agentic.evals import citation_counts
+                cc = citation_counts(_verdict_to_assessment(v_now),
+                                     d["result"])
+                rate = cc.get("state_citation_rate")
+                tp_lines = [("no cited entities" if rate is None else
+                             f"{cc['state_cited']}/{cc['n_entries']} reasons "
+                             f"cite their state ({rate:.0%})")]
+                if cc.get("uncited"):
+                    tp_lines.append("vague: "
+                                    + ", ".join(cc["uncited"][:4]))
+                if cc.get("victim_shaped"):
+                    tp_lines.append(
+                        f"{len(cc['victim_shaped'])} threat reason(s) "
+                        f"victim-shaped (S8): "
+                        + ", ".join(cc["victim_shaped"][:3]))
+                cards.append(_jcard(
+                    "TALKING POINTS", "#f59e0b",
+                    "do the reasons cite the declared states?",
+                    "measures a groundedness proxy; informs only",
+                    tp_lines))
+            except Exception:
+                pass
+        ro = A.get("runoff")
+        if ro:
+            win = ro.get("winner")
+            w_line = ro.get(f"{win}_line", "?") if win else "?"
+            l_key = "top2" if win == "top1" else "top1"
+            l_line = ro.get(f"{l_key}_line", "?")
+            cards.append(_jcard(
+                "RUNOFF (LLM)", "#be185d",
+                "high U: blind-judges the model's own top-2 readings",
+                "advises — winner becomes reflection context",
+                [f"judged: {w_line} ({ro.get(win + '_votes', '?')})",
+                 f"    vs: {l_line} ({ro.get(l_key + '_votes', '?')})",
+                 f"→ preferred the first: "
+                 f"{str(ro.get('raw', ''))[:60]}"]))
+        # Pairwise LLM judge: on demand.
+        if judge_result is None:
+            jlines: list[Any] = ["not yet run"]
+        elif judge_result.get("status") == "running":
+            jlines = ["deliberating…"]
+        else:
+            jlines = []
+            if judge_result.get("pre_line"):
+                jlines += [f"judged: pre  {judge_result['pre_line']}",
+                           f"    vs: post {judge_result.get('post_line', '?')}"]
+            jlines += [f"winner: {judge_result.get('winner', '?').upper()} — "
+                       f"{str(judge_result.get('raw', ''))[:60]}"]
+        cards.append(_jcard(
+            "PAIRWISE (LLM)", "#334155",
+            "pre vs post, blind A/B: which fits the declared states?",
+            "advises; different training family than the subject",
+            jlines))
+        # GT: the only judge that knows the answer — dev-only.
+        ge = gt_eval_overlay(d, record_name)
+        if ge is not None:
+            q = ge["quadrant"]
+            gl = [f"error {ge['pre']['error_score']} -> "
+                  f"{ge['post']['error_score']}  ·  {q}"]
+            s1g = ge.get("stage1") or {}
+            for m in (s1g.get("missed_entities") or [])[:2]:
+                gl.append(f"S1 MISS: {m.get('label')} — petition target")
+            if ge.get("matched_by") == "image_name":
+                gl.append("(matched by image name)")
+            cards.append(_jcard(
+                "GROUND TRUTH", "#0f172a",
+                "the verified answer — calibration scenes only",
+                "measures; NEVER exists in production",
+                gl, dev=True))
+        else:
+            cards.append(_jcard(
+                "GROUND TRUTH", "#94a3b8",
+                "the verified answer — calibration scenes only",
+                "measures; NEVER exists in production",
+                ["no GT for this scene (production shape)"], dev=True))
+    if cards:
+        judge_children: list[Any] = [html.Div(cards, style={
+            "display": "flex", "gap": "8px", "flexWrap": "wrap",
+            "margin": "6px 0"})]
+        if judge_result is None and gt_eval_overlay(d, record_name):
+            judge_children.append(html.Button(
+                "⚖ RUN PAIRWISE JUDGE (pre vs post, blind)",
+                id={"type": "judge-btn", "n": 0}, n_clicks=0,
+                className="go", style={"fontSize": "11px"}))
+        out.append(html.Details([
+            html.Summary("THE JUDGES — task allocation",
+                         className="unc-tag",
+                         style={"cursor": "pointer", "marginTop": "8px"}),
+            html.Div(judge_children),
+        ], open=True))
+
+    acts = A.get("activities", [])
+    if acts:
+        color = "#0ea5e9"
+        rows2: list[Any] = []
+        shown = acts[-7:]
+        if len(acts) > 7:
+            rows2.append(html.Div([
+                html.Div("⋯", className="tl-node dim",
+                         style={"borderColor": "#cbd5e1"}),
+                html.Div(f"{len(acts) - 7} earlier steps", className="tl-text dim"),
+            ], className="tl-row"))
+        for i, a in enumerate(shown):
+            now = (A["status"] == "active" and i == len(shown) - 1)
+            glyph, mod = _timeline_glyph(a)
+            style = {"borderColor": color}
+            if now:
+                glyph, mod = "▸", "now"
+                style = {"borderColor": color, "color": color,
+                         "boxShadow": f"0 0 0 4px {color}22"}
+            rows2.append(html.Div([
+                html.Div(glyph, className=f"tl-node {mod}", style=style),
+                html.Div(a, className=f"tl-text {mod}"),
+            ], className="tl-row"))
+        out.append(html.Div(rows2, className="tl",
+                            style={"--tl-line": f"{color}55"}))
+    return out
 
 
 def tickets_component(d: dict[str, Any]) -> html.Div:
@@ -588,6 +1758,82 @@ def tickets_component(d: dict[str, Any]) -> html.Div:
     return html.Div(cards, className="tickets")
 
 
+def pipeline_steps(d: dict[str, Any]) -> tuple[list[tuple[str, str]],
+                                               list[tuple[str, str]]]:
+    """Every pipeline step with its status ('pending'/'active'/'done'),
+    split by stage: (stage-1 steps, stage-2 steps)."""
+    A = d["assess"]
+    s1: list[tuple[str, str]] = [(s, d["stages"][s]["status"])
+                                 for s in STAGES]
+    a_status = A.get("status", "pending")
+    if a_status == "pending":
+        answer = probes = reflect = "pending"
+    else:
+        answer = "done" if A.get("verdict") else "active"
+        probes = ("done" if A.get("uncertainty") is not None
+                  else "active" if A.get("probes") else "pending")
+        R = A.get("reflection") or {}
+        reflect = ("done" if R.get("stopped")
+                   else "active" if R.get("rounds") else "pending")
+        if a_status == "done":
+            answer = probes = reflect = "done"
+    s2 = [("Answer", answer), ("Probes", probes), ("Reflect", reflect)]
+    pet = A.get("petition")
+    if pet:
+        s2.append(("Second look",
+                   "active" if pet.get("status") == "in_flight"
+                   else "done"))
+    return s1, s2
+
+
+def phase_status_span(steps: list[tuple[str, str]],
+                      now_text: str = "") -> html.Span:
+    """The little live badge on a stage card's header:
+    '✓ done' · '● <step it is on>…' (pulsing) · '○ waiting'."""
+    if steps and all(s == "done" for _, s in steps):
+        return html.Span("✓ done", className="phase-status done")
+    active = [n for n, s in steps if s == "active"]
+    if active:
+        label = now_text or active[0].lower()
+        done_n = sum(1 for _, s in steps if s == "done")
+        return html.Span(f"● {label} · step {done_n + 1}/{len(steps)}",
+                         className="phase-status active")
+    if any(s == "done" for _, s in steps):
+        done_n = sum(1 for _, s in steps if s == "done")
+        return html.Span(f"● {done_n}/{len(steps)} steps",
+                         className="phase-status active")
+    return html.Span("○ waiting", className="phase-status pending")
+
+
+def progress_strip(d: dict[str, Any]) -> html.Div:
+    """All pipeline steps as chips (kept for tests/reuse; Sunny prefers
+    the per-card badges, so this no longer renders at the top)."""
+    s1, s2 = pipeline_steps(d)
+    steps = s1 + s2
+    chips: list[Any] = []
+    for i, (name, status) in enumerate(steps):
+        if i:
+            done_link = steps[i - 1][1] == "done"
+            chips.append(html.Div(
+                className="pstrip-link" + (" done" if done_link else "")))
+        glyph = {"done": "✓", "active": "●"}.get(status, "○")
+        chips.append(html.Div(
+            [html.Div(glyph, className=f"pchip-dot {status}"),
+             html.Div(name, className=f"pchip-name {status}")],
+            className=f"pchip {status}"))
+    rows: list[Any] = [html.Div(chips, className="pstrip-row")]
+    # One plain line under the strip: what is happening right now.
+    act = d.get("activity") or {}
+    active = [n for n, s in steps if s == "active"]
+    if active and act.get("text"):
+        rows.append(html.Div(f"now: {act['text']}",
+                             className="pstrip-now"))
+    elif all(s == "done" for _, s in steps) and steps:
+        rows.append(html.Div("all stages complete",
+                             className="pstrip-now done"))
+    return html.Div(rows, className="pstrip")
+
+
 def instruments_component(d: dict[str, Any]) -> html.Div:
     n_entities = (len(d["result"]["detected_objects"]) if d["result"]
                   else len(d["anchors"]) or len(d["repair_entities_latest"]))
@@ -602,14 +1848,24 @@ def instruments_component(d: dict[str, Any]) -> html.Div:
                          html.Div(label, className="tile-label")],
                         className=f"tile {cls}")
 
-    return html.Div([
+    tiles = [
         tile(n_entities, "entities"),
         tile(open_v, "open", "amber" if open_v else ""),
         tile(fixed_v, "fixed", "green" if fixed_v else ""),
         tile(stood_v, "stood", "gray" if stood_v else ""),
         tile("●" * d["rounds_used"] + "○" * max(0, 2 - d["rounds_used"]), "rounds"),
         tile(f"{matched}/{matched + fallback}" if (matched + fallback) else "–", "bound"),
-    ], className="instruments")
+    ]
+    # Stage 2 tiles appear once a verdict exists: bucket + measured U.
+    v = d["assess"].get("verdict")
+    mu = d["assess"].get("uncertainty")
+    if v:
+        tiles.append(tile(str(v.get("bucket", "?")).upper(), "bucket"))
+    if mu is not None:
+        u = mu.get("score", 0)
+        tiles.append(tile(f"{u}", "measured U",
+                          "amber" if u and u > 0.2 else "green"))
+    return html.Div(tiles, className="instruments")
 
 
 def _valid_box(bbox: Any) -> bool:
@@ -662,6 +1918,33 @@ def scene_component(d: dict[str, Any], image_src: str | None) -> list[Any]:
     if act.get("text"):
         children.append(html.Div(act["text"],
                                  className="ribbon busy" if act.get("busy") else "ribbon"))
+    # Verdict ribbon (Stage 2): the scene wears its assessment, tinted by
+    # bucket, docked at the bottom edge; pulses while assess is active.
+    A = d.get("assess") or {}
+    v = A.get("verdict")
+    if v:
+        color = BUCKET_CSS.get(v.get("bucket"), "#64748b")
+        label = ("NO DISASTER" if v.get("scenario") != "Yes"
+                 else f"DISASTER · {v.get('disaster_type')}")
+        busy = A.get("status") == "active"
+        children.append(html.Div(
+            f"{label} · level {v.get('level')} · "
+            f"{str(v.get('bucket', '')).upper()}",
+            className="verdict-ribbon" + (" busy" if busy else ""),
+            style={"position": "absolute", "left": "12px", "bottom": "12px",
+                   "background": f"{color}e6", "color": "#fff",
+                   "fontWeight": "700", "fontSize": "13px",
+                   "letterSpacing": "0.04em", "padding": "6px 12px",
+                   "borderRadius": "8px",
+                   "boxShadow": f"0 2px 12px {color}66"}))
+    elif A.get("status") == "active":
+        children.append(html.Div(
+            "assessing scene from declared state...",
+            className="verdict-ribbon busy",
+            style={"position": "absolute", "left": "12px", "bottom": "12px",
+                   "background": "#0ea5e9e6", "color": "#fff",
+                   "fontWeight": "700", "fontSize": "13px",
+                   "padding": "6px 12px", "borderRadius": "8px"}))
     final_by_id = {o["object_id"]: o for o in
                    (d["result"] or {}).get("detected_objects", [])}
     if size:
@@ -769,7 +2052,7 @@ def inspector_component(d: dict[str, Any], selected: str | None):
 
 # suppress_callback_exceptions: the inspector modal's close button only
 # exists while the modal is open; Dash must tolerate its absence otherwise.
-app = dash.Dash(__name__, title="CEE+ Agentic — Perception",
+app = dash.Dash(__name__, title="CEE+ Agentic — Pipeline",
                 suppress_callback_exceptions=True)
 
 app.index_string = """<!DOCTYPE html>
@@ -906,11 +2189,54 @@ app.index_string = """<!DOCTYPE html>
   .speaker { font-size:10px; letter-spacing:2px; color:var(--faint); }
   .bubble { background:#f8fafc; border:1px solid var(--line); border-radius:10px; padding:9px;
       font-family:monospace; font-size:12px; white-space:pre-wrap; color:#334155; }
+  /* Live status badge on each stage card header */
+  .phase-status { margin-left:auto; margin-right:8px; font-size:11px;
+                  font-weight:700; letter-spacing:.02em; }
+  .phase-status.done { color:#16a34a; }
+  .phase-status.active { color:#2563eb; animation: blink 1.2s infinite; }
+  .phase-status.pending { color:#94a3b8; }
+
+  /* WHERE-ARE-WE progress strip */
+  .pstrip { background:#fff; border:1px solid #e2e8f0; border-radius:12px;
+            padding:10px 14px 8px; margin:6px 0 10px; }
+  .pstrip-row { display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
+  .pchip { display:flex; align-items:center; gap:5px; }
+  .pchip-dot { width:20px; height:20px; border-radius:50%; display:flex;
+               align-items:center; justify-content:center; font-size:11px;
+               font-weight:800; border:2px solid #cbd5e1; color:#94a3b8; }
+  .pchip-dot.done { border-color:#16a34a; background:#16a34a; color:#fff; }
+  .pchip-dot.active { border-color:#2563eb; color:#2563eb;
+                      box-shadow:0 0 0 4px #2563eb22;
+                      animation: blink 1.1s infinite; }
+  .pchip-name { font-size:11px; font-weight:700; color:#94a3b8;
+                letter-spacing:.02em; }
+  .pchip-name.done { color:#334155; }
+  .pchip-name.active { color:#2563eb; }
+  .pstrip-link { width:16px; height:2px; background:#e2e8f0;
+                 border-radius:2px; }
+  .pstrip-link.done { background:#16a34a99; }
+  .pstrip-now { margin-top:6px; font-size:12px; color:#2563eb;
+                font-weight:600; }
+  .pstrip-now.done { color:#16a34a; }
   .ribbon { position:absolute; top:10px; left:10px; z-index:6; background:#ffffffee;
       border:1px solid var(--line); border-radius:10px; padding:5px 12px; font-size:12px;
       letter-spacing:1px; color:#334155; box-shadow:var(--shadow); }
   .ribbon.busy::before { content:"● "; color:var(--accent); animation: blink 1s infinite; }
   @keyframes blink { 50% { opacity:.2; } }
+  .verdict-ribbon { z-index:7; }
+  .verdict-ribbon.busy::after { content:" ●"; animation: blink 1s infinite; }
+  .unc-toggle { font-size:12px; color:#475569; margin:2px 0 8px; display:flex; gap:14px; }
+  .unc-toggle label { margin-right:10px; cursor:pointer; }
+  .unc-panel { background:#f8fafc; border:1px solid var(--line); border-radius:10px;
+      padding:8px 12px; margin:6px 0; }
+  .unc-row { display:flex; align-items:baseline; gap:8px; margin:3px 0; }
+  .unc-tag { font-size:11px; letter-spacing:.06em; text-transform:uppercase;
+      color:#64748b; min-width:88px; }
+  .unc-val { font-weight:700; color:#0f172a; }
+  .unc-note { font-size:12px; color:#64748b; }
+  .unc-why { font-size:12px; color:#475569; margin-top:6px; padding-top:6px;
+      border-top:1px dashed var(--line); }
+  .unc-gap { font-size:12px; font-weight:600; margin-top:4px; }
   .sweep { position:absolute; top:0; bottom:0; width:34%; left:-34%; z-index:4; pointer-events:none;
       background:linear-gradient(100deg, transparent 0%, #ffffff2a 50%, transparent 100%);
       animation: sweepmove 2.6s linear infinite; }
@@ -955,7 +2281,7 @@ app.index_string = """<!DOCTYPE html>
 <body>{%app_entry%}<footer>{%config%}{%scripts%}{%renderer%}</footer></body></html>"""
 
 app.layout = html.Div([
-    html.H1("CEE+ AGENTIC · STAGE 1 PERCEPTION"),
+    html.H1("CEE+ AGENTIC · STAGES 1-2 · PERCEPTION → ASSESSMENT"),
     html.Div([
         dcc.Upload(id="upload", children=html.Div("drop / pick image"),
                    className="upload", multiple=False),
@@ -989,16 +2315,37 @@ app.layout = html.Div([
                                       n_clicks=0),
                       ], className="agent-inputrow"),
                   ], className="agent-dock", id="agent-dock")]),
-        # PHASE 0 · PERCEPTION: the whole live panel for this stage lives
-        # under one collapsible phase card. Later stages (threats, graphs,
-        # intervention) will stack their own phase cards below it.
-        html.Div(html.Details([
-            html.Summary([html.Span("PHASE 0", className="phase-num"),
-                          html.Span("PERCEPTION", className="phase-title"),
-                          html.Span("▾", className="station-chev")],
-                         className="phase-head"),
-            html.Div(id="rail"), html.Div(id="tickets"),
-        ], className="phase-card", open=True)),
+        # Phase cards stack CHRONOLOGICALLY, pipeline order top-down (the
+        # rail reads like the pipeline diagram; feeds scroll, flight plans
+        # don't reorder). A finished phase auto-collapses once the next
+        # one starts; the user can always re-open it.
+        html.Div([
+            html.Details([
+                html.Summary([html.Span("STAGE 1", className="phase-num"),
+                              html.Span("PERCEPTION", className="phase-title"),
+                              html.Span(id="phase0-status"),
+                              html.Span("▾", className="station-chev")],
+                             className="phase-head"),
+                html.Div(id="rail"), html.Div(id="tickets"),
+            ], className="phase-card", open=True, id="phase0-card"),
+            html.Details([
+                html.Summary([html.Span("STAGE 2", className="phase-num"),
+                              html.Span("SCENE ASSESSMENT",
+                                        className="phase-title"),
+                              html.Span(id="phase1-status"),
+                              html.Span("▾", className="station-chev")],
+                             className="phase-head"),
+                # The uncertainty-view toggle (Sunny: option to show the
+                # model's self-reported number, our measured one, or both).
+                dcc.RadioItems(
+                    id="unc-view", value="both", inline=True,
+                    options=[{"label": "self-reported", "value": "self"},
+                             {"label": "measured", "value": "measured"},
+                             {"label": "both (calibration)", "value": "both"}],
+                    className="unc-toggle"),
+                html.Div(id="assess-body"),
+            ], className="phase-card", open=True, id="phase1-card"),
+        ]),
     ], className="main"),
     html.Div(id="inspector-modal"),
     dcc.Store(id="run-id"), dcc.Store(id="selected"),
@@ -1008,16 +2355,20 @@ app.layout = html.Div([
 
 
 @app.callback(Output("upload-cache", "data"), Output("upload", "children"),
+              Output("caption", "value"),
               Input("upload", "contents"), State("upload", "filename"),
               prevent_initial_call=True)
 def cache_upload(contents, filename):
     """Cache the pick AND show it: the upload control becomes a thumbnail
-    plus filename, so there is never doubt about which image is loaded."""
+    plus filename, so there is never doubt about which image is loaded.
+    The caption CLEARS on a new image: a stale caption from the previous
+    scene contaminates perception (the A_fire run that inherited
+    C_tanker's caption and honestly ticketed a missing tanker_truck)."""
     picked = html.Div([
         html.Img(src=contents, className="upload-thumb"),
         html.Span(filename or "image", className="upload-name"),
     ], className="upload-inner")
-    return {"contents": contents, "filename": filename}, picked
+    return {"contents": contents, "filename": filename}, picked, ""
 
 
 @app.callback(Output("run-id", "data"),
@@ -1139,6 +2490,39 @@ def ask_agent(_clicks, _submit, question, run_id):
     return ""
 
 
+@app.callback(Output("agent-dock", "n_clicks", allow_duplicate=True),
+              Input({"type": "judge-btn", "n": dash.dependencies.ALL},
+                    "n_clicks"),
+              State("run-id", "data"), prevent_initial_call=True)
+def run_judge(clicks, run_id):
+    """Blind pairwise judging on demand: pre (canonical) vs post (final)
+    verdicts, shown unlabeled to the JUDGE model (different training
+    family; JUDGE_MODEL env, default llama3.1:8b)."""
+    if not clicks or not any(c for c in clicks if c):
+        return dash.no_update
+    run = RUNS.get(run_id or "")
+    if not run or run.get("judge", {}).get("status") == "running":
+        return dash.no_update
+    d = derive(run["events"])
+    hist = d["assess"].get("verdict_history") or []
+    if len(hist) < 1 or not d.get("result"):
+        return dash.no_update
+    pre = _verdict_to_assessment(hist[0])
+    post = _verdict_to_assessment(hist[-1])
+    run["judge"] = {"status": "running"}
+
+    def worker() -> None:
+        try:
+            from agentic.evals import judge_pairwise
+            run["judge"] = judge_pairwise(pre, post, d["result"],
+                                          run.get("record_name") or "scene")
+        except Exception as exc:
+            run["judge"] = {"winner": "error", "raw": str(exc)}
+
+    threading.Thread(target=worker, daemon=True).start()
+    return dash.no_update
+
+
 @app.callback(Output("selected", "data"),
               Input({"type": "scene-box", "oid": ALL}, "n_clicks"),
               Input({"type": "insp-close", "n": ALL}, "n_clicks"),
@@ -1158,11 +2542,15 @@ def select_entity(box_clicks, close_clicks):
     Output("inspector-modal", "children"),
     Output("scrub", "max"), Output("scrub", "value"),
     Output("agent-transcript", "children"),
+    Output("assess-body", "children"), Output("phase0-card", "open"),
+    Output("phase0-status", "children"), Output("phase1-status", "children"),
     Output("render-key", "data"),
     Input("tick", "n_intervals"), Input("scrub", "value"),
+    Input("unc-view", "value"),
     State("run-id", "data"), State("selected", "data"), State("scrub", "max"),
     State("upload-cache", "data"), State("render-key", "data"))
-def render(_n, scrub_value, run_id, selected, scrub_max, cached, prev_key):
+def render(_n, scrub_value, unc_view, run_id, selected, scrub_max, cached,
+           prev_key):
     thread = f"ui-{run_id or 'global'}"
     log = AGENT_LOGS.get(thread, [])
     # Agent fingerprint: any new step or completed answer re-renders.
@@ -1170,9 +2558,10 @@ def render(_n, scrub_value, run_id, selected, scrub_max, cached, prev_key):
     run = RUNS.get(run_id or "")
     if not run:
         empty = derive([])
-        key = ["empty", bool(cached and cached.get("contents")), agent_sig]
+        key = ["empty", bool(cached and cached.get("contents")), agent_sig,
+               unc_view, "pending"]
         if key == prev_key:
-            return (dash.no_update,) * 8 + (dash.no_update,)
+            return (dash.no_update,) * 13
         # A picked-but-unanalyzed image previews in the scene immediately,
         # with a ribbon saying it's ready.
         if cached and cached.get("contents"):
@@ -1184,25 +2573,92 @@ def render(_n, scrub_value, run_id, selected, scrub_max, cached, prev_key):
         return (rail_component(empty), tickets_component(empty),
                 instruments_component(empty), scene,
                 inspector_component(empty, None), 1, 1,
-                agent_transcript_component(log), key)
+                agent_transcript_component(log),
+                assess_component(empty, unc_view), dash.no_update,
+                phase_status_span([]), phase_status_span([]), key)
     events = run["events"]
     total = max(1, len(events))
     # Follow-live rule: the slider sticks to the right edge unless the user
     # dragged it left; dragging back to the edge resumes following.
     following = scrub_value is None or scrub_max is None or scrub_value >= scrub_max
     k = total if (following or ctx.triggered_id != "scrub") and following else min(scrub_value, total)
+    d = derive(events[:k])
+    assess_status = d["assess"]["status"]
     # Render cache: when nothing changed since the last tick, leave the DOM
     # alone. This is what preserves the user's collapse/expand toggles
     # (re-rendering identical children would reset every <details>).
-    key = [run_id, total, k, selected, agent_sig]
+    key = [run_id, total, k, selected, agent_sig, unc_view, assess_status,
+           (run.get("judge") or {}).get("winner",
+                                        (run.get("judge") or {}).get("status"))]
     if key == prev_key and ctx.triggered_id != "scrub":
-        return (dash.no_update,) * 8 + (dash.no_update,)
-    d = derive(events[:k])
-    return (rail_component(d), tickets_component(d), instruments_component(d),
+        return (dash.no_update,) * 13
+    # Auto-collapse Phase 0 exactly ONCE, at the moment Phase 1 starts
+    # (comparing against prev_key keeps later renders from stomping the
+    # user's manual re-open).
+    prev_status = prev_key[6] if (isinstance(prev_key, list)
+                                  and len(prev_key) > 6) else "pending"
+    phase0_open = (False if (assess_status != "pending"
+                             and prev_status == "pending")
+                   else dash.no_update)
+    judge = run.get("judge")
+    # Live per-card badges (Sunny prefers the status ON the stage cards,
+    # not a top bar): "● <what it's doing> · step 3/6" while running.
+    s1_steps, s2_steps = pipeline_steps(d)
+    now = (d.get("activity") or {}).get("text", "")
+    p0_badge = phase_status_span(
+        s1_steps, now if any(s == "active" for _, s in s1_steps) else "")
+    p1_badge = phase_status_span(
+        s2_steps, now if any(s == "active" for _, s in s2_steps) else "")
+    rail_view: Any = rail_component(d)
+    assess_view: Any = assess_component(d, unc_view,
+                                        run.get("record_name"), judge)
+    e0 = d.get("epoch0")
+    if e0:
+        # Sunny 2026-07-22: never overwrite the first pass — keep it as a
+        # collapsed BEFORE PETITION panel so the comparison is on screen.
+        # A stage-2 petition snapshots ONLY the assessment (the image was
+        # never re-looked, so the perception panels stay live) — its e0
+        # has no "stages" key, and the rail must not touch it.
+        if "stages" in e0:
+            rail_view = html.Div([
+                html.Details([
+                    html.Summary("BEFORE PETITION — original perception",
+                                 className="unc-tag",
+                                 style={"cursor": "pointer",
+                                        "padding": "4px 0"}),
+                    rail_component(e0), tickets_component(e0),
+                ], open=False,
+                    style={"opacity": "0.85", "borderBottom":
+                           "2px dashed #c4b5fd", "marginBottom": "8px",
+                           "paddingBottom": "6px"}),
+                html.Div("RE-PERCEPTION (after petition)",
+                         className="unc-tag",
+                         style={"color": "#7c3aed", "margin": "2px 0"}),
+                rail_view])
+        stage2 = "stages" not in e0
+        assess_view = [
+            html.Details([
+                html.Summary("BEFORE PETITION — original assessment",
+                             className="unc-tag",
+                             style={"cursor": "pointer",
+                                    "padding": "4px 0"}),
+                html.Div(assess_component(e0, unc_view)),
+            ], open=False,
+                style={"opacity": "0.85", "borderBottom":
+                       "2px dashed #c4b5fd", "marginBottom": "8px",
+                       "paddingBottom": "6px"}),
+            html.Div("FRESH RE-ASK (same stage, after petition)"
+                     if stage2 else "RE-ASSESSMENT (after petition)",
+                     className="unc-tag",
+                     style={"color": "#7c3aed", "margin": "2px 0"}),
+        ] + assess_view
+    return (rail_view, tickets_component(d), instruments_component(d),
             scene_component(d, run.get("image_src")),
             inspector_component(d, selected),
             total, total if following else k,
-            agent_transcript_component(log), key)
+            agent_transcript_component(log),
+            assess_view,
+            phase0_open, p0_badge, p1_badge, key)
 
 
 if __name__ == "__main__":

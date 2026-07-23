@@ -41,6 +41,7 @@ from agentic.vocabulary import (  # noqa: E402
     OTHER_LABEL,
     canonicalize_label,
     family_of,
+    is_life,
     vocabulary_prompt_block,
 )
 
@@ -56,7 +57,12 @@ from main import (  # noqa: E402
 # Perception-side state extensions, pending Sunny's motion-vocab pass in
 # main.py (PROJECT_STATE 8.3). Kept here so main.py stays untouched; migrate
 # these into NORMAL_STATES / STATE_SYNONYMS there when that pass happens.
-EXTRA_NORMAL_STATES = {"swimming", "walking", "running", "parked", "driving"}
+# "paved" added 2026-07-22 (A_fire road autopsy): the model's honest
+# first answer for a road's condition; without it, the P3 re-pick under
+# scene priming produced road·burning. Material-adjacent but honest —
+# a paved road describing itself as paved is in a normal condition.
+EXTRA_NORMAL_STATES = {"swimming", "walking", "running", "parked",
+                       "driving", "paved"}
 EXTRA_STATE_SYNONYMS = {
     "overturned": "fallen",
     "seated": "resting",
@@ -68,6 +74,8 @@ EXTRA_STATE_SYNONYMS = {
     "attending": "stationary",
     # A tanker "operating" (pumping/spraying; C_tanker run): stationary.
     "operating": "stationary",
+    # Spilled liquid gathering on the ground (C_tanker follow-up).
+    "pooling": "seeping",
 }
 
 # ── Contract ─────────────────────────────────────────────────────────────
@@ -89,6 +97,14 @@ class DetectedObject(BaseModel):
     mask_path: Optional[str] = None     # saved mask PNG, for future inpainting
     label_note: str = ""                # '' | synonym:x->y | extension:<raw> | family_name:<raw>
     vocab_extension: bool = False
+    # "original" | "petition": how this entity entered the shared record.
+    # The rationalization guard's handle — eval asks whether petitioned
+    # entities are disproportionately verdict-serving.
+    provenance: str = "original"
+    # Non-empty when code DERIVED this entity's state (medium-bound rule):
+    # records what the model actually said and why we overrode it.
+    # Default "" keeps every frozen record valid.
+    state_note: str = ""
     family_name_as_label: bool = False  # VLM answered with a family name
 
 
@@ -121,6 +137,185 @@ def state_kind(state: str) -> str:
 def normalize_state(state: str) -> str:
     raw = str(state or "").strip().lower()
     return EXTRA_STATE_SYNONYMS.get(raw, raw)
+
+
+# ── Label-aware state synonyms (C_tanker run ui_529ce417, 2026-07-22) ───
+#
+# "active" is what people say about a spill — but a GLOBAL synonym can't
+# hear it, because "active" means a different canonical state per medium.
+# The run's cost: spill·"active" stood through P3, landed kind=unknown,
+# and the declared fuel spill silently vanished from every Stage-2 check
+# (S6 guards hazard_bearing only). Same F8 law, one level finer: meet the
+# model's natural word, per label, in code.
+
+LABEL_STATE_SYNONYMS: dict[tuple[str, str], str] = {
+    ("spill", "active"): "seeping",
+    ("fire", "active"): "spreading",
+    ("smoke", "active"): "billowing",
+    ("water", "active"): "rising",
+}
+
+
+def resolve_state(label: str, state: str) -> str:
+    """Global synonyms first, then the (label, state) map. Callers that
+    know the entity's canonical label should prefer this over
+    normalize_state."""
+    raw = normalize_state(state)
+    return LABEL_STATE_SYNONYMS.get((str(label or "").strip().lower(), raw),
+                                    raw)
+
+
+# ── Duplicate-lifeform merge (E_collapse re-run ui_bcc80931) ─────────────
+#
+# The P6 ticket gives the model the chance to resolve a duplicate (merge,
+# or move the boxes apart / disambiguate). In the live run it kept both
+# copies and the round cap ran out — so five humans stayed in a
+# three-human scene. Identity at IoU >= 0.8 is a geometric fact, not a
+# perception judgment: after the loop, code merges the survivors. The
+# more specific label wins (a responder beats a generic person); the
+# dropped entry is recorded in notes, never silently vanished.
+
+_DUP_IOU = 0.8
+
+
+def _life_group(o: "DetectedObject") -> str | None:
+    if o.family in ("person", "responder"):
+        return "human"
+    if o.family == "animal":
+        return "animal"
+    return None
+
+
+def _box_iou(a: Any, b: Any) -> float:
+    try:
+        ax1, ay1, ax2, ay2 = a
+        bx1, by1, bx2, by2 = b
+    except (TypeError, ValueError):
+        return 0.0
+    ix = min(ax2, bx2) - max(ax1, bx1)
+    iy = min(ay2, by2) - max(ay1, by1)
+    if ix <= 0 or iy <= 0:
+        return 0.0
+    inter = ix * iy
+    union = ((ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter)
+    return inter / union if union > 0 else 0.0
+
+
+def merge_duplicate_lifeforms(
+    objects: list["DetectedObject"],
+) -> tuple[list["DetectedObject"], list[str], list[dict[str, Any]]]:
+    """Merge same-individual duplicates that survived the repair loop.
+    Returns (kept_objects, notes, events). Which copy survives: the
+    responder-family label beats person-family (more specific); ties go
+    to the detector-grounded / higher-confidence box."""
+
+    def _keep_score(o: "DetectedObject") -> tuple:
+        return (1 if o.family == "responder" else 0,
+                1 if o.box_source == "dino_matched" else 0,
+                o.box_confidence)
+
+    dropped: set[str] = set()
+    notes: list[str] = []
+    events: list[dict[str, Any]] = []
+    for i in range(len(objects)):
+        for j in range(i + 1, len(objects)):
+            a, b = objects[i], objects[j]
+            if (a.object_id in dropped or b.object_id in dropped
+                    or _life_group(a) is None
+                    or _life_group(a) != _life_group(b)):
+                continue
+            iou = _box_iou(a.bbox, b.bbox)
+            if iou < _DUP_IOU:
+                continue
+            keep, drop = ((a, b) if _keep_score(a) >= _keep_score(b)
+                          else (b, a))
+            dropped.add(drop.object_id)
+            notes.append(
+                f"duplicate merged: {drop.object_id} ({drop.label}·"
+                f"{drop.state}) is the same individual as "
+                f"{keep.object_id} (IoU {iou:.2f}); kept the more "
+                f"specific entry — nothing about the scene was lost")
+            events.append({"kept": keep.object_id,
+                           "dropped": drop.object_id,
+                           "iou": round(iou, 2)})
+    kept = [o for o in objects if o.object_id not in dropped]
+    return kept, notes, events
+
+
+# ── Medium-bound hazard derivation (Sunny, 2026-07-22) ───────────────────
+#
+# "No one says 'water engulfing a kid'. It's just a kid drowning in the
+# pool." In natural language the hazard lives inside the victim's VERB;
+# the schema wants it as a STATE on the water. Asking the model to say
+# `pool: engulfing` is asking it to speak outside its training
+# distribution — qwen answered `pool: normal` twice (F7), correctly,
+# about English. So the medium's hazard role is DERIVED IN CODE, never
+# demanded in the prompt. Precedent: enforce_kinds() — the declared state
+# decides, the model's claim is measured, not obeyed (main.py:1001).
+#
+# The rule stays deliberately tiny (one distress verb, water bodies only)
+# until the six-scene calibration says otherwise.
+
+MEDIUM_BOUND_HAZARDS: dict[str, tuple[str, tuple[str, ...]]] = {
+    # victim state -> (derived medium state, labels that can host it)
+    "drowning": ("engulfing", ("pool", "water")),
+}
+
+
+def _boxes_touch(a: Optional[list[int]], b: Optional[list[int]]) -> bool:
+    try:
+        ax1, ay1, ax2, ay2 = a          # type: ignore[misc]
+        bx1, by1, bx2, by2 = b          # type: ignore[misc]
+    except (TypeError, ValueError):
+        return False
+    return ax1 < bx2 and bx1 < ax2 and ay1 < by2 and by1 < ay2
+
+
+def derive_medium_hazards(record: "PerceptionResult") -> list[dict[str, Any]]:
+    """If a living being is in a medium-bound distress state, the water
+    body hosting it IS the hazard — derived here, in code, with full
+    provenance. Mutates the record in place; returns one event dict per
+    derivation. Idempotent: an already-hazardous medium is never touched,
+    and no water body in the record means no derivation (a person in
+    distress with no visible hazard legally yields empty threats).
+
+    Geometry disambiguates when it can: with several candidate media, a
+    victim bbox that touches one of them selects it; otherwise every
+    candidate is derived (the victim is in one of them, and standing
+    water beside a drowning is the scene's hazard regardless).
+    """
+    events: list[dict[str, Any]] = []
+    for victim in record.detected_objects:
+        rule = MEDIUM_BOUND_HAZARDS.get(str(victim.state).strip().lower())
+        if rule is None or not is_life(victim.label):
+            continue
+        derived_state, host_labels = rule
+        candidates = [m for m in record.detected_objects
+                      if m.label in host_labels
+                      and m.state_kind != "hazard_bearing"]
+        if not candidates:
+            continue
+        touching = [m for m in candidates
+                    if _boxes_touch(victim.bbox, m.bbox)]
+        for medium in (touching or candidates):
+            was = medium.state
+            medium.state = derived_state
+            medium.state_kind = "hazard_bearing"
+            medium.state_note = (f"derived:medium_bound:"
+                                 f"{victim.object_id}·{victim.state}"
+                                 f"(model said '{was}')")
+            note = (f"derived_hazard: {medium.object_id} '{was}' -> "
+                    f"'{derived_state}' — {victim.object_id} is "
+                    f"{victim.state}, a medium-bound state; the hosting "
+                    f"medium's hazard role is derived in code, never "
+                    f"asked of the model")
+            if note not in record.notes:
+                record.notes.append(note)
+            events.append({"medium": medium.object_id, "was": was,
+                           "now": derived_state,
+                           "victim": victim.object_id,
+                           "victim_state": victim.state})
+    return events
 
 
 # ── VLM entity naming (labels + states + rough anchor boxes) ────────────
@@ -165,13 +360,18 @@ For each entity give:
   standing, upright, dry, sealed, stationary, resting, healthy, stable,
   swimming, walking, running)
 - description: one short phrase locating it ("silver sedan in the
-  foreground", "child mid-splash near the pool center")
+  foreground", "cyclist at the crosswalk, left edge")
 - bbox: rough pixel bounding box [x_min, y_min, x_max, y_max]. Approximate
   is fine; it anchors WHICH instance you mean, not exact geometry.
 
-READ DISTRESS CAREFULLY. A person in water with arms up, splashing, head
-low is "drowning", not "swimming". A person pinned, wedged, or unable to
-move is "trapped". Distress states matter more than any other field.
+READ DISTRESS CAREFULLY, AND BIND IT TO THE MEDIUM. A person in WATER
+with arms up, splashing, head low is "drowning" (never "swimming"); a
+person pinned, wedged, or unable to move is "trapped"; someone visibly
+hurt is "injured". But distress must be VISIBLE, and each distress word
+belongs to its medium: "drowning" requires water — a person merely
+standing near a fire or other hazard is "standing" (their exposure is
+judged later, not encoded in the state). Do not escalate a state to a
+distress word the image does not show.
 
 Model each instance separately when instances differ causally (a burning
 house and an intact house are two entries). Count people individually. Do
@@ -574,13 +774,14 @@ def run_perception(
             mask.save(mask_path)
         if not e.get("bbox"):
             unlocalized.append(e["object_id"])
+        resolved = resolve_state(e["label"], e.get("state", "unknown"))
         objects.append(
             DetectedObject(
                 object_id=e["object_id"],
                 label=e["label"],
                 family=family_of(e["label"]),
-                state=str(e.get("state", "unknown")),
-                state_kind=state_kind(e.get("state", "")),
+                state=resolved,
+                state_kind=state_kind(resolved),
                 description=str(e.get("description", "")),
                 bbox=e.get("bbox"),
                 box_source=e.get("box_source", "none"),
@@ -596,6 +797,14 @@ def run_perception(
     stage_done("Mask", masks=sum(1 for o in objects if o.mask_path))
 
     stage("Assemble")
+    # Post-loop duplicate merge: the P6 ticket asked the model first; a
+    # duplicate that STOOD is resolved here, in code, with a note.
+    objects, dup_notes, dup_events = merge_duplicate_lifeforms(objects)
+    notes.extend(dup_notes)
+    kept_ids = {o.object_id for o in objects}
+    unlocalized = [oid for oid in unlocalized if oid in kept_ids]
+    for de in dup_events:
+        emit("duplicate_merged", **de)
     result = PerceptionResult(
         image_path=str(image_path),
         image_size=[image.width, image.height],
@@ -606,6 +815,8 @@ def run_perception(
         notes=notes,
         repair_trace=repair_trace,
     )
+    for ev in derive_medium_hazards(result):
+        emit("hazard_derived", **ev)
     (out_dir / f"{image_path.stem}__perception.json").write_text(
         result.model_dump_json(indent=2)
     )

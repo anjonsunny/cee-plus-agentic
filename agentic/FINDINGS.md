@@ -1,0 +1,477 @@
+# Arm B — Findings Ledger
+
+## FIX TAXONOMY (living table — categorize every new finding on entry)
+
+| Cat | Failure mode | Findings | Count |
+|---|---|---|---|
+| A | LANGUAGE GAP — schema can't hear the model's honest English | F8, F11, F12, F10(paved) | 4 |
+| B | INDUCED ERROR — model was right until our machinery pressured it | F1, F2, F5, F10 | 4 |
+| C | LAWBOOK COLLISION — our rules fighting each other | F3, F9 | 2 |
+| D | JUDGE NOISE / BIAS — ill-posed questions, severity-minimizing | F4(open), F5, F11 | 3 |
+| E | GENUINE MODEL ERROR — unstable second looks; flat self-confidence; reflection jitter | F7(parts), jitter | ~2 |
+
+**Standing observation (through F12, 4 of 6 scenes):** only ~2 of ~15
+defects were the subject model failing unprompted. The dominant modes
+are OURS (A + B = 8). The model's true deficit list: (1) capitulates
+under any authoritative pressure — the thread through every B incident;
+(2) second looks lose entities already found; (3) self-reported
+confidence is flat 0.95, informationless. First-look perception has
+been good on every scene so far. For the paper: fixing the model mostly
+means fixing the INTERVIEW, not the witness.
+
+---
+
+Running record of research findings produced by the agentic conversion.
+Each entry: what happened, the evidence trail, what changed because of
+it, and status. This file is the paper's raw material.
+
+---
+
+## F1 · Reflection-induced capitulation
+**Date:** 2026-07-22 · **Scene:** B_pool · **Status:** fixed, verified
+
+Told "your scenario is unstable" (a scenario_flip trigger), the subject
+resolved the doubt by folding: `Yes · drowning · 9` became
+`No · N/A · 0` — on a drowning scene — while its own answer still listed
+two children in distress. The run ended "clean" because S2/S3 existed
+only as rulebook text, not code. ΔU did not flag it (0.25 → 0.225).
+
+**Fix:** S2/S3/emptiness checks in code; capitulation guard (doubt
+phrased as evidence, never as the model's reliability). **Verified:**
+next run held `Yes · 9` through 2 rounds; regression test replays the
+exact failure.
+
+**Claim for the paper:** evidence-triggered reflection is not
+automatically safe; doubt-framing alone can flip a correct verdict.
+
+---
+
+## F2 · Prompt-repair side effects
+**Date:** 2026-07-22 · **Scene:** A_fire (live runs) · **Status:** fixed, verified
+
+The distress-emphasis block added to the perception prompt (to fix
+B_pool's missed second child) caused a deterministic hallucination on
+A_fire: `person_1 · drowning` beside a burning house, identically on
+every temp-0 run. The emphasized worked example ("drowning") leaked into
+unrelated scenes.
+
+**Fix:** medium-bound distress wording ("drowning requires water; a
+person merely standing near a hazard is standing"). **Verified:** next
+run: `person_1 · standing`, proximity at-risk derived correctly.
+
+**Claim:** prompt repairs are interventions with side effects; a fixed
+calibration set that is re-run after every prompt change is the
+regression harness that catches them.
+
+---
+
+## F3 · Baseline schema pressure explains victim-as-threat
+**Date:** 2026-07-22 · **Scene:** B_pool · **Status:** understood; petition design follows it
+
+The subject repeatedly drafted drowning children into the threat slot
+(2 capped rounds, S5 each time). Root cause found in the baseline
+ontology (main.py:26/104): every at-risk entry must be `affected_object`
+of a recommendation quad; quads need a threat slot; self-loops are
+forbidden. The designed escape is the ENGULFING medium (the pool as its
+own hazard entity) — which Stage 1 never declared. The model needs a
+hazard to exist; given none, it invents one from available parts.
+
+**Consequence:** the re-perception petition for drowning-shaped scenes
+should request the engulfing medium specifically, citing the fluid
+convention.
+
+---
+
+## F4 · Judge conservatism (llama3.1:8b) — OPEN, collecting data
+**Status:** 2 data points, watching
+
+| # | Scene / run | Judge role | Verdict | vs GT |
+|---|---|---|---|---|
+| 1 | A_fire live (pre-evidence-basis fix) | pairwise | preferred PRE (minimal threats) | GT said POST was REFINEMENT → judge WRONG |
+| 2 | A_fire live (post-fix, full evidence basis) | runoff | preferred the MINORITY `L4` reading over the 4/5 `L8-9` majority | GT scored the followed advice FALSE CERTAINTY → judge WRONG (severity-minimizing) |
+| 2b | same run | pairwise | preferred PRE (`L7`, no car_1) | GT agreed → judge RIGHT |
+
+Emerging pattern: llama3.1 as judge favors LOWER severity and SMALLER
+entity sets. Note #2 vs #2b: the same judge family steered the
+degradation and then correctly flagged it — advisory bias is
+direction-dependent (it pushes down, and approves of down-pushes it
+didn't cause being undone).
+
+**Decision pending (Sunny):** after more scenes, either swap judge
+model (e.g. mistral) or keep llama behind a substantiation gate
+(advice forwarded only when the judge's reason cites a declared
+entity/state). Until decided, runoff/pairwise remain ADVISORY ONLY and
+every verdict lands in this table.
+
+---
+
+## F5 · Judge-induced false certainty
+**Date:** 2026-07-22 · **Scene:** A_fire live · **Status:** open; mitigations proposed
+
+The runoff advice (F4 #2) was taken by the subject AGAINST its own 4/5
+probe majority: severity L7→L4, fire_1 dropped from threats (it was in
+4/5 probe threat lists), car_1 added as a "threat" with a victim-shaped
+reason. GT error 0.0 → 2.0 while U fell 0.311 → 0.289: the FALSE
+CERTAINTY quadrant, entered via an advisory judge.
+
+Defense-in-depth held: S6 fired for the dropped fire_1 (STOOD), S5
+fired for car_1 (STOOD), pairwise+GT flagged the degradation, the
+quadrant labeled it. Nothing was silently blessed — but the degradation
+still shipped as the final answer.
+
+**Proposed mitigations (pending approval):** (a) minority-advice caveat
+in the composed runoff block ("4/5 of your own readings disagree with
+this judge"); (b) substantiation gate — advice forwarded only if the
+judge's reason cites a declared entity or state word.
+
+**Claim:** advisory judges are an attack surface for the same
+capitulation dynamics as reflection itself; authority must be earned
+per-utterance (evidence-citing), not granted per-role.
+
+---
+
+## F6 · The instrument catches its own machinery
+**Standing observation across F1, F2, F5**
+
+Every degradation so far was caused by our own agentic apparatus
+(reflection framing, prompt repair, judge advice) and every one was
+caught by a different layer of the same apparatus (code checks, frozen
+calibration reruns, GT quadrant). This mutual surveillance — no
+component trusted, every component measured — is the design working,
+and arguably the paper's central demonstration.
+
+---
+
+## F7 · The petition's maiden run (B_pool, live, 2026-07-22)
+**Status:** rich partial success; three fixes shipped from one run
+
+What happened, from the event ledger (ui_81f6c174):
+
+1. **The fight:** assessment put BOTH drowning children in the threat
+   slot (S5 ×2), reflection could not fix it (cap_reached) → petition
+   fired, exactly per design, with both problems located in the
+   previous answer.
+2. **Partial resolution:** post-petition, child_2 left the threat list
+   (S5 pressure halved: 2 violations → 1). child_1-as-threat persisted.
+3. **The engulfing refusal:** the re-perception DID return the pool —
+   with state `normal`. The baseline's designed escape (pool·engulfing
+   when water contains a distress victim) is exactly what qwen declines
+   to apply, twice now. With the pool declared "normal", the assessor
+   still has no legal hazard, so the victim-as-threat pressure cannot
+   fully resolve. Candidate next probe: does the fluid-convention
+   wording in the perception prompt under-teach `engulfing`?
+4. **Fresh eyes lost a victim:** the second look OMITTED child_2
+   entirely (face-down, motionless, tiny distant bbox) and the
+   lifeguard chair. The wholesale-replace merge accepted the deletion —
+   a drowning child erased from the shared record by the repair
+   machinery. FIXED: the NO-ERASURE RULE — petitions may add (two
+   witnesses) but never delete; omitted originals are preserved and
+   recorded as DISPUTES. Sunny's live run is the regression test.
+5. **Weak reasons (Sunny's observation):** the reasons for the
+   children-as-threats were generic. SHIPPED: weak_reason triggers —
+   the talking-points check now FEEDS reflection (round 1 only, never
+   rumination): uncited reasons get the offending text quoted plus the
+   expectation ("name the declared state + the specific causal
+   mechanism"). Mechanism-quality judging (R2) stays with the LLM
+   rubric, on demand.
+6. **UI shadow bug:** `for v in viols:` leaked and overwrote the
+   verdict variable — the petition comparison printed `None·LNone`.
+   Fixed + comparison now reads the verdict explicitly.
+
+**Claims for the paper:** (a) re-perception under petition is not
+monotone — a second look can LOSE true entities while gaining the
+missing one; union-merge with dispute recording is the safe composition.
+(b) A petition can be procedurally perfect and still fail on an
+ontology-application gap (engulfing) — the trigger diagnosed the right
+disease, but the cure needs the perceiver to know the convention.
+
+---
+
+## F8 · The engulfing refusal was a schema-language gap, not a model failure
+**Date:** 2026-07-22 · **Scene:** B_pool (F7 follow-up) · **Status:** fixed in code (medium-bound derivation)
+
+Sunny's diagnosis, verbatim in spirit: nobody says "water engulfing a
+kid" — a kid drowns IN the pool. In natural language the hazard lives
+inside the victim's verb; the schema wanted it as a state on the water.
+`pool: normal` was qwen speaking correct English, twice, while the
+ontology demanded a phrase outside its training distribution.
+
+**Fix:** `derive_medium_hazards()` (perception.py) — if a living being
+is in a medium-bound distress state (currently: drowning), the water
+body hosting it is derived `engulfing · hazard_bearing` IN CODE, with
+full provenance (`state_note` records what the model actually said and
+which victim caused the override; a record note + `hazard_derived`
+event + UI banner make it visible everywhere). Geometry disambiguates
+between multiple water bodies; no water body perceived → nothing is
+invented (distress with no visible hazard still legally yields empty
+threats). Applied at the end of run_perception AND at the
+run_assessment boundary (idempotent), so frozen records and
+petition-merged records are covered alike. Precedent: enforce_kinds()
+— the declared state decides; the model's claim is measured, not
+obeyed.
+
+**What it dissolves:** the S5 pressure behind every B_pool fight
+(F1, F3, F7). With the pool derived hazardous the assessor finally has
+a legal threat, so drowning children stop being drafted into the
+threat slot to satisfy the quad ontology.
+
+**Claim for the paper:** ontology terms must live inside the model's
+natural language distribution, or be derived in code — never demanded
+in the prompt. The failure mode is silent: the model answers the
+distributionally-correct thing ("normal") and the pipeline reads it as
+a perception error.
+
+---
+
+## F9 · The caption matcher fights the fluid convention
+**Date:** 2026-07-22 · **Scene:** A_fire live (ui_390b7dd2) · **Status:** fixed (fluid-aware P5), model exonerated
+
+The VLM's own perception followed the fluid convention exactly: house_1
+·burning, no fire entity. Then P5's naive noun-match read "a house ON
+FIRE" in the caption, found no 'fire' entity, and ticketed — so Loop 1
+manufactured a redundant fire_1·burning. Downstream, S6 prosecuted the
+model for leaving fire_1 out of threats. The model STOOD twice
+(threats=[house_1] — exactly GT), paying for its correctness with
+destabilized uncertainty: U 0.114 → 0.275 while GT error stayed 0.
+
+One layer of the apparatus (the caption matcher) contradicted the
+convention another layer teaches (attached fire is a STATE), a third
+layer (S6) prosecuted the artifact, and only the subject's earned
+stubbornness (F1's capitulation guard) kept the answer clean. When two
+of our rules collide, the bug is in the lawbook, never the defendant.
+
+**Fix:** fluid-convention-aware P5 — a caption's mention of an attached
+medium is satisfied by an entity carrying the state: "fire"/"flames"/
+"blaze" ← any burning/burnt entity; "water"/"flood" ← any flooded
+entity. Kept deliberately strict everywhere else: free-burning phrasings
+("brush fire", "wildfire") still demand a fire entity; smoke/dust/gas
+are always diffuse and always owed; spill is still owed beside a leaking
+producer (producer-and-medium rule). Rulebook P5 text updated to match
+(one law, two engines).
+
+**Residual risk, accepted:** a caption saying just "fire" over a scene
+with BOTH a burning structure AND a separate free fire will not ticket
+the free fire. That gap belongs to the petition layer and the GT
+harness, and is recorded here rather than papered over.
+
+**Claim for the paper:** completeness checks against input text must be
+ontology-aware, or they manufacture the very incoherence the pipeline
+then spends model calls prosecuting. Cross-layer rule collisions are
+detectable precisely because every layer writes to the same ledger.
+
+---
+
+## F10 · Check-pressure capitulation without a judge (the road promotion)
+**Date:** 2026-07-22 · **Scene:** A_fire re-run (ui_34d8177e) · **Status:** fixed (S8 + richer geometry)
+
+Post-F9 re-run: no fire ticket, no phantom fire_1 (F9 verified). But a
+new shape appeared. P5 correctly demanded a road entity ("street" in
+caption); scolded last run for out-of-vocab "paved", the model
+overcorrected and declared road_1·burning — scene-primed state coercion
+("dry" and "intact" were on the list). S6 then charged road_1 missing
+from threats, and reflection resolved it the cheap way: the model
+PROMOTED the road to threats with the reason "could be at risk if the
+fire spreads" — a victim-shaped sentence in the threat slot. Run ended
+"clean"; U tripled 0.067 → 0.225. No judge spoke: this is F5's
+capitulation dynamic with pure check-pressure as the persuader.
+
+The model's own reason text is the tell — it does not believe the
+promotion it made. Repair authority flowed the wrong way: the evidence
+indicted the upstream state, and the repair went downstream.
+
+**Fixes shipped:**
+1. **S8 `threat_reason_victim_shaped`** (code check, deterministic,
+   direction-sensitive: "is/could be at risk" matches, "puts X at risk"
+   never does) + rulebook chunk with both legal exits (leave threats, or
+   stand by the state and name what it harms; disputing the state is
+   recorded, not punished) + talking-points card line. S8 surviving
+   reflection is PETITIONABLE — the contradiction indicts the perception
+   artifact, so the petition path opens, per the loop principle.
+2. **Richer overlap hints** — the run also showed every geometry pair
+   reading identically as "overlap, 0px" (whole-street road box, large
+   house boxes). Overlap hints now carry containment (% of the smaller
+   box covered) and center distance; edge-gap stays for adjacency.
+
+**Claims:** (a) advisory judges are not required for capitulation —
+any pressure channel (checks included) can extract a schema-legal,
+causally-absurd answer; defenses must read the STORY, not just the
+slots. (b) Repair prompts have side effects on later runs of the same
+scene (the "paved" scolding produced "burning") — state coercion is
+F2's lesson recurring at the state level.
+
+**F10 addendum (same day):** the P3 repair instruction itself was an
+accelerant. Its old rendering chained "...matches what you see:
+hazard-bearing: burning, ..." — a colon structure that binds "what you
+see" to the hazard family, with `burning` as the first legal word
+offered, in a fire-saturated scene. Sunny misparsed it the same way on
+first read; a 7B model plausibly did too. Fixed three ways, all
+presentational (no rule change, prompt neutrality intact): (1) NORMAL
+family now leads the word list — positional bias now pulls toward the
+statistically honest prior ("most entities in most scenes are normal",
+said explicitly); (2) the colon chain is broken; (3) one closing line
+names the failure generically: "pick the word that matches THIS
+entity's own condition, not the scene's overall situation." Plus
+`paved` admitted to EXTRA_NORMAL_STATES — the model's honest first
+answer for the road no longer draws a ticket at all, so the coercion
+round never happens. Claim: repair-prompt MICRO-STRUCTURE (ordering,
+punctuation) is an intervention surface with measurable side effects,
+same law as F2 at a finer grain.
+
+---
+
+## F11 · "Active" is what people say about a spill (C_tanker, ui_529ce417)
+**Date:** 2026-07-22 · **Status:** both fixes shipped
+
+Two findings from one run.
+
+**1 · The unknown-kind blind spot.** P5 (post-F9 strictness) correctly
+demanded the spill entity beside the leaking tanker. The model added
+`spill · "active"` — natural English — P3 ticketed it, the model STOOD,
+and the state landed kind=unknown. Consequence: a DECLARED FUEL SPILL
+silently vanished from every Stage-2 check (S6 guards hazard_bearing
+only); threats shipped without spill_1 and nothing fired. Fix:
+LABEL-AWARE state synonyms — a global map can't hear "active" because
+it means a different canonical state per medium: (spill, active) →
+seeping; (fire, active) → spreading; (smoke, active) → billowing;
+(water, active) → rising; plus "pooling" → seeping. Applied in the
+record AND in P3 (the honest word no longer draws a ticket, so the
+stand-off never happens). Same law as F8, one level finer.
+
+**2 · The pairwise judge was asked an undefined question.** Reflection's
+round changed only prose; the auto-pairwise gate keyed on `changed`
+(any text diff), so llama was forced to rank two answers whose DECISION
+layers were identical — and it confabulated a preference ("POST is more
+accurate because it correctly identifies..."). Noise wearing an F4
+costume. Fix: SUBSTANTIVE-CHANGE GATE — auto-pairwise convenes only
+when the decision layer moved (scenario, type FAMILY, severity BUCKET,
+threat set, at-risk set+kinds — the same folds the probe machinery
+uses); prose-only changes log `pairwise_skipped` and the judge card
+says so. Within-bucket level wiggles and type re-wordings never summon
+a judge (that is the U-machinery's jurisdiction). This run's verdict
+is EXCLUDED from the F4 table.
+
+Also observed, third instance: U rose through a "clean" reflection
+(0.143 → 0.2; type and bucket splits appeared after a prose-only
+change) — reflection perturbs stability even when it changes nothing
+substantive. Pattern now has three sightings (B_pool F7, A_fire F10,
+here); candidate name for the paper: "reflection jitter".
+
+**Claim:** judge questions must be well-posed before judge answers are
+data — a forced choice between equivalent options measures the judge's
+bias, not the answer's quality (and belongs in F4 only as a bias probe,
+never as a quality verdict).
+
+---
+
+## F12 · A whole petition ran on one missing synonym (D_aerial, ui_c7b362ef)
+**Date:** 2026-07-22 · **Status:** fixed (compound spill synonyms); apparatus behaved correctly throughout
+
+The chain: P5 demanded a spill (caption "chemicals"). The model answered
+`chemical_spill` — MORE specific than our noun — but the synonym map
+only knew "chemical". So: label fell to `other` (escape hatch), DINO
+had no noun to ground (SAM fallback box), P3 ticketed the state, the
+caption ticket for 'spill' STOOD through cap_reached... and the
+petition fired, exactly per design. The second look omitted the entity
+entirely; NO-ERASURE kept other_1·spreading in the record as a DISPUTE,
+nothing merged, no cascade. Meanwhile the assessment layer did its job:
+S6 caught other_1 missing from threats, reflection added it (plus
+ambulance·proximity from the new rich geometry hints), runoff convened
+at U 0.222 and sided with the majority reading (F4 data point: no
+severity-minimizing this time).
+
+**The lesson:** every layer executed its charter correctly, and the run
+still burned ~20 model calls prosecuting a vocabulary gap. Upstream
+name resolution is the cheapest layer in the whole stack — and the only
+one that could have made the entire episode unnecessary. Fixed:
+chemical_spill / oil_spill / fuel_spill / spillage / hazmat_spill →
+spill.
+
+**Also:** 4th sighting of reflection jitter (U 0.222 → 0.275 through a
+"clean" round). The pattern is now consistent enough to measure
+systematically after the calibration set completes.
+
+**Claim:** in a layered repair architecture, the cost of a gap is paid
+at the most expensive layer that can compensate for it, not the
+cheapest one that could have prevented it. Vocabulary completeness is
+therefore a first-class reliability concern, not housekeeping.
+
+---
+
+## F13 · The locked-room ticket, and five humans in a three-human scene
+**Date:** 2026-07-22 · **Scene:** E_collapse (ui_20fb0754) · **Status:** both fixed · **Taxonomy: C + B**
+
+Assessment was flawless (Yes · Structural Collapse · L8, S6 pulled
+dust_1 into threats, person_1·distress, zero jitter — first run with
+U flat). Both defects were upstream, and both were ours.
+
+**1 · The locked room (Cat C).** The model labeled a police car
+'infrastructure' (family name) while its own description said "police
+car with flashing lights". Our P1 ticket quoted ONLY the infrastructure
+family's members and closed with "if none fits, use 'other'" — a menu
+without the answer, twice, so the model lawfully fell to other_1. The
+correction was a locked room. FIX: the P1 template now quotes the
+entity's OWN description back and permits the full vocabulary ("ANY
+family, not only '{raw_label}'"). Evidence-first, never coaching — the
+description is the model's own words.
+
+**2 · Duplicate humans (Cat B, machinery-induced).** The model listed
+the two officers as person_2/person_3 (honest descriptions: "police
+officer behind caution tape"). P5's family-lenient match treats person
+and responder as different families, so the 'police_officer' caption
+ticket fired and the model ADDED both officers again: five humans in a
+three-human scene (Sunny confirmed ground truth: one man trapped, two
+officers). Phantom lives corrupt geometry pairs, membership votes, and
+Stage 4 consequence weighting. FIX: P6 `duplicate_entity` — two
+same-life-group entities (person/responder = one human group; animal
+separate) with IoU ≥ 0.8 draw a ticket quoting both descriptions; the
+MODEL resolves (merge under the better label, or keep both and
+disambiguate). Calibrated on this run: true duplicates ≈ 0.94 IoU,
+the two real adjacent officers ≈ 0.1.
+
+**Claim:** correction channels need the same design care as first-pass
+prompts — a repair menu scoped to the wrong category converts a small
+error into a permanent one, and a completeness check blind to identity
+mints phantom people. Both fixes use only the model's own prior words
+as evidence.
+
+---
+
+## F14 · Petition routing: send the complaint to the stage that made the mistake
+**Date:** 2026-07-22 · **From:** E_collapse (ui_e45e9956) · **Status:** built
+
+That run's petition re-looked at the image — but the image was read
+correctly. The mistake was the sorting: the trapped man was put in the
+threat list. An image look can't fix a sorting mistake, so it came back
+empty ("unresolved") after a full re-perception.
+
+Fix, per Sunny's routing idea (and the loop principle — repair
+authority follows the evidence):
+
+  entity list might be wrong  → stage 1: re-look at the IMAGE
+    (caption names something nobody found, or the verdict wants a
+     danger source and the record declares none — the B_pool shape)
+
+  facts fine, sorting wrong   → stage 2: re-ask the QUESTION once
+    (legal hazards already declared; a fresh clean ask, previous
+     answer shown, problems quoted with their rules, "return it
+     unchanged if you stand by it"; one model call, cap 1, the
+     record is never touched)
+
+On the E_collapse shape this costs 1 model call instead of a full
+re-perception cascade, and aims at the actual patient. UI shows
+"PETITION → SAME STAGE (question re-asked fresh)" with the perception
+panels left alone. Also added: the WHERE-ARE-WE progress strip (per
+Sunny) — every pipeline step as a chip: ✓ done, ● now (pulsing, with a
+plain line of what's happening), ○ not started.
+
+**F13 addendum (E_collapse re-run ui_bcc80931):** the P6 ticket fired
+correctly in round 2 — but the model kept both copies and the round cap
+ran out, so the five-humans record shipped anyway. The model gets asked
+first; a duplicate that STOOD is now resolved IN CODE at assembly:
+same-group entities with IoU >= 0.8 merge, the more specific label wins
+(responder beats person), the dropped entry is written into notes and a
+`duplicate_merged` event ("nothing about the scene was lost").
+Same precedent as enforce_kinds: identity at near-total overlap is a
+geometric fact, not a perception judgment. Also explains Sunny's
+overlay confusion: the officer boxes were EXACTLY underneath the
+person boxes, so only one label was visible per human.

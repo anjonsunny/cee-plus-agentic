@@ -1,0 +1,209 @@
+{
+  "assessment": {
+    "disaster_scenario": "Yes",
+    "disaster_type": "Fuel leak and fire",
+    "disaster_level": 7,
+    "severity_bucket": "catastrophic",
+    "threats": [
+      {
+        "object_id": "tanker_truck_1",
+        "reason": "Leaking fuel"
+      },
+      {
+        "object_id": "fire_1",
+        "reason": "Spreading brush fire"
+      },
+      {
+        "object_id": "spill_1",
+        "reason": "Fuel spill from tanker truck"
+      }
+    ],
+    "at_risk": [
+      {
+        "object_id": "person_1",
+        "kind": "proximity",
+        "reason": "Potential exposure to leaking fuel or explosion risk"
+      },
+      {
+        "object_id": "road_1",
+        "kind": "proximity",
+        "reason": "Damaged and overlapped by hazardous entities"
+      }
+    ],
+    "reasoning": "The tanker truck is leaking fuel, which poses a significant fire risk due to the nearby brush fire. The person standing on the road adjacent to the tanker truck could be in distress if they were to come into contact with the leaking fuel or if there's an explosion. The road appears damaged and overlaps both the tanker truck and the spill, indicating potential hazards for vehicles and pedestrians.",
+    "self_confidence": null
+  },
+  "parse_notes": [
+    "reflect_r1:no_self_confidence_reported",
+    "reflect_r2:no_self_confidence_reported"
+  ],
+  "violations": [],
+  "raw_answer": {
+    "reasoning": "The tanker truck is leaking fuel, which poses a significant fire risk due to the nearby brush fire. The person standing on the road adjacent to the tanker truck could be in distress if they were to come into contact with the leaking fuel or if there's an explosion. The road appears damaged and overlaps both the tanker truck and the spill, indicating potential hazards for vehicles and pedestrians.",
+    "disaster_scenario": "Yes",
+    "disaster_type": "Fuel leak and fire",
+    "disaster_level": 7,
+    "threats": [
+      {
+        "object_id": "tanker_truck_1",
+        "reason": "Leaking fuel"
+      },
+      {
+        "object_id": "fire_1",
+        "reason": "Spreading brush fire"
+      }
+    ],
+    "at_risk": [
+      {
+        "object_id": "person_1",
+        "kind": "distress",
+        "reason": "Potential exposure to leaking fuel or explosion risk"
+      },
+      {
+        "object_id": "road_1",
+        "kind": "proximity",
+        "reason": "Damaged and overlapped by hazardous entities"
+      }
+    ],
+    "confidence": 0.95
+  },
+  "measured_uncertainty": {
+    "n_probes": 5,
+    "scenario_agreement": 1.0,
+    "type_agreement": 1.0,
+    "bucket_agreement": 0.8,
+    "level": {
+      "min": 5.0,
+      "max": 9.0,
+      "std": 1.497
+    },
+    "score": 0.143,
+    "drivers": [
+      {
+        "kind": "bucket_split",
+        "evidence": "probes straddle severity buckets: catastrophic×4, serious×1 (levels 5-9)",
+        "action": "severity sits on a bucket boundary — Stage 12 must treat escalation/de-escalation readings on this scene as within-noise unless the shift crosses TWO buckets"
+      },
+      {
+        "kind": "threat_membership_split",
+        "evidence": "spill_1 appears in only 1/5 probe threat lists",
+        "action": "reflect on spill_1 specifically: quote its state, the geometry hint that nominates it, and ask for a decision with cited evidence (rules G1-G4)"
+      }
+    ],
+    "explanation": "The uncertainty in this verdict stems from probes straddling severity buckets, with four out of five probes indicating a catastrophic level (7) and one probe suggesting a less severe classification (5). This bucket splitting indicates that the severity assessment is close to a boundary. To reduce this uncertainty, specifically address spill_1 by quoting its state and the geometry hint that nominates it, then seek a decision with cited evidence to clarify its presence or absence in the threat list.",
+    "explainer": "llm",
+    "granular": {
+      "fields": {
+        "disaster_scenario": {
+          "u": 0.0,
+          "evidence": "Yes×5"
+        },
+        "disaster_type": {
+          "u": 0.0,
+          "evidence": "fire×5"
+        },
+        "disaster_level": {
+          "u": 0.2,
+          "evidence": "levels 9×2, 5×1, 8×1, 7×1 -> buckets catastrophic×4, serious×1"
+        }
+      },
+      "threats": {
+        "fire_1": {
+          "u": 0.0,
+          "votes": "5/5"
+        },
+        "spill_1": {
+          "u": 0.8,
+          "votes": "1/5"
+        },
+        "tanker_truck_1": {
+          "u": 0.0,
+          "votes": "5/5"
+        }
+      },
+      "at_risk": {
+        "person_1": {
+          "u": 0.0,
+          "votes": "5/5"
+        }
+      }
+    }
+  },
+  "reflection_trace": {
+    "rounds": [
+      {
+        "round_number": 1,
+        "triggers": [
+          {
+            "type": "violation",
+            "kind": "at_risk_kind_mismatch",
+            "evidence": "person_1: model claimed kind=distress, but its declared state 'standing' (normal) derives kind=proximity — the state alone decides (G4, schema-strict)"
+          },
+          {
+            "type": "violation",
+            "kind": "hazard_not_in_threats",
+            "evidence": "spill_1 carries hazard-bearing state 'leaking' but is absent from threats"
+          },
+          {
+            "type": "membership_split",
+            "list": "threats",
+            "object_id": "fire_1",
+            "votes": "3/5"
+          },
+          {
+            "type": "membership_split",
+            "list": "threats",
+            "object_id": "spill_1",
+            "votes": "2/5"
+          },
+          {
+            "type": "membership_split",
+            "list": "threats",
+            "object_id": "tanker_truck_1",
+            "votes": "3/5"
+          },
+          {
+            "type": "membership_split",
+            "list": "at_risk",
+            "object_id": "road_1",
+            "votes": "2/5"
+          },
+          {
+            "type": "field_instability",
+            "driver": "scenario_flip",
+            "evidence": "probes split on disaster_scenario: Yes×4, No×1"
+          },
+          {
+            "type": "field_instability",
+            "driver": "bucket_split",
+            "evidence": "probes straddle severity buckets: serious×2, catastrophic×2, none×1 (levels 0-7)"
+          }
+        ],
+        "instruction": "You previously assessed this scene. Specific problems were found with your answer, each cited below with the rule it concerns and the evidence. Reconsider ONLY what the evidence demands; do not change what was not questioned.\n\nYOUR PREVIOUS ANSWER:\n{\n \"disaster_scenario\": \"Yes\",\n \"disaster_type\": \"Fuel leak and fire\",\n \"disaster_level\": 7,\n \"severity_bucket\": \"catastrophic\",\n \"threats\": [\n  {\n   \"object_id\": \"tanker_truck_1\",\n   \"reason\": \"Leaking fuel\"\n  },\n  {\n   \"object_id\": \"fire_1\",\n   \"reason\": \"Spreading brush fire\"\n  }\n ],\n \"at_risk\": [\n  {\n   \"object_id\": \"person_1\",\n   \"kind\": \"proximity\",\n   \"reason\": \"Potential exposure to leaking fuel or explosion risk\"\n  },\n  {\n   \"object_id\": \"road_1\",\n   \"kind\": \"proximity\",\n   \"reason\": \"Damaged and overlapped by hazardous entities\"\n  }\n ],\n \"reasoning\": \"The tanker truck is leaking fuel, which poses a significant fire risk due to the nearby brush fire. The person standing on the road adjacent to the tanker truck could be in distress if they were to come into contact with the leaking fuel or if there's an explosion. The road appears damaged and overlaps both the tanker truck and the spill, indicating potential hazards for vehicles and pedestrians.\",\n \"self_confidence\": 0.95\n}\n\nPROBLEMS:\n- PROBLEM: person_1: model claimed kind=distress, but its declared state 'standing' (normal) derives kind=proximity — the state alone decides (G4, schema-strict)\n  RULE G4: The entity's declared state ALONE decides the at-risk kind (baseline main.py:26, schema-strict): at-risk vocabulary -> distress; normal vocabulary -> proximity. Both directions are errors: downgrading a drowning child to proximity, or promoting a standing bystander to distress.\n  WHY: Distress means harm is ACTUALIZED (present tense); proximity means harm is IMMINENT (potential). The causal graph reads tense from the state, and suppression plans different actions for each — a mislabeled kind corrupts the chain downstream.\n  EXAMPLE: WRONG: person_1 (standing) marked distress for 'potential exposure to fuel' — potential danger from nearness IS proximity. WRONG: child_1 (drowning) marked proximity. RIGHT: the state decides.\n- PROBLEM: spill_1 carries hazard-bearing state 'leaking' but is absent from threats\n  RULE S6: On a 'Yes' verdict, every declared hazard-bearing entity belongs in threats — or the answer must argue concretely why it is not currently a source of harm.\n  WHY: A declared hazard the threat list forgets can never be suppressed at Stage 8 and silently corrupts coverage. Forgetting is invisible; arguing is auditable.\n  EXAMPLE: C_tanker_fire: spill_1 (seeping) declared, threats list only tanker_truck_1 and fire_1 — the spill is the spreading medium and belongs in threats.\n- UNSTABLE MEMBERSHIP: fire_1 appeared in only 3/5 probe threats lists. Its declared state: spreading (hazard_bearing). Geometry: no hazard nearby by declared boxes.\n  RULE G1: An entity whose box overlaps or sits adjacent to an active hazard's box is a PROXIMITY at-risk CANDIDATE.\n  RULE G3: Box adjacency is 2D image-plane evidence: it NOMINATES proximity candidates but never convicts; real closeness is 3D and may need a visual check.\n  DECIDE: does fire_1 belong in threats? Cite the state and the spatial evidence either way.\n- UNSTABLE MEMBERSHIP: spill_1 appeared in only 2/5 probe threats lists. Its declared state: leaking (hazard_bearing). Geometry: no hazard nearby by declared boxes.\n  RULE G1: An entity whose box overlaps or sits adjacent to an active hazard's box is a PROXIMITY at-risk CANDIDATE.\n  RULE G3: Box adjacency is 2D image-plane evidence: it NOMINATES proximity candidates but never convicts; real closeness is 3D and may need a visual check.\n  DECIDE: does spill_1 belong in threats? Cite the state and the spatial evidence either way.\n- UNSTABLE MEMBERSHIP: tanker_truck_1 appeared in only 3/5 probe threats lists. Its declared state: leaking (hazard_bearing). Geometry: no hazard nearby by declared boxes.\n  RULE G1: An entity whose box overlaps or sits adjacent to an active hazard's box is a PROXIMITY at-risk CANDIDATE.\n  RULE G3: Box adjacency is 2D image-plane evidence: it NOMINATES proximity candidates but never convicts; real closeness is 3D and may need a visual check.\n  DECIDE: does tanker_truck_1 belong in threats? Cite the state and the spatial evidence either way.\n- UNSTABLE MEMBERSHIP: road_1 appeared in only 2/5 probe at_risk lists. Its declared state: damaged (unknown). Geometry: road_1 overlap fire_1 (gap ≈ 0px; raw boxes [2, 467, 1671, 939] vs [314, 385, 461, 478]).\n  RULE G1: An entity whose box overlaps or sits adjacent to an active hazard's box is a PROXIMITY at-risk CANDIDATE.\n  RULE G3: Box adjacency is 2D image-plane evidence: it NOMINATES proximity candidates but never convicts; real closeness is 3D and may need a visual check.\n  DECIDE: does road_1 belong in at_risk? Cite the state and the spatial evidence either way.\n- VERIFY (scenario_flip): re-derive this field from the evidence below, independently of any previous answer.\n  DECLARED DANGER STATES: tanker_truck_1·leaking (hazard_bearing), spill_1·leaking (hazard_bearing), fire_1·spreading (hazard_bearing)\n  RULE S1: The verdict must agree with its own severity: scenario 'No' requires level 0 and type N/A; scenario 'Yes' requires level >= 1.\n  A scene whose declared states include active hazards or victims cannot be 'No'; a scene with neither cannot be 'Yes'. State which specific entity states your verdict and severity rest on.\n- VERIFY (bucket_split): re-derive this field from the evidence below, independently of any previous answer.\n  DECLARED DANGER STATES: tanker_truck_1·leaking (hazard_bearing), spill_1·leaking (hazard_bearing), fire_1·spreading (hazard_bearing)\n  RULE S1: The verdict must agree with its own severity: scenario 'No' requires level 0 and type N/A; scenario 'Yes' requires level >= 1.\n  A scene whose declared states include active hazards or victims cannot be 'No'; a scene with neither cannot be 'Yes'. State which specific entity states your verdict and severity rest on.\n\nReply with the SAME JSON schema as before (reasoning, disaster_scenario, disaster_type, disaster_level, threats, at_risk, confidence), fully corrected. If you believe your original answer was right, return it unchanged and say why in 'reasoning'.",
+        "changed": true,
+        "violations_after": [
+          {
+            "kind": "hazard_not_in_threats",
+            "evidence": "spill_1 carries hazard-bearing state 'leaking' but is absent from threats"
+          }
+        ]
+      },
+      {
+        "round_number": 2,
+        "triggers": [
+          {
+            "type": "violation",
+            "kind": "hazard_not_in_threats",
+            "evidence": "spill_1 carries hazard-bearing state 'leaking' but is absent from threats"
+          }
+        ],
+        "instruction": "You previously assessed this scene. Specific problems were found with your answer, each cited below with the rule it concerns and the evidence. Reconsider ONLY what the evidence demands; do not change what was not questioned.\n\nYOUR PREVIOUS ANSWER:\n{\n \"disaster_scenario\": \"Yes\",\n \"disaster_type\": \"Fuel leak and fire\",\n \"disaster_level\": 7,\n \"severity_bucket\": \"catastrophic\",\n \"threats\": [\n  {\n   \"object_id\": \"tanker_truck_1\",\n   \"reason\": \"Leaking fuel\"\n  },\n  {\n   \"object_id\": \"fire_1\",\n   \"reason\": \"Spreading brush fire\"\n  }\n ],\n \"at_risk\": [\n  {\n   \"object_id\": \"person_1\",\n   \"kind\": \"proximity\",\n   \"reason\": \"Potential exposure to leaking fuel or explosion risk\"\n  },\n  {\n   \"object_id\": \"road_1\",\n   \"kind\": \"proximity\",\n   \"reason\": \"Damaged and overlapped by hazardous entities\"\n  }\n ],\n \"reasoning\": \"The tanker truck is leaking fuel, which poses a significant fire risk due to the nearby brush fire. The person standing on the road adjacent to the tanker truck could be in distress if they were to come into contact with the leaking fuel or if there's an explosion. The road appears damaged and overlaps both the tanker truck and the spill, indicating potential hazards for vehicles and pedestrians.\",\n \"self_confidence\": null\n}\n\nPROBLEMS:\n- PROBLEM: spill_1 carries hazard-bearing state 'leaking' but is absent from threats\n  RULE S6: On a 'Yes' verdict, every declared hazard-bearing entity belongs in threats — or the answer must argue concretely why it is not currently a source of harm.\n  WHY: A declared hazard the threat list forgets can never be suppressed at Stage 8 and silently corrupts coverage. Forgetting is invisible; arguing is auditable.\n  EXAMPLE: C_tanker_fire: spill_1 (seeping) declared, threats list only tanker_truck_1 and fire_1 — the spill is the spreading medium and belongs in threats.\n\nReply with the SAME JSON schema as before (reasoning, disaster_scenario, disaster_type, disaster_level, threats, at_risk, confidence), fully corrected. If you believe your original answer was right, return it unchanged and say why in 'reasoning'.",
+        "changed": true,
+        "violations_after": []
+      }
+    ],
+    "stopped_reason": "cap_reached",
+    "u_before": 0.425,
+    "u_after": 0.143
+  }
+}

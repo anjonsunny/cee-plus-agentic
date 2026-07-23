@@ -89,6 +89,13 @@ LABEL_SYNONYMS: dict[str, str] = {
     "river": "water", "surge": "water", "current": "water", "puddle": "spill",
     "leak": "spill", "leakage": "spill", "liquid": "spill", "oil": "spill",
     "fuel": "spill", "chemical": "spill", "wreckage": "debris",
+    # Compound spill names (D_aerial ui_c7b362ef: the model answered
+    # "chemical_spill" — more specific than our noun, and the map
+    # couldn't hear it; the entity fell to 'other', DINO had nothing to
+    # ground, the caption ticket stood, and a whole petition ran on a
+    # missing synonym).
+    "chemical_spill": "spill", "oil_spill": "spill", "fuel_spill": "spill",
+    "spillage": "spill", "hazmat_spill": "spill",
     "rubble_pile": "rubble", "dust_cloud": "dust",
     # "brush fire" / "grass fire" name ONE free-burning fire, not a
     # vegetation entity plus a fire entity (C_tanker rule-5 artifact).

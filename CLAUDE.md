@@ -1,116 +1,159 @@
-# CEE+ —  Causal Explanation Engine
+# CEE+ Agentic — briefing for Claude Code
 
-## Project Overview
+Read this first. Then read `agentic/FINDINGS.md` (the findings ledger —
+the fix taxonomy table at the top is the fastest way to understand what
+has happened so far).
 
-CEE+ measures the **causal groundedness** of Vision-Language Models (VLMs) by testing whether the model identifies true causal factors, updates reasoning structure after intervention, and adapts recommendations accordingly.
+## What this project is
 
-The core contribution claim: a baseline VLM can produce coherent threat identification, recommendations, and structured reasoning, but that reasoning remains *declarative* rather than *mechanistically verified*. CEE+ exposes causal structure explicitly via intervention-based transparency for safety-critical decision support.
+CEE+ (Causal Explanation Engine) measures whether a vision-language
+model's emergency-response recommendations are **causally grounded** —
+via a hazard-suppression intervention (remove the hazard from the scene,
+check the recommendation changes accordingly).
 
-## Codebase
+There are two arms:
 
-- `main.py` — Dash web app calling Qwen2.5-VL via Ollama (OpenAI-compatible endpoint), returns structured JSON with detected_objects, threats_and_risks, recommendations, structured_reasoning triples, expected_consequence, remaining_risk, and follow-up actions.
-- `experiments/scene1..6` — test scenes (disaster images + captions)
-- `exports/` — prior run outputs
-- `idea.txt` — full project vision document (Stages 1–3, pipeline, signals, architecture)
-- `CEE_plus_discussion_notes.md` — detailed discussion notes covering failure taxonomy, worked examples, and prompt revision plan
-- `requirements.txt` — dash, requests, Pillow
+- **Arm A** = `main.py` at the repo root. The legacy monolithic
+  pipeline with FROZEN scoring. **NEVER edit main.py. Import only.**
+  It owns the state vocabulary and the causal-quad ontology.
+- **Arm B** = everything in `agentic/`. The agentic conversion:
+  staged, ledgered, revision-capable. All new work happens here,
+  on git branch `agentic`. Sunny pushes git himself — never push.
 
-## Local Setup
+Arm B is scored by IMPORTING Arm A's frozen metrics, so the two arms
+stay comparable.
 
-```bash
-# Ollama for local VLM inference
-brew install ollama
-ollama serve
-ollama pull qwen2.5vl:7b
+## Where things are
 
-# Python environment
-conda activate clip_dash
-pip install -r requirements.txt
-
-# Run
-export QWEN_API_URL="http://localhost:11434/v1/chat/completions"
-export QWEN_MODEL_NAME="qwen2.5vl:7b"
-python main.py
+```
+main.py                          Arm A. Frozen. Import only.
+agentic/                         Arm B — all the new code
+  perception.py                  Stage 1: VLM naming -> repair loop ->
+                                 DINO grounding -> SAM masks -> assemble
+                                 (+ medium-bound hazard derivation,
+                                  duplicate-human merge)
+  repair_loop.py                 Loop 1: P1-P6 checks on raw VLM output
+  vocabulary.py                  closed label vocabulary + synonyms
+  assessment.py                  Stage 2: merged scene assessment
+                                 (verdict + threats + at-risk), checks
+                                 S1-S8, G2/G4; text-only by design
+  uncertainty.py                 measured uncertainty: 5 probes at
+                                 temp 0.7, granular per-field/per-entity
+  reflection.py                  the reflection loop (capped at 2,
+                                 evidence-quoted, anti-rumination)
+  petition.py                    contextual re-perception + routing:
+                                 stage-1 (re-look at image) vs stage-2
+                                 (re-ask the question once, fresh)
+  rulebook.py / rulebook_rag.py  one law, two engines: code detects,
+                                 rulebook text teaches (quoted into
+                                 reflection prompts)
+  evals.py                       GT eval, quadrant, citation counts,
+                                 pairwise/runoff judges, rubric
+  geometry.py                    deterministic bbox math (spatial hints)
+  ui.py                          the Dash UI (the main way runs happen)
+  dialogue.py, agent_tools.py    "ask the analyst" chat over run records
+  test_*.py                      297 hermetic tests, no models needed
+  FINDINGS.md                    THE LEDGER. Findings F1-F14 + fix
+                                 taxonomy. Read it.
+experiments/agentic_scenes/      the six frozen calibration scenes:
+  A_fire, B_pool, C_tanker_fire, D_aerial_spill, E_collapse,
+  F_park_control (.jpg + .txt caption each)
+  gt_stage2.json                 verified ground truth (dev-only!)
+  perception/  assessment/       frozen stage outputs
+exports/agentic_runs/ui_*/       EVERY UI RUN LANDS HERE:
+  events.jsonl                   the flight recorder — every event of
+                                 the run; the UI is a pure function of
+                                 this stream (best debugging source)
+  *__perception.json             the final perception record
+  assessment.json                the final assessment
+  *_mask.png, *__overlay.png     masks and overlay images
 ```
 
-## CEE+ Pipeline (Stage 1 — Single Suppression)
+## How to run things
 
-1. **Baseline Analysis** — image + caption → detected entities, state grounding (e.g. `fire_on_house_1`), hazard score, recommendations, causal graph, suppression variable
-2. **Single Suppression Intervention** — suppress a hazardous state node (visual, language, or joint)
-3. **Post-Intervention Analysis** — recompute hazard score, recommendations, causal graph
-4. **Compute Shift Signals** — hazard shift, causal graph shift, recommendation shift, structural alignment, semantic alignment, cross-modal consistency
-5. **Aggregate Score + Explanation** — CEE+ score, groundedness level, signal-level explanation
+```
+pytest agentic/ -q               all tests, hermetic, ~10s, no models
+python agentic/ui.py             the Dash UI (hot reload on;
+                                 AGENTIC_UI_DEBUG=0 to disable)
+python -m agentic.assessment     assess frozen perception records
+python -m agentic.evals          eval battery vs GT (--judge for LLM judges)
+```
 
-## Six Core Signals
+Models are LOCAL via Ollama (Sunny runs them; they may not be running):
+subject VLM `qwen2.5vl:7b`, dialogue/explainer `qwen2.5:7b`,
+judge `llama3.1:8b` (deliberately a different family).
 
-1. **Hazard Shift** — does perceived risk change after intervention?
-2. **Causal Graph Shift** — does the model update its reasoning structure? (edge/node changes, suppression variable consistency)
-3. **Recommendation Shift** — do suggested actions change? (added/removed/unchanged)
-4. **Structural Alignment** — does reasoning follow a valid causal chain? (hazard → action via suppression variable)
-5. **Semantic Alignment** — are reasoning and actions semantically consistent?
-6. **Cross-Modal Consistency** — do visual and language interventions agree?
+## The architecture in one picture
 
-## Failure-Mode Taxonomy (Three Layers)
+```
+STAGE 1  PERCEPTION (image -> shared record)
+  VLM names entities -> Loop 1 repairs format (P1-P6, capped 2,
+  model may STAND its ground) -> DINO grounds boxes -> SAM masks ->
+  assemble: medium-bound hazard derivation (drowning -> the pool is
+  the hazard, derived IN CODE), duplicate-human merge (IoU >= 0.8)
 
-- **Layer 1 — Perception failures.** Missed objects, hallucinations, wrong state attribution. *Deprioritized for now.*
-- **Layer 2 — Reasoning-coherence failures.** Cross-field inconsistencies visible from JSON alone. Focus area.
-  - Pattern 1: Broken grounding links (ids don't match across fields)
-  - Pattern 2: Reason / structured_reasoning drift (natural language says one thing, triple encodes another)
-  - Pattern 3: Effect-label misuse (generic `threatens` when specific label applies)
-  - Pattern 4: Suppression-variable ambiguity (*deferred to Layer 3*)
-- **Layer 3 — Causal/counterfactual failures.** Intervention reveals reasoning isn't anchored to named hazards. Core CEE+ territory.
+STAGE 2  ASSESSMENT (record -> verdict; TEXT-ONLY, never sees image)
+  one merged judgment: disaster Yes/No, type, level 0-10 -> bucket,
+  threats[], at_risk[{kind: distress|proximity}]
+  -> code checks S1-S8 + geometry hints
+  -> 5 probes measure uncertainty (granular, per-entity votes)
+  -> REFLECTION loop (violations + evidence quoted back, capped 2)
+  -> judges (runoff, pairwise, rubric) — ADVISE ONLY, never overwrite
+  -> PETITION if pressure survives:
+       entity list suspect -> stage 1 re-look (two-witness merge,
+                              NO-ERASURE: petitions add, never delete)
+       facts fine, sorting wrong -> re-ask the question once, fresh
 
-## Current Phase & Next Steps
+STAGE 4  (NEXT, not built) recommendations / causal quads — where
+  Arm A's frozen scoring meets Arm B. Ratified design: states stay on
+  nodes (the computational currency); mechanism-on-edge is ADDITIVE,
+  only where natural language and the ontology diverge.
+```
 
-**Current focus:** Layer 2 prompt revision + Layer 3 (core CEE+). Qualitative analysis first, quantitative later. Single-scene walkthroughs preferred.
+## Iron rules (violating these has burned us before)
 
-**Immediate next step:** Revise `main.py` prompt focusing on three non-negotiables:
-1. **Stable object_ids** — `label_N` form (`house_1`, `car_1`, `person_1`), used verbatim everywhere
-2. **Hazard-as-state** — `fire_on_house_1` not `burning_house`, makes prompt CEE+-ready for suppression
-3. **Reason/triple coverage** — every object_id in reason text must appear in `related_object_ids` and triple
+1. **Never edit `main.py`.** Import only.
+2. **Every code change ships with tests** — including malformed-model-
+   output cases at every boundary that consumes raw VLM answers.
+3. **Discuss before building.** Propose, get Sunny's explicit yes
+   ("do it", "build it"), then build.
+4. **Easy language with Sunny.** Short sentences, examples, small
+   diagrams. No jargon walls. He has rejected dense replies angrily.
+5. **Prompt neutrality:** prompts never reference specific scenes or
+   contain id-shaped tokens; corrections quote only the model's OWN
+   prior words as evidence, never say what the right answer is.
+6. **Judges advise, never overwrite.** Only reflection carries the
+   message, only the model revises.
+7. **GT and evals NEVER feed the pipeline.** GT is dev-only
+   calibration; production has none.
+8. **No-erasure:** petitions add, never delete; omissions are recorded
+   as disputes. Deterministic code may derive/merge, but always with a
+   note and an event — nothing silent.
+9. **Keep the flowchart in sync.** Sunny maintains a hand-drawn system
+   flowchart ("two local loops + a two-route petition"). Whenever a
+   change touches pipeline structure — a loop, a check family, a route,
+   a stage — say whether the chart needs updating and, if so, describe
+   the exact box + text edit in plain words so Sunny can append it.
+   Box-internal refinements (one new synonym) usually don't need an
+   edit; new checks/loops/routes/stages do.
 
-**Second pass (deferred):** Effect-vocabulary tightening with truth conditions, terminal self-check block.
+## Current state (2026-07-22)
 
-## Research Stages
+Stage 2 is nearly closed. Five of six scenes ran live and produced
+findings F7-F14 (each fixed + regression-tested). Remaining:
 
-CEE+ positions itself on **Pearl's Ladder of Causation**. Rung 1 = association (what modern VLMs do well — fluent, coherent, retrieval over high-probability templates). Rung 3 = counterfactual (unit-specific "what would have happened if?" — three-step: abduction → action → prediction). The core claim: VLM safety recommendations are coherent on rung 1 but ungrounded on rung 3, and the gap is invisible to standard evaluation because rung-1 output looks like rung-3 reasoning. CEE+ is the probe that surfaces the gap.
+- Run `F_park_control` in the UI — the silence test: the whole
+  apparatus must produce nothing on a safe scene.
+- Re-run the other scenes to confirm the latest fixes.
+- Then: judge-bias decision (F4), false-certainty mitigations (F5),
+  six-scene synthesis from the taxonomy, close Stage 2, start Stage 4.
 
-**The CEE+ pipeline is a counterfactual pipeline, not an intervention pipeline.** Conditioning on a specific scene = implicit abduction (VLM scene grounding fixes U); suppression = action (the do() step); measured shifts = unit-specific prediction. The "intervention type" (source-removal / edge-severance / target-mitigation) is the *shape* of the do() inside each counterfactual query.
+Key open observations: "reflection jitter" (measured uncertainty rises
+when reflection installs a claim the model's own polls don't
+reproduce — 5 sightings); the runoff judge convenes on pre-reflection
+uncertainty only.
 
-**Graph A and Graph B are BOTH rung-1 declarations — neither is mechanistic.** A declarative artifact is anything the model emits (or a deterministic function of it): a static assertion, not a tested dependency. By that criterion Graph A, Graph B, the framework pick (a ranking of A), and `graph_b.suppression_pick` are ALL declarative. The honest distinction is *coupling to the action*, not declarative-vs-mechanistic: **Graph A = declaration coupled to the action** (derived from the recs); **Graph B = declaration decoupled from the action** (elicited independently, without the recs). Calling B "mechanistic" is wrong and self-undermining (it would grant rung-3 status to a static emitted graph, the exact masquerade we exist to expose). The ONLY mechanistic artifact in the pipeline is the **operative core**, which does not exist until the do(): mechanism = the recommendation moves when the hazard is suppressed. Pre-intervention A-vs-B is therefore a *consistency check between two declarations*, qualified by GT — it is fine and useful as that, but it is not a rung-3 signal.
-
-### Two orthogonal axes
-
-**Axis A — Suppression structure (depth of the counterfactual):**
-- **Stage 1 (current paper):** Single suppression — one rule-based do() per scene. Establishes the rung-1 vs rung-3 measurement methodology and the six shift signals.
-- **Stage 2 (next paper):** Multi suppression — multiple candidate do()s in the same scene, comparative analysis. Tests whether the model distinguishes competing hazards rather than collapsing them to a single dominant pattern.
-- **Stage 3 (future):** Progressive suppression — chained nested counterfactuals (action → consequence → new state → new decision). The canonical rung-3 query form; catches rung-1 masquerade that survives flat queries but breaks on chained reasoning.
-
-**Axis B — Probe generation (who picks the counterfactual):**
-- **Rule-based** — schema enumerates candidates deterministically. Reproducible, audit-able. Used throughout Stages 1–3 above.
-- **Adversarial LLM-generated** — separate model produces novel out-of-template counterfactuals. Addresses the concern that a sophisticated rung-1 model could pattern-match the rule-based query shape. Layered on top once the depth axis is established (Stage 4+).
-
-### Alignment track (downstream, parallel)
-
-The six shift signals are differentiable enough to serve as reward shaping or preference labels. Once Stage 2 or 3 signals are validated, a parallel track uses them to fine-tune VLMs toward causally honest behavior — not just measure the gap but close it. Methodological stance: CEE+ does not adjudicate whether the underlying mechanism is "real" causal reasoning or sophisticated mimicry; it claims only that a model passing CEE+ counterfactual consistency probes behaves indistinguishably from one that reasons causally on the query class, which is the standard a deployment context can audit. See memory files `project-pearl-framing` and `project-cee-alignment-ambition`.
-
-### Recommended path
-
-Stage 1 → Stage 2 (multi, rule-based) → Stage 3 (progressive, rule-based) → Stage 4 (adversarial layered on top). Alignment program spins off once Stage 2+ signals exist. Extending the depth axis before introducing the generator dependency keeps each stage methodologically defensible without adding a probe-quality confound.
-
-## Working Style Preferences
-
-- Sunny prefers collaborative research dialogue over being handed finished output — discuss direction before implementing
-- Distinguishes non-negotiables from additive improvements
-- Comfortable with design-tension discussion
-- Qualitative/illustrative analysis first, quantitative later
-- Single-scene walkthroughs for cleaner narrative
-
-## Design Tensions to Keep in Mind
-
-- **Prompting strength vs. evaluation validity:** A heavily engineered prompt raises "are we evaluating the VLM or the prompt?" — give the baseline its best shot so remaining failures are unambiguously the model's. State this methodologically in the paper.
-- **Constraint vs. reasoning freedom:** Hazard-as-state and stable ids constrain format, not reasoning itself.
-
-
-
-For full project state, read PROJECT_STATE.md
+The central research finding so far: **most defects were ours, not the
+model's** — "fixing the interview, not the witness." The model's true
+deficits: it capitulates under authoritative pressure, its second looks
+are unstable, and its self-reported confidence is flat 0.95 (useless).

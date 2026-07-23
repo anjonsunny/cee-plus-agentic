@@ -1,0 +1,193 @@
+{
+  "assessment": {
+    "disaster_scenario": "Yes",
+    "disaster_type": "Structural Collapse",
+    "disaster_level": 9,
+    "severity_bucket": "catastrophic",
+    "threats": [
+      {
+        "object_id": "building_1",
+        "reason": "The building is in a state of collapse, which poses an immediate danger to the trapped person and bystanders."
+      },
+      {
+        "object_id": "dust_1",
+        "reason": "Dust from the collapse poses a hazard and should be included as it can affect visibility and breathing for those nearby."
+      }
+    ],
+    "at_risk": [
+      {
+        "object_id": "person_1",
+        "kind": "distress",
+        "reason": "The person is trapped at an upper window, indicating they are in distress due to being unable to escape the collapsed building."
+      },
+      {
+        "object_id": "dust_1",
+        "kind": "proximity",
+        "reason": "Dust from the collapse poses a hazard and should be included as it can affect visibility and breathing for those nearby."
+      }
+    ],
+    "reasoning": "The scenario describes a partially collapsed apartment building with a person trapped at an upper window. The presence of two police officers standing behind caution tape indicates an emergency response to this situation. The building is in a state of collapse, which poses a significant hazard. The person trapped (person_1) and the dust from the collapse (dust_1) are both entities at risk due to their proximity to the collapsed structure.",
+    "self_confidence": null
+  },
+  "parse_notes": [
+    "reflect_r1:no_self_confidence_reported",
+    "reflect_r1:at_risk_1_kind_coerced('hazard')->proximity",
+    "reflect_r2:no_self_confidence_reported"
+  ],
+  "violations": [],
+  "raw_answer": {
+    "reasoning": "The scenario describes a partially collapsed apartment building with a person trapped at an upper window. The presence of two police officers standing behind caution tape indicates an emergency response to this situation. The building is in a state of collapse, which poses a significant hazard. The person trapped (person_1) is the primary entity at risk due to their own state being 'trapped' and the proximity to the collapsed structure.",
+    "disaster_scenario": "Yes",
+    "disaster_type": "Structural Collapse",
+    "disaster_level": 9,
+    "threats": [
+      {
+        "object_id": "building_1",
+        "reason": "The building is in a state of collapse, which poses an immediate danger to the trapped person and bystanders."
+      }
+    ],
+    "at_risk": [
+      {
+        "object_id": "person_1",
+        "kind": "distress",
+        "reason": "The person is trapped at an upper window, indicating they are in distress due to being unable to escape the collapsed building."
+      }
+    ],
+    "confidence": 0.95
+  },
+  "measured_uncertainty": {
+    "n_probes": 5,
+    "scenario_agreement": 1.0,
+    "type_agreement": 1.0,
+    "bucket_agreement": 1.0,
+    "level": {
+      "min": 7.0,
+      "max": 9.0,
+      "std": 0.748
+    },
+    "score": 0.311,
+    "drivers": [
+      {
+        "kind": "threat_membership_split",
+        "evidence": "building_1 appears in only 4/5 probe threat lists",
+        "action": "reflect on building_1 specifically: quote its state, the geometry hint that nominates it, and ask for a decision with cited evidence (rules G1-G4)"
+      },
+      {
+        "kind": "threat_membership_split",
+        "evidence": "caution_tape_1 appears in only 1/5 probe threat lists",
+        "action": "reflect on caution_tape_1 specifically: quote its state, the geometry hint that nominates it, and ask for a decision with cited evidence (rules G1-G4)"
+      },
+      {
+        "kind": "threat_membership_split",
+        "evidence": "dust_1 appears in only 2/5 probe threat lists",
+        "action": "reflect on dust_1 specifically: quote its state, the geometry hint that nominates it, and ask for a decision with cited evidence (rules G1-G4)"
+      },
+      {
+        "kind": "at_risk_membership_split",
+        "evidence": "responder_1 appears in only 2/5 probe at_risk lists",
+        "action": "reflect on responder_1 specifically: quote its state, the geometry hint that nominates it, and ask for a decision with cited evidence (rules G1-G4)"
+      },
+      {
+        "kind": "at_risk_membership_split",
+        "evidence": "responder_2 appears in only 2/5 probe at_risk lists",
+        "action": "reflect on responder_2 specifically: quote its state, the geometry hint that nominates it, and ask for a decision with cited evidence (rules G1-G4)"
+      }
+    ],
+    "explanation": "The uncertainty in the verdict stems from a split probe response where only 4 out of 5 probes identified building_1 as a threat, and similarly for caution_tape_1, dust_1, responder_1, and responder_2. This indicates that these elements are not universally recognized as threats or at risk by all probes. To reduce this uncertainty, it is recommended to specifically reflect on each of these elements: quote their state, the geometry hints that nominate them, and request a decision with cited evidence following rules G1-G4.",
+    "explainer": "llm",
+    "granular": {
+      "fields": {
+        "disaster_scenario": {
+          "u": 0.0,
+          "evidence": "Yes×5"
+        },
+        "disaster_type": {
+          "u": 0.0,
+          "evidence": "collapse×5"
+        },
+        "disaster_level": {
+          "u": 0.0,
+          "evidence": "levels 8×2, 7×2, 9×1 -> buckets catastrophic×5"
+        }
+      },
+      "threats": {
+        "building_1": {
+          "u": 0.2,
+          "votes": "4/5"
+        },
+        "caution_tape_1": {
+          "u": 0.8,
+          "votes": "1/5"
+        },
+        "dust_1": {
+          "u": 0.6,
+          "votes": "2/5"
+        }
+      },
+      "at_risk": {
+        "person_1": {
+          "u": 0.0,
+          "votes": "5/5"
+        },
+        "responder_1": {
+          "u": 0.6,
+          "votes": "2/5"
+        },
+        "responder_2": {
+          "u": 0.6,
+          "votes": "2/5"
+        }
+      }
+    }
+  },
+  "reflection_trace": {
+    "rounds": [
+      {
+        "round_number": 1,
+        "triggers": [
+          {
+            "type": "violation",
+            "kind": "hazard_not_in_threats",
+            "evidence": "dust_1 carries hazard-bearing state 'billowing' but is absent from threats"
+          },
+          {
+            "type": "membership_split",
+            "list": "threats",
+            "object_id": "dust_1",
+            "votes": "2/5"
+          },
+          {
+            "type": "membership_split",
+            "list": "at_risk",
+            "object_id": "responder_2",
+            "votes": "2/5"
+          }
+        ],
+        "instruction": "You previously assessed this scene. Specific problems were found with your answer, each cited below with the rule it concerns and the evidence. Reconsider ONLY what the evidence demands; do not change what was not questioned.\n\nYOUR PREVIOUS ANSWER:\n{\n \"disaster_scenario\": \"Yes\",\n \"disaster_type\": \"Structural Collapse\",\n \"disaster_level\": 9,\n \"severity_bucket\": \"catastrophic\",\n \"threats\": [\n  {\n   \"object_id\": \"building_1\",\n   \"reason\": \"The building is in a state of collapse, which poses an immediate danger to the trapped person and bystanders.\"\n  }\n ],\n \"at_risk\": [\n  {\n   \"object_id\": \"person_1\",\n   \"kind\": \"distress\",\n   \"reason\": \"The person is trapped at an upper window, indicating they are in distress due to being unable to escape the collapsed building.\"\n  }\n ],\n \"reasoning\": \"The scenario describes a partially collapsed apartment building with a person trapped at an upper window. The presence of two police officers standing behind caution tape indicates an emergency response to this situation. The building is in a state of collapse, which poses a significant hazard. The person trapped (person_1) is the primary entity at risk due to their own state being 'trapped' and the proximity to the collapsed structure.\",\n \"self_confidence\": 0.95\n}\n\nPROBLEMS:\n- PROBLEM: dust_1 carries hazard-bearing state 'billowing' but is absent from threats\n  RULE S6: On a 'Yes' verdict, every declared hazard-bearing entity belongs in threats — or the answer must argue concretely why it is not currently a source of harm.\n  WHY: A declared hazard the threat list forgets can never be suppressed at Stage 8 and silently corrupts coverage. Forgetting is invisible; arguing is auditable.\n  EXAMPLE: C_tanker_fire: spill_1 (seeping) declared, threats list only tanker_truck_1 and fire_1 — the spill is the spreading medium and belongs in threats.\n- UNSTABLE MEMBERSHIP: dust_1 appeared in only 2/5 probe threats lists. Its declared state: billowing (hazard_bearing). Geometry: no hazard nearby by declared boxes.\n  RULE G1: An entity whose box overlaps or sits adjacent to an active hazard's box is a PROXIMITY at-risk CANDIDATE.\n  RULE G3: Box adjacency is 2D image-plane evidence: it NOMINATES proximity candidates but never convicts; real closeness is 3D and may need a visual check.\n  DECIDE: does dust_1 belong in threats? Cite the state and the spatial evidence either way.\n- UNSTABLE MEMBERSHIP: responder_2 appeared in only 2/5 probe at_risk lists. Its declared state: standing (normal). Geometry: responder_2 adjacent dust_1 (gap ≈ 14px; raw boxes [577, 652, 698, 938] vs [0, 144, 563, 703]).\n  RULE G1: An entity whose box overlaps or sits adjacent to an active hazard's box is a PROXIMITY at-risk CANDIDATE.\n  RULE G3: Box adjacency is 2D image-plane evidence: it NOMINATES proximity candidates but never convicts; real closeness is 3D and may need a visual check.\n  DECIDE: does responder_2 belong in at_risk? Cite the state and the spatial evidence either way.\n\nReply with the SAME JSON schema as before (reasoning, disaster_scenario, disaster_type, disaster_level, threats, at_risk, confidence), fully corrected. If you believe your original answer was right, return it unchanged and say why in 'reasoning'.",
+        "changed": true,
+        "violations_after": [
+          {
+            "kind": "hazard_not_in_threats",
+            "evidence": "dust_1 carries hazard-bearing state 'billowing' but is absent from threats"
+          }
+        ]
+      },
+      {
+        "round_number": 2,
+        "triggers": [
+          {
+            "type": "violation",
+            "kind": "hazard_not_in_threats",
+            "evidence": "dust_1 carries hazard-bearing state 'billowing' but is absent from threats"
+          }
+        ],
+        "instruction": "You previously assessed this scene. Specific problems were found with your answer, each cited below with the rule it concerns and the evidence. Reconsider ONLY what the evidence demands; do not change what was not questioned.\n\nYOUR PREVIOUS ANSWER:\n{\n \"disaster_scenario\": \"Yes\",\n \"disaster_type\": \"Structural Collapse\",\n \"disaster_level\": 9,\n \"severity_bucket\": \"catastrophic\",\n \"threats\": [\n  {\n   \"object_id\": \"building_1\",\n   \"reason\": \"The building is in a state of collapse, which poses an immediate danger to the trapped person and bystanders.\"\n  }\n ],\n \"at_risk\": [\n  {\n   \"object_id\": \"person_1\",\n   \"kind\": \"distress\",\n   \"reason\": \"The person is trapped at an upper window, indicating they are in distress due to being unable to escape the collapsed building.\"\n  },\n  {\n   \"object_id\": \"dust_1\",\n   \"kind\": \"proximity\",\n   \"reason\": \"Dust from the collapse poses a hazard and should be included as it can affect visibility and breathing for those nearby.\"\n  }\n ],\n \"reasoning\": \"The scenario describes a partially collapsed apartment building with a person trapped at an upper window. The presence of two police officers standing behind caution tape indicates an emergency response to this situation. The building is in a state of collapse, which poses a significant hazard. The person trapped (person_1) and the dust from the collapse (dust_1) are both entities at risk due to their proximity to the collapsed structure.\",\n \"self_confidence\": null\n}\n\nPROBLEMS:\n- PROBLEM: dust_1 carries hazard-bearing state 'billowing' but is absent from threats\n  RULE S6: On a 'Yes' verdict, every declared hazard-bearing entity belongs in threats — or the answer must argue concretely why it is not currently a source of harm.\n  WHY: A declared hazard the threat list forgets can never be suppressed at Stage 8 and silently corrupts coverage. Forgetting is invisible; arguing is auditable.\n  EXAMPLE: C_tanker_fire: spill_1 (seeping) declared, threats list only tanker_truck_1 and fire_1 — the spill is the spreading medium and belongs in threats.\n\nReply with the SAME JSON schema as before (reasoning, disaster_scenario, disaster_type, disaster_level, threats, at_risk, confidence), fully corrected. If you believe your original answer was right, return it unchanged and say why in 'reasoning'.",
+        "changed": true,
+        "violations_after": []
+      }
+    ],
+    "stopped_reason": "cap_reached",
+    "u_before": 0.2,
+    "u_after": 0.311
+  }
+}
