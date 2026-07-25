@@ -11,10 +11,74 @@ from agentic.uncertainty import (
     agreement,
     entity_uncertainty,
     explain,
+    measure_recommendations,
     measure_verdicts,
     spread,
     stood_entity_ids,
 )
+
+
+# ── Stage 4: measure_recommendations (advice dispersion) ────────────────
+
+def _reading(top, edges):
+    """edges: [(threat, effect, (affected,...))]."""
+    threat_ids = [e[0] for e in edges if e[0]]
+    affected = [a for e in edges for a in e[2]]
+    eff = {}
+    for t, ef, _ in edges:
+        eff.setdefault(t, ef)
+    return {"top_threat": top, "n_recs": len(edges), "threat_ids": threat_ids,
+            "affected_ids": affected, "edges": edges, "effect_by_threat": eff}
+
+
+def test_measure_recommendations_unanimous_scores_zero():
+    r = _reading("house_1", [("house_1", "may_harm", ("person_1",))])
+    mu = measure_recommendations([r, r, r])
+    assert mu.n_probes == 3 and mu.score == 0.0 and mu.drivers == []
+    assert len(mu.candidates) == 1 and mu.candidates[0]["votes"] == 3
+
+
+def test_measure_recommendations_empty_is_safe():
+    mu = measure_recommendations([])
+    assert mu.n_probes == 0 and mu.score == 0.0
+
+
+def test_measure_recommendations_effect_flip_is_pinpointed():
+    """The mechanism flip (may_harm vs may_spread_to for the same threat) is
+    exactly the reason↔quad instability — it must show per-threat and drive."""
+    a = _reading("house_1", [("house_1", "may_harm", ("person_1",))])
+    b = _reading("house_1", [("house_1", "may_spread_to", ("person_1",))])
+    mu = measure_recommendations([a, a, a, b, b])
+    assert mu.granular["effects"]["house_1"]["u"] > 0.0
+    assert any(d.kind == "effect_choice_unstable" for d in mu.drivers)
+    # top target stayed house_1 → no top flip
+    assert mu.granular["fields"]["top_priority_target"]["u"] == 0.0
+
+
+def test_measure_recommendations_canonical_threats_filter_noise():
+    """When a probe mislabels a victim as a threat, that noise must NOT clutter
+    the threat table — only the canonical threats are reported (Sunny: person_1
+    shouldn't show as 'flickers as a threat'). A canonical threat never
+    reproduced shows U 1.0."""
+    good = _reading("house_1", [("house_1", "may_harm", ("person_1",))])
+    noisy = _reading("person_1", [("person_1", "may_harm", ("dog_1",))])
+    mu = measure_recommendations([good, good, good, good, noisy],
+                                 canonical_threats={"house_1", "car_1"})
+    threats = mu.granular["threats"]
+    assert set(threats) == {"house_1", "car_1"}      # no person_1 noise
+    assert threats["house_1"]["votes"] == "4/5"
+    assert threats["car_1"]["u"] == 1.0              # canonical but never seen
+
+
+def test_measure_recommendations_top_flip_and_membership():
+    a = _reading("house_1", [("house_1", "may_harm", ("person_1",))])
+    b = _reading("car_1", [("car_1", "blocks_access_to", ("house_1",))])
+    mu = measure_recommendations([a, a, a, b, b])
+    assert mu.granular["fields"]["top_priority_target"]["u"] > 0.0
+    # car_1 appears as a threat in only 2/5 probes
+    assert mu.granular["threats"]["car_1"]["votes"] == "2/5"
+    assert any(d.kind == "top_target_flip" for d in mu.drivers)
+    assert len(mu.candidates) == 2
 
 # ── Dispersion math ─────────────────────────────────────────────────────
 

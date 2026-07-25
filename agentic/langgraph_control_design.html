@@ -590,6 +590,179 @@
     Build it as a <b>separate</b> <code>graph_live.py</code> next to the working pipeline — never edit the tested path. Behind a flag. Run all six scenes through <b>both</b> and prove they produce <b>identical records and verdicts</b>. Switch the UI over only once they match. Same Arm A / Arm B discipline, one level down: build alongside, verify equal, then adopt.
   </div>
 
+  <!-- ==================================================================== -->
+  <!-- ============ STAGE 4 · PHASE 1a — THE RECOMMENDATION SPINE ========== -->
+  <!-- ==================================================================== -->
+  <div class="lead" style="border-left-color:var(--s2);margin-top:34px;">
+    <b>Stage 4 · Phase 1a — the recommendation spine, now on LangGraph.</b>
+    Same discipline, one stage on. <code>run_stage4</code> (in <code>recommend.py</code>) got a
+    byte-identical twin in <code>graph_s4.py</code>. Everything below mirrors the Stage 2 treatment
+    above — the state object, the graph, the events, the equivalence proof — for the spine that turns
+    a verdict into recommendations and causal quads. The spine is <b>linear</b> for now: no
+    conditional edges yet, so it bolts on without rewiring when the loops arrive.
+  </div>
+
+  <!-- ============ S4 STATE BOX ============ -->
+  <h2 class="sec">9 · S4State — the object threaded through the Stage 4 spine</h2>
+  <div class="state" style="border-color:#bfdbfe;">
+    <div class="state-hd"><span class="chip" style="background:var(--s2);">S4State</span><h3>one object; each node returns only the keys it changed, LangGraph merges</h3>
+      <span class="m">TypedDict, total=False — same style as the Stage 2 state</span></div>
+    <div class="grid2">
+      <div class="grp in">
+        <h4><span class="b ib">FROZEN INPUTS</span> set once, never mutated</h4>
+        <div class="field"><span class="n">record</span> <span class="c">: PerceptionResult</span></div>
+        <div class="field"><span class="n">assessment</span> <span class="c">: AssessmentResult  # the Stage 2 verdict</span></div>
+      </div>
+      <div class="grp lift">
+        <h4><span class="b lb">RECOMMEND</span> the model node's output (the real work)</h4>
+        <div class="field"><span class="n">frame</span> <span class="c"># what the model was shown</span></div>
+        <div class="field"><span class="n">recommendations</span> <span class="c">: list</span></div>
+        <div class="field"><span class="n">advisory</span> <span class="c">: str</span></div>
+        <div class="field"><span class="n">recommend_notes / recommend_raw</span></div>
+        <div class="field"><span class="n">uncertainty</span> <span class="c"># measured probe U · 5× re-ask</span></div>
+        <div class="field"><span class="n">conformance / internal_alignment / alignment</span> <span class="c"># evals</span></div>
+        <div class="field"><span class="n">trust</span> <span class="c"># folded score + per-rec breakdown</span></div>
+      </div>
+      <div class="grp obs">
+        <h4><span class="b ob">GRAPHS</span> two independent causal graphs</h4>
+        <div class="field"><span class="n">graph_a</span> <span class="c"># CODE · build_causal_graph(quads)</span></div>
+        <div class="field"><span class="n">graph_b</span> <span class="c"># MODEL · independent graph + suppression_pick</span></div>
+      </div>
+      <div class="grp keep">
+        <h4><span class="b kb">PICKS</span> the suppression targets + agreement</h4>
+        <div class="field"><span class="n">picks</span> <span class="c"># A_pick / B_pick / llm_pick + agreement</span></div>
+      </div>
+    </div>
+    <div class="legend">
+      <span class="lg"><span class="sw" style="background:var(--in)"></span>frozen inputs (record + verdict)</span>
+      <span class="lg"><span class="sw" style="background:var(--lift)"></span>model recommendation — the new part</span>
+      <span class="lg"><span class="sw" style="background:var(--obs)"></span>the two causal graphs</span>
+      <span class="lg"><span class="sw" style="background:var(--keep)"></span>picked targets + agreement</span>
+    </div>
+  </div>
+
+  <!-- ============ S4 GRAPH ============ -->
+  <h2 class="sec">10 · The Stage 4 spine — a linear graph, no branches yet</h2>
+  <div class="graph">
+    <div class="lane">
+      <span class="laneh" style="background:var(--s2)">STAGE 4 · RECOMMENDATION · Phase 1a linear spine</span>
+      <div class="row">
+        <div class="node end"><span class="nn">START</span><span class="nb">record + verdict in</span></div>
+        <span class="e">→</span>
+        <div class="node s2"><span class="nn">recommend</span><span class="nb">MODEL · frame + recommendations + advisory</span><span class="val">3 recs · evacuate / shore / rescue person_1</span></div>
+        <span class="e">→</span>
+        <div class="node s2"><span class="nn">uncertainty</span><span class="nb">MODEL · 5× re-ask → advice dispersion</span><span class="val">top-target flip · per-hazard effect wobble</span></div>
+        <span class="e">→</span>
+        <div class="node end"><span class="nn">graph_a</span><span class="nb">CODE · build_causal_graph(quads)</span><span class="val">causal graph from quads · 5 nodes</span></div>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <span class="e" style="padding-left:8px">→</span>
+        <div class="node s2"><span class="nn">graph_b</span><span class="nb">MODEL · independent graph + suppression_pick</span><span class="val">independent graph · suppress building_1</span></div>
+        <span class="e">→</span>
+        <div class="node s2"><span class="nn">picks</span><span class="nb">MODEL + CODE · A_pick / B_pick / llm_pick + agreement</span><span class="val">A=B=llm=building_1 · agree ✓</span></div>
+        <span class="e">→</span>
+        <div class="node end"><span class="nn">END</span><span class="nb">Stage4Result out</span></div>
+      </div>
+    </div>
+    <div class="backedge"><b>No conditional edges yet.</b> Every edge is <code>add_edge</code> — a straight line
+      START → recommend → uncertainty → graph_a → graph_b → picks → evals → trust → END. Each node is a 1:1 lift of one segment of
+      <code>run_stage4</code>, calling the same node cores (<code>run_recommend</code>,
+      <code>run_recommend_uncertainty</code>, <code>build_graph_a</code>, <code>run_graph_b</code>, <code>pick_targets</code>, <code>run_evals</code>, <code>run_trust</code>) in the same order.</div>
+    <div class="backedge" style="border-color:#93c5fd;color:var(--s2);margin-top:6px;">planned: <b style="color:#1d4ed8">Phase 2</b>
+      adds the <b style="color:#1d4ed8">first conditional edges</b> — a <code>probe → reflect</code> loop out of a
+      <code>route_after_checks</code> router. The linear spine is built so these bolt on <b style="color:#1d4ed8">without
+      rewiring</b> the existing edges.</div>
+  </div>
+
+  <!-- ============ S4 EVENTS ============ -->
+  <h2 class="sec">11 · The events, in order — the flight recorder is byte-identical too</h2>
+  <p style="font-size:12.5px;color:var(--muted);margin:-4px 0 12px;">Same guarantee as Stage 2: under scripted
+    models the LangGraph twin emits the <b>same event stream, in the same order</b> as
+    <code>run_stage4</code>. Each node emits exactly one.</p>
+  <table class="trace">
+    <tr><th>after node</th><th>event emitted · what it wrote into S4State</th></tr>
+    <tr><td class="nd">START</td><td class="wr"><b class="b2">stage_started</b> — record &amp; assessment loaded, spine begins</td></tr>
+    <tr><td class="nd">recommend</td><td class="wr"><b class="b2">recommendations_ready</b> · frame, recommendations, advisory, recommend_notes, recommend_raw written</td></tr>
+    <tr><td class="nd">graph_a</td><td class="wr"><b class="b2">graph_a_built</b> · <b>graph_a</b> = build_causal_graph(quads) <span style="color:var(--faint)">(CODE, deterministic)</span></td></tr>
+    <tr><td class="nd">graph_b</td><td class="wr"><b class="b2">graph_b_built</b> · <b>graph_b</b> = independent graph + suppression_pick <span style="color:var(--faint)">(MODEL)</span></td></tr>
+    <tr><td class="nd">picks</td><td class="wr"><b class="b2">targets_picked</b> · <b>picks</b> = {A_pick, B_pick, llm_pick, agreement}</td></tr>
+    <tr><td class="nd">END</td><td class="wr"><b class="b2">stage_done</b> · Stage4Result assembled and returned</td></tr>
+  </table>
+
+  <!-- ============ S4 CODE ============ -->
+  <h2 class="sec">12 · The code — build the spine, run the twin, one flag</h2>
+  <div class="ba">
+    <div class="pane">
+      <h4>graph_s4.py · the linear spine</h4>
+<pre>g = <span class="fn">StateGraph</span>(S4State)
+g.<span class="fn">add_node</span>(<span class="st">"recommend"</span>, recommend)  <span class="cm"># MODEL → frame+recs+advisory</span>
+g.<span class="fn">add_node</span>(<span class="st">"graph_a"</span>,   graph_a)    <span class="cm"># CODE  → build_causal_graph(quads)</span>
+g.<span class="fn">add_node</span>(<span class="st">"graph_b"</span>,   graph_b)    <span class="cm"># MODEL → independent graph + pick</span>
+g.<span class="fn">add_node</span>(<span class="st">"picks"</span>,     picks)      <span class="cm"># A_pick / B_pick / llm_pick + agree</span>
+
+g.<span class="fn">add_edge</span>(START, <span class="st">"recommend"</span>)
+g.<span class="fn">add_edge</span>(<span class="st">"recommend"</span>, <span class="st">"graph_a"</span>)
+g.<span class="fn">add_edge</span>(<span class="st">"graph_a"</span>, <span class="st">"graph_b"</span>)
+g.<span class="fn">add_edge</span>(<span class="st">"graph_b"</span>, <span class="st">"picks"</span>)
+g.<span class="fn">add_edge</span>(<span class="st">"picks"</span>, END)</pre>
+    </div>
+    <div class="pane">
+      <h4>the public twin + the single flag</h4>
+<pre><span class="cm"># byte-identical twin of run_stage4 —</span>
+<span class="cm"># same positional signature</span>
+<span class="kw">def</span> <span class="fn">run_s4_graph</span>(record, assessment, image_path,
+                 *, query_fn, on_event):
+    ...
+    <span class="kw">return</span> Stage4Result(...)   <span class="cm"># same model_dump</span>
+
+<span class="cm"># ONE flag switches BOTH stages</span>
+<span class="cm"># (control_flag/set_control from graph_live)</span>
+<span class="kw">def</span> <span class="fn">stage4_with_control</span>(...):
+    <span class="kw">if</span> <span class="fn">control_flag</span>() == <span class="st">"langgraph"</span>:
+        <span class="kw">return</span> <span class="fn">run_s4_graph</span>(...)
+    <span class="kw">return</span> <span class="fn">run_stage4</span>(...)   <span class="cm"># python</span></pre>
+    </div>
+  </div>
+  <div class="pane" style="margin-top:14px;">
+    <h4>one node · a 1:1 lift of one run_stage4 segment</h4>
+<pre><span class="kw">def</span> <span class="fn">graph_b</span>(state):
+    out = <span class="fn">run_graph_b</span>(state[<span class="st">"record"</span>],
+                      state[<span class="st">"assessment"</span>], ...)
+    <span class="cm"># return ONLY the keys it changed — LangGraph merges the rest</span>
+    <span class="kw">return</span> {<span class="st">"graph_b"</span>: out}</pre>
+  </div>
+  <p style="font-size:12.5px;color:var(--muted);margin:8px 2px 0;">Same node cores inside. The dispatcher's
+    contract is <b>identical on both branches</b> — same return type, same event stream — so the flag is a pure
+    toggle, invisible to callers.</p>
+
+  <!-- ============ S4 EQUIVALENCE + ROADMAP ============ -->
+  <h2 class="sec">13 · Equivalence guarantee, and what's planned</h2>
+  <div class="safety">
+    <code>run_s4_graph</code> is the <b>byte-identical twin</b> of <code>run_stage4</code>: under scripted models it
+    produces the <b>same Stage4Result</b> (<code>model_dump</code>) and the <b>same event stream, in the same
+    order</b>. Proven by <code>test_graph_s4.py</code>; the full suite is <b>340 hermetic tests, all passing</b>. It
+    reuses the <b>single <code>AGENTIC_CONTROL</code> flag</b> (imports <code>control_flag</code>/<code>set_control</code>
+    from <code>graph_live</code>) — one toggle switches both Stage 2 and Stage 4. Same Arm A / Arm B discipline: build
+    alongside, verify equal, then adopt.
+  </div>
+  <div class="opt rec" style="margin-top:12px;">
+    <div class="t">Phase 1a · the linear spine <span class="tag">BUILT</span></div>
+    <div class="d">recommend · graph_a · graph_b · picks, wired START → … → END with plain <code>add_edge</code>s. The
+      byte-identical twin and the single shared flag. This is what ships today.</div>
+  </div>
+  <div class="opt">
+    <div class="t">Phase 1b · more linear nodes — planned, not yet wired</div>
+    <div class="d">Adds <code>uncertainty</code>, <code>conformance</code>, <code>alignment</code>, <code>trust</code> as further
+      <b>linear</b> nodes still at the end of the spine. Same straight-line shape — no branches introduced.</div>
+  </div>
+  <div class="opt">
+    <div class="t">Phase 2 · the first conditional edges — planned, not yet wired</div>
+    <div class="d">Introduces a <code>route_after_checks</code> router and the first <b>loop</b>:
+      <code>violations &amp; round&lt;2 → probe → reflect → recheck</code>; <code>new latent threat → petition</code>;
+      <code>else → done</code>. The Phase 1a spine is designed so this bolts on <b>without rewiring</b> the existing
+      edges — exactly the two-local-loops-plus-a-petition-route shape Stage 2 already has.</div>
+  </div>
+
   <p class="foot">CEE+ Agentic · LangGraph control design — not built. The functions don't change; the control flow becomes an object you can see, pause, and branch.</p>
 
 </div>

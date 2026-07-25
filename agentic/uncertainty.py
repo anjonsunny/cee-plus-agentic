@@ -279,6 +279,149 @@ def measure_merged(probes: list[dict[str, Any]]) -> MeasuredUncertainty:
     return mu
 
 
+# ── Recommendation-stage measurement (Stage 4) ──────────────────────────
+
+
+def _split_counter(vals: list[Any]) -> str:
+    return ", ".join(f"{v}×{c}" for v, c in Counter(vals).most_common())
+
+
+def measure_recommendations(readings: list[dict[str, Any]],
+                            canonical_threats: set | None = None
+                            ) -> MeasuredUncertainty:
+    """Channel-2 for the recommendation step: re-ask the SAME recommend prompt
+    K times at probe temperature and measure how stable the ADVICE is. Unlike a
+    verdict, recommendations have no fixed identity across re-asks, so — exactly
+    like the merged assessment's threat/at-risk membership — stability is
+    measured at the entity and claim level, not per-slot.
+
+    Each reading (one probe) carries:
+      top_threat        the rank-1 recommendation's threat id ('' if none)
+      n_recs            how many recommendations the probe produced
+      threat_ids        threat id per recommendation (the quad.threat's)
+      affected_ids      every affected object id across the recommendations
+      effect_by_threat  {threat: effect} — the causal mechanism it chose
+      edges             [(threat, effect, affected_tuple)] — the causal claims
+
+    Global score = mean over: the top-priority-target flip, the count wobble,
+    each entity's threat-membership U, each entity's affected-membership U, and
+    each threat's effect-choice U — so one flickering entity or one flip-flopped
+    mechanism visibly moves the total (Sunny: the source must be pinpointable)."""
+    n = len(readings)
+    mu = MeasuredUncertainty(n_probes=n)
+    if n == 0:
+        return mu
+
+    top = [r.get("top_threat", "") for r in readings]
+    counts = [int(r.get("n_recs", 0)) for r in readings]
+    top_agree = agreement([t for t in top if t]) if any(top) else 1.0
+    count_agree = agreement(counts)
+
+    def membership(key: str) -> dict[str, dict[str, Any]]:
+        seen: Counter = Counter()
+        for r in readings:
+            for oid in set(r.get(key) or []):
+                seen[str(oid)] += 1
+        return {oid: {"u": round(1 - c / n, 3), "votes": f"{c}/{n}"}
+                for oid, c in sorted(seen.items())}
+
+    # threat-membership stability. When the CANONICAL threats are known, report
+    # only those — every one of them, even those never re-produced (u=1.0) — so
+    # the panel isn't cluttered with off-list noise (a probe that once mislabels
+    # a victim as a threat). Without them, fall back to every seen threat.
+    threat_seen: Counter = Counter()
+    for r in readings:
+        for oid in set(r.get("threat_ids") or []):
+            threat_seen[str(oid)] += 1
+    if canonical_threats is not None:
+        threats = {t: {"u": round(1 - threat_seen.get(t, 0) / n, 3),
+                       "votes": f"{threat_seen.get(t, 0)}/{n}"}
+                   for t in sorted(canonical_threats)}
+    else:
+        threats = membership("threat_ids")
+    affected = membership("affected_ids")
+
+    # effect-choice stability per threat: over the probes where a threat is
+    # named, does the model commit to ONE causal mechanism for it? (This is the
+    # reason↔quad claim's run-to-run stability — the effect flip we care about.)
+    # Restricted to canonical threats too, for the same declutter reason.
+    effect_votes: dict[str, list[str]] = {}
+    for r in readings:
+        for t, eff in (r.get("effect_by_threat") or {}).items():
+            if canonical_threats is not None and str(t) not in canonical_threats:
+                continue
+            effect_votes.setdefault(str(t), []).append(str(eff))
+    effects: dict[str, dict[str, Any]] = {}
+    for t, effs in sorted(effect_votes.items()):
+        a = agreement(effs)
+        effects[t] = {"u": round(1 - a, 3),
+                      "votes": f"{Counter(effs).most_common(1)[0][1]}/{len(effs)}",
+                      "evidence": _split_counter(effs)}
+
+    mu.granular = {
+        "fields": {
+            "top_priority_target": {"u": round(1 - top_agree, 3),
+                                    "evidence": _split_counter([t or "∅"
+                                                                for t in top])},
+            "recommendation_count": {"u": round(1 - count_agree, 3),
+                                     "evidence": _split_counter(counts)},
+        },
+        "threats": threats,
+        "affected": affected,
+        "effects": effects,
+    }
+
+    # distinct advice candidates (same causal-claim set = one candidate), ranked
+    groups: dict[Any, dict[str, Any]] = {}
+    for r in readings:
+        key = frozenset((e[0], e[1], tuple(e[2]))
+                        for e in (r.get("edges") or []))
+        g = groups.setdefault(key, {"votes": 0, "edges": None})
+        g["votes"] += 1
+        if g["edges"] is None:
+            g["edges"] = [[e[0], e[1], list(e[2])] for e in (r.get("edges") or [])]
+    mu.candidates = sorted(groups.values(), key=lambda g: -g["votes"])
+
+    components = ([1 - top_agree, 1 - count_agree]
+                  + [g["u"] for g in threats.values()]
+                  + [g["u"] for g in affected.values()]
+                  + [g["u"] for g in effects.values()])
+    mu.score = round(sum(components) / len(components), 3) if components else 0.0
+
+    # drivers — each unstable piece, with the evidence and what to do
+    if top_agree < 1.0:
+        mu.drivers.append(Driver(
+            kind="top_target_flip",
+            evidence=f"the #1-priority target changes across re-asks: "
+                     f"{_split_counter([t or '∅' for t in top])}",
+            action="the single highest-priority intervention is not stable — "
+                   "treat the top pick as low-confidence; the pick-agreement "
+                   "check and the trust score should weigh this heavily"))
+    if count_agree < 1.0:
+        mu.drivers.append(Driver(
+            kind="rec_count_wobble",
+            evidence=f"number of recommendations varies: {_split_counter(counts)}",
+            action="the model does not settle on how many recommendations to "
+                   "give — compare the distinct recommendation sets below "
+                   "before trusting any single run's set"))
+    for oid, g in threats.items():
+        if g["u"] > 0.0:
+            mu.drivers.append(Driver(
+                kind="threat_membership_split",
+                evidence=f"{oid} is named a threat in only {g['votes']} probes",
+                action=f"reflect on {oid}: is it truly a hazard here? its "
+                       f"recommendation is on unstable ground"))
+    for t, g in effects.items():
+        if g["u"] > 0.0:
+            mu.drivers.append(Driver(
+                kind="effect_choice_unstable",
+                evidence=f"{t}'s causal mechanism splits: {g['evidence']}",
+                action=f"the model will not commit to ONE effect for {t} — its "
+                       f"reason↔quad claim is unreliable; flag that "
+                       f"recommendation's trust and consider a semantic check"))
+    return mu
+
+
 # ── Perception structural score (Stage 1, always-on, cheap) ─────────────
 
 # PRIORS pending calibration against the six-scene probe run.

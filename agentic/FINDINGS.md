@@ -9,6 +9,7 @@
 | C | LAWBOOK COLLISION — our rules fighting each other | F3, F9 | 2 |
 | D | JUDGE NOISE / BIAS — ill-posed questions, severity-minimizing | F4(open), F5, F11 | 3 |
 | E | GENUINE MODEL ERROR — unstable second looks; flat self-confidence; reflection jitter | F7(parts), jitter | ~2 |
+| F | METRIC DEFECT — scoring that hides/distorts the real signal | F15 | 1 |
 
 **Standing observation (through F12, 4 of 6 scenes):** only ~2 of ~15
 defects were the subject model failing unprompted. The dominant modes
@@ -525,3 +526,66 @@ when you hold the key, semantic search can only match it or get it
 wrong. Run `python -m agentic.retrieval` locally (HF available) for the
 real BAAI/bge-small number — expected higher than keyword, but the
 lesson stands. RAG's real home is Stage 4 (semantic checks, no key).
+
+---
+
+## F15 · Stage 4 scoring metrics — audit before building (rules mostly sound, numbers misleading)
+**Date:** 2026-07-24 · **Scene:** N/A (code audit of Arm A metrics we import) · **Status:** open — corrected Arm B layer to be built in Phase 1b
+
+Before wiring Stage 4 to Arm A's conformance + alignment scoring, audited
+`check_graph_rule_conformance`, the validity formula, `assess_pre_internal_alignment`,
+and `compare_graphs{,_soft,_topological}`. The 20 conformance rules and the
+internal cross-checks are coherent and mostly correct. The SCORING NUMBERS
+have four real defects that make Arm A's trust read persistently, misleadingly
+low (Sunny's observation: Arm A trust is always low because of all the violations):
+
+1. **Saturation.** conformance_validity = 1 − min(1, violations/edges). Once
+   violations ≥ edges it pins to the floor — a graph with 5 violations and one
+   with 40 (on 5 edges) score identically. Throws away the magnitude that IS the
+   signal. (VLM breaks tens of rules, so this floors constantly.)
+2. **Wrong denominator.** Numerator includes node-level + whole-graph violations;
+   denominator is EDGE count only. Same node defect scores differently by edge
+   density. Principled denominator = nodes+edges (or per-family).
+3. **Double-counting.** One conceptual error trips 2–3 rules (drowning entity
+   flagged hazardous → hazard_flag_state_mismatch + hazardous_and_at_risk
+   [+ distress_state_on_non_living if non-living]). Inflates numerator, accelerates
+   saturation.
+4. **Severity-blind.** Flat head-count weights cosmetic rules (node_budget_exceeded,
+   redundant_instancing = no_effect) the same as fabrications (unresolved_endpoint).
+   Ignores Arm A's own CONSEQUENCE weighting.
+   (A/B asymmetry — A floors at 0.5, B at 0.0 — is INTENTIONAL + documented, not a
+   defect, but the two numbers are on different scales; must be labeled.)
+
+**Internal alignment** (assess_pre_internal_alignment, main.py:1373) is real and
+mostly enforced, but THREE prompt rules are NOT enforced in code: Rule 4's
+"reason ids in related AND quad" is relaxed to OR (line 1700); the "(verb,target)
+action-collapse" rule + self-check (i) never inspect `action`/`expected_consequence`;
+"threatens as last resort" (g) unenforced. Plus a presumed-id inconsistency
+(reason-coverage demands the presumed token verbatim; related-coverage excuses it)
+→ false-positive risk.
+
+**A-vs-B (declared Graph B vs structured Graph A):** the precision/recall pair is
+CLEAN — a_fidelity = |A∩B|/|A| (how much of the recs' graph B backs up),
+b_coverage = |A∩B|/|B| (how much of B's declared graph the recs reproduce),
+B the yardstick. Good, keep it. BUT the three "structural" agreement tiers use
+THREE different math definitions — strict = set-Jaccard, soft = Dice, topological =
+multiset-Jaccard — so they are NOT comparable (soft reads higher by formula alone)
+and don't form a monotone loose→tight ladder (topological can score < strict on
+duplicate edges). Two different metrics are both named "topological." Pick ONE
+structural definition; don't threshold the three against each other.
+
+**Decision (Sunny, 2026-07-24):** IRON RULE 1 stands — never edit main.py; import
+only. So we cannot fix Arm A's rules/metric. Instead, Phase 1b builds a CORRECTED
+Arm B trust layer that (a) imports the raw violation LIST from
+check_graph_rule_conformance, then dedupes the double-counts (group by entity/defect),
+severity-weights (drop no_effect rules from the trust penalty, weight by Arm A's
+own CONSEQUENCE), and normalizes by nodes+edges without hard saturation; (b) enforces
+the three prompt-only internal rules as real Arm B checks; (c) uses one structural
+definition. Arm A's raw frozen numbers are STILL recorded alongside, for arm
+comparability. The trust panel shows the VIOLATION BREAKDOWN BY CATEGORY (which rules,
+how many, severity) — the honest "where + why we can't trust the VLM" — not a single
+saturated number.
+
+**Claim for the paper:** a naive violations/edges validity saturates and hides the
+model's failure profile; the informative signal is the *distribution* of rule breaks
+by category and severity, not a scalar.

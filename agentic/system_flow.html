@@ -86,6 +86,9 @@
   /* big node cards */
   .bigcard{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:0;margin-bottom:14px;overflow:hidden;border-left:5px solid var(--line);}
   .bigcard.s1{border-left-color:var(--s1);} .bigcard.s2{border-left-color:var(--s2);} .bigcard.pet{border-left-color:var(--pet);}
+  .bigcard.s4{border-left-color:#16a34a;}
+  .bigcard.plan{border-style:dashed;border-left-style:solid;opacity:.9;}
+  .au-plan{background:#94a3b8;}
   .bc-hd{display:flex;align-items:center;gap:10px;padding:13px 18px 10px;flex-wrap:wrap;}
   .bc-nm{font-size:16px;font-weight:800;}
   .bc-code{font-size:11.5px;color:var(--faint);font-family:ui-monospace,Menlo,monospace;}
@@ -103,6 +106,7 @@
   .bc-ex{background:#f0fdfa;border-left:3px solid #5eead4;border-radius:0 8px 8px 0;padding:9px 13px;margin-top:12px;font-size:12.5px;color:#334155;}
   .bigcard.s2 .bc-ex{background:#eff6ff;border-left-color:#93c5fd;}
   .bigcard.pet .bc-ex{background:#fffbeb;border-left-color:#fcd34d;}
+  .bigcard.s4 .bc-ex{background:#f0fdf4;border-left-color:#86efac;}
   .bc-ex b{color:var(--ink);}
   .bc-why{background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;padding:11px 14px;margin-top:12px;font-size:12.5px;color:#4b2c6b;}
   .bc-why b{color:#6b21a8;}
@@ -188,9 +192,12 @@
   .fs-n.s2{border-color:#93c5fd;color:#1d4ed8;background:#eff6ff;}
   .fs-n.pet{border-color:#fcd34d;color:#b45309;background:#fffbeb;}
   .fs-n.end{border-color:#cbd5e1;color:#475569;background:#f8fafc;}
+  .fs-n.s4{border-color:#86efac;color:#15803d;background:#f0fdf4;}
+  .fs-n.plan{border-style:dashed;border-color:#cbd5e1;color:#94a3b8;background:#f8fafc;}
   .fs-c{font-size:13px;color:#334155;} .fs-c b{color:var(--ink);}
   .fs-arrow{color:var(--faint);font-size:14px;padding:3px 0 3px 56px;}
   .rec{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#0f766e;background:#f0fdfa;padding:3px 7px;border-radius:6px;display:inline-block;margin-top:3px;}
+  .rec.s4{color:#15803d;background:#f0fdf4;}
   .toolmap{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;}
   .toolmap h3,.evalbox h3{margin:0 0 12px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink);}
   .trow{display:flex;gap:11px;padding:8px 0;border-top:1px solid var(--line);font-size:12.5px;}
@@ -220,6 +227,7 @@
     <span class="lgi"><span class="lgsw" style="background:#0d9488"></span>Stage 1 · Perception</span>
     <span class="lgi"><span class="lgsw" style="background:#2563eb"></span>Stage 2 · Assessment</span>
     <span class="lgi"><span class="lgsw" style="background:#d97706"></span>Petition</span>
+    <span class="lgi"><span class="lgsw" style="background:#16a34a"></span>Stage 4 · Recommendation</span>
     <span style="width:1px;height:20px;background:var(--line)"></span>
     <span><b>Authority</b></span>
     <span class="lgi"><span class="lgdot" style="background:#dc2626"></span>FLAG · triggers a fix</span>
@@ -255,7 +263,21 @@
     <div class="flowstep"><div class="fs-n pet">stuck?</div><div class="fs-c">No serious problem is left → nothing to re-open. <b>(This is where the petition would fire if one had survived.)</b></div></div>
     <div class="fs-arrow">↓</div>
     <div class="flowstep"><div class="fs-n end">done</div><div class="fs-c"><b>Yes · building collapse · level 8 · dangerous: building + dust · in danger: the trapped man.</b></div></div>
-    <p style="font-size:12px;color:var(--muted);margin:14px 0 0;">Teal = looks at the photo. Blue = works from the list alone. Amber = the petition. ↺ = a step that can repeat, capped at 2.</p>
+    <div class="fs-arrow">↓ &nbsp;<span style="font-size:11px;color:var(--faint)">— Stage 4 · Recommendation begins: now the model says what to <b>DO</b>, and we ask whether to trust it —</span></div>
+    <div class="flowstep"><div class="fs-n s4">recommend</div><div class="fs-c">The model writes a plan: <b>each recommendation carries a little cause→effect "quad"</b> (do X → hazard Y drops), plus side-notes it <i>assumes</i> but can't see (kept on the side, never in the graph).<br><span class="rec s4">e.g. "clear the dust / ventilate" → dust_1·rising drops · "shore the structure" → building_1·collapsed stabilises</span></div></div>
+    <div class="fs-arrow">↓</div>
+    <div class="flowstep"><div class="fs-n s4">measure uncertainty</div><div class="fs-c">Re-ask the plan <b>5× at a higher temperature</b> and see how much the advice wobbles: the <b>top-priority target</b>, which entities flicker as threats, and — per hazard — whether the <b>cause→effect stays the same</b>. The canonical plan is untouched; this only measures how stable it is. Feeds the trust score.<br><span class="rec s4">e.g. building_1×3 / dust_1×2 as the #1 target → the top pick isn't stable</span></div></div>
+    <div class="fs-arrow">↓</div>
+    <div class="flowstep"><div class="fs-n s4">build Graph A</div><div class="fs-c">Code (Arm A's frozen builder) snaps those quads together into a <b>picture of nodes and arrows</b> — the model's own reasoning, reassembled, nothing added.</div></div>
+    <div class="fs-arrow">↓</div>
+    <div class="flowstep"><div class="fs-n s4">Graph B</div><div class="fs-c">A fresh, <b>independent</b> ask (Arm A's Graph-B prompt) with the recommendations hidden — it draws its own graph and names its own <b>one thing to suppress</b>. A second opinion that never saw the plan.</div></div>
+    <div class="fs-arrow">↓</div>
+    <div class="flowstep"><div class="fs-n s4">pick the target</div><div class="fs-c"><b>Three ways name what to act on</b>, so we can see if they agree:<br><span class="rec s4">A_pick = dust_1 &nbsp;(from Graph A · tie broken by acuteness — "rising" wins)</span> <span class="rec s4">B_pick = building_1 &nbsp;(Graph B, decoupled)</span> <span class="rec s4">llm_pick = building_1 &nbsp;(direct ask)</span></div></div>
+    <div class="fs-arrow">↓</div>
+    <div class="flowstep"><div class="fs-n end">what to intervene on</div><div class="fs-c"><b>Agreement 2 of 3 — not unanimous.</b> The disagreement is the honest signal: the three routes don't line up, so trust here is partial. (A trust score is Phase 1b, next.)</div></div>
+    <div class="fs-arrow">↓</div>
+    <div class="flowstep"><div class="fs-n s4">grade &amp; trust</div><div class="fs-c">The re-ask (uncertainty), the rule-conformance check and the Graph A-vs-B alignment all roll into one <b>trust score</b> — a global number plus a <b>per-recommendation</b> breakdown, ranked worst-first so you see <i>why</i> to trust the VLM or not. <b>A-vs-B is weighted highest.</b><br><span class="rec s4">e.g. trust 0.74 · biggest hit = advice diverges from the model's own graph</span></div></div>
+    <p style="font-size:12px;color:var(--muted);margin:14px 0 0;">Teal = looks at the photo. Blue = works from the list alone. Amber = the petition. Green = Stage 4, the recommendation. Grey-dashed = planned, not built. ↺ = a step that can repeat, capped at 2.</p>
   </div>
 
   <h2 class="sec">2 · The real photo — exactly what Stage 1 hands to Stage 2</h2>
@@ -501,7 +523,72 @@
     </div>
   </div>
 
-  <div class="next"><b>STAGE 4 · NEXT (not built)</b> — recommendations &amp; causal quads, where Arm A's frozen scoring meets Arm B. States stay on nodes (the computational currency); a mechanism-on-edge is added only where natural language and the ontology diverge (e.g. the drowning / engulfing case).</div>
+  <h2 class="sec">6 · Stage 4 · Recommendation — what to DO, and whether to trust it <span style="color:#16a34a">(Phase 1a · built)</span></h2>
+
+  <div class="authority">
+    <b>Same one rule, into a new stage:</b> the plan and its cause→effect quads are the <b>model's own</b> — this is exactly what's under test. Code only <b>reassembles</b> the model's quads into Graph A and <b>ranks</b> the candidate targets; the second-opinion Graph B is a separate model ask. <b>Nothing here overwrites the model.</b> Perception stays <b>frozen</b> — the model sees the image as context but may only reuse existing ids; no re-perceiving.
+  </div>
+
+  <div class="bigcard s4">
+    <div class="bc-hd"><span class="bc-nm">Recommend</span><span class="bc-code">recommend</span><span class="bc-auth au-code">MODEL</span></div>
+    <div class="bc-body">
+      <div class="bc-mean"><b>What it means.</b> The model writes a short reasoning frame and a list of <b>recommendations</b>. Each recommendation carries a <b>causal quad</b> — a do-X → hazard-Y-drops link that <b>goes into the graph</b> (the HARD layer). Anything it merely <i>assumes</i> but can't see goes into an <b>assumptions advisory</b> — recorded on the side, <b>never in the graph</b> (the ADVISORY layer).</div>
+      <div class="bc-ex"><b>In the collapse scene:</b> "ventilate / clear the dust" → <code>dust_1·rising</code> drops; "shore the structure" → <code>building_1·collapsed</code> stabilises. An advisory note ("there may be gas") is kept aside, not graphed.</div>
+      <div class="bc-tools"><div class="th">tools</div>
+        <div class="tool"><span class="tpill tp-vlm">Qwen2.5-VL</span><span class="tuse">writes the plan + quads, <b>text-only from the frozen record</b> (image shown as context; only existing ids allowed).</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="bigcard s4">
+    <div class="bc-hd"><span class="bc-nm">Build Graph A</span><span class="bc-code">build_causal_graph · Arm A (frozen, imported)</span><span class="bc-auth au-code">CODE</span></div>
+    <div class="bc-body">
+      <div class="bc-mean"><b>What it means.</b> Arm A's frozen builder <b>reassembles the model's quads</b> into nodes + edges — the model's own reasoning, drawn as a graph. Deterministic; nothing added, nothing decided.</div>
+      <div class="bc-ex"><b>In the collapse scene:</b> the two quads become a small graph with <code>dust_1</code> and <code>building_1</code> as hazard nodes, each with the action that suppresses it.</div>
+      <div class="bc-tools"><div class="th">tools</div>
+        <div class="tool"><span class="tpill tp-py">Python</span><span class="tuse"><b>imports</b> Arm A's <code>build_causal_graph</code> — same frozen assembly both arms share, so they stay comparable.</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="bigcard s4">
+    <div class="bc-hd"><span class="bc-nm">Graph B</span><span class="bc-code">GRAPH_B_PROMPT · Arm A · recommendations withheld</span><span class="bc-auth au-code">MODEL</span></div>
+    <div class="bc-body">
+      <div class="bc-mean"><b>What it means.</b> A fresh, <b>independent</b> ask (Arm A's Graph-B prompt) with the model's recommendations <b>hidden</b>. It draws its own graph from the record and names its own single <b>suppression_pick</b>. A second opinion that never saw the plan — the whole point is that it can disagree.</div>
+      <div class="bc-ex"><b>In the collapse scene:</b> Graph B, blind to the plan, picks <code>building_1</code>.</div>
+      <div class="bc-tools"><div class="th">tools</div>
+        <div class="tool"><span class="tpill tp-vlm">Qwen2.5-VL</span><span class="tuse">answers the frozen Graph-B prompt <b>text-only</b>, independent of the recommend step.</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="bigcard s4">
+    <div class="bc-hd"><span class="bc-nm">Pick the target</span><span class="bc-code">three picks + agreement</span><span class="bc-auth au-code">CODE + MODEL</span></div>
+    <div class="bc-body">
+      <div class="bc-mean"><b>What it means.</b> Three routes each name <b>what to act on</b>, on purpose — so their (dis)agreement is a trust signal.</div>
+      <div class="rule"><span class="rid p" style="color:#16a34a">A_pick</span><span class="rtx"><b>from Graph A</b> — <code>pick_suppression_framework</code> ranks the model's own graph (code, <i>action-coupled</i>). Ties on out-degree are broken by <b>acuteness</b>.</span></div>
+      <div class="rule"><span class="rid p" style="color:#16a34a">B_pick</span><span class="rtx"><b>Graph B's suppression_pick</b> — the independent model opinion (<i>decoupled</i> from the plan).</span></div>
+      <div class="rule"><span class="rid p" style="color:#16a34a">llm_pick</span><span class="rtx"><b>a direct-impact ask</b> — the model, asked outright what single thing to suppress (<i>coupled</i>).</span></div>
+      <div class="bc-ex"><b>In the collapse scene:</b> <code>A_pick = dust_1</code> (acute state "rising" wins the out-degree tie), <code>B_pick = building_1</code>, <code>llm_pick = building_1</code> → <b>pick-agreement 2 / 3, not unanimous.</b> The three routes genuinely disagree — that honest split is exactly the signal Stage 4 is built to surface.</div>
+      <div class="bc-tools"><div class="th">tools</div>
+        <div class="tool"><span class="tpill tp-py">Python</span><span class="tuse">A_pick's ranking + the pick-agreement count are <b>deterministic</b> — they rank and tally, they never overrule the model.</span></div>
+        <div class="tool"><span class="tpill tp-vlm">Qwen2.5-VL</span><span class="tuse">supplies B_pick and llm_pick.</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="safety">
+    <b>Two engines, proven identical.</b> Stage 4 runs two ways — a plain-Python control (<code>run_stage4</code>) and a LangGraph twin (<code>run_s4_graph</code>) — and they emit a <b>byte-identical</b> <code>Stage4Result</code> and event stream, gated by the single <code>AGENTIC_CONTROL</code> flag reused from earlier stages. <b>340 hermetic tests pass</b> (no models needed).
+  </div>
+
+  <div class="next">
+    <b>STAGE 4 · PLANNED (not yet built)</b> — the trust half of the stage, and the loops that act on it.
+    <div style="margin-top:8px;font-size:12.5px;line-height:1.7;">
+      <b style="color:#16a34a">Phase 1b · evals</b> (runs at the END, after the picks) — measured <b>uncertainty</b> (5 probes, granular + global); <b>conformance</b> (<code>check_graph_rule_conformance</code> on Graph A &amp; B); <b>alignment</b> A-vs-B (<code>compare_graphs</code>: strict / soft / topological); a final <b>trust score</b>.<br>
+      <b style="color:#16a34a">Phase 2</b> — a probe-gated <b>reflection loop</b>; <b>petitions</b> (re-open Stage 2 for a new latent threat; re-open Stage 1 to turn an advisory into a presumed entity); <b>advisory judges</b> (rubric / pairwise); <b>UI panels</b>; a <b>three-arm comparison</b> harness.<br>
+      <span style="color:var(--faint)">Roadmap: Stage 4 <b>ends</b> by naming what-to-intervene-on + a trust score. <b>Stage 5 = Pathology</b> (5 types). <b>Stage 6 = Intervention</b> is a separate later stage — the hazard-suppression edit itself.</span>
+    </div>
+  </div>
 
   <p class="foot">CEE+ Agentic · Arm B · the living system chart — grows with the build (iron rule 9). Consistent with the LangGraph control-design doc.</p>
 </div>

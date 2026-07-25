@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stage 4 — Recommendation · system flow + LangGraph flow (living)</title>
+<style>
+  :root{
+    --ink:#1f2937; --muted:#64748b; --faint:#94a3b8; --line:#e2e8f0;
+    --card:#ffffff; --bg:#f8fafc;
+    --built:#16a34a; --builtbg:#f0fdf4; --builtln:#86efac;
+    --plan:#94a3b8; --planbg:#f8fafc; --planln:#cbd5e1;
+    --model:#eef2ff; --modelln:#c7d2fe; --modeltx:#3730a3;
+    --code:#fffbeb; --codeln:#fde68a; --codetx:#b45309;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    line-height:1.55; padding:26px 18px 60px;}
+  .wrap{max-width:900px; margin:0 auto;}
+  h1{font-size:23px; margin:0 0 3px;}
+  .sub{color:var(--muted); font-size:14px; margin:0 0 20px;}
+  h2{font-size:16px; letter-spacing:.3px; margin:30px 0 12px;
+    padding-bottom:6px; border-bottom:1px solid var(--line);}
+  p{font-size:14px; margin:8px 0;}
+  code{background:#f1f5f9; border-radius:5px; padding:1px 6px;
+    font-family:"SF Mono",Menlo,Consolas,monospace; font-size:12.5px;}
+  .mono{font-family:"SF Mono",Menlo,Consolas,monospace;}
+  .card{background:var(--card); border:1px solid var(--line);
+    border-radius:14px; padding:16px 18px; margin:10px 0;
+    box-shadow:0 1px 3px rgba(15,23,42,.05);}
+  .small{font-size:12px; color:var(--muted);}
+  pre{background:#f8fafc; border:1px solid var(--line); border-radius:8px;
+    padding:11px 13px; font-size:12px; overflow-x:auto; white-space:pre;
+    font-family:"SF Mono",Menlo,Consolas,monospace; line-height:1.5;}
+
+  .sys{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:4px 0;}
+  .st{border-radius:10px; padding:7px 11px; font-size:12.5px; text-align:center;
+    border:1px solid var(--line); background:#fff; min-width:96px;}
+  .st b{display:block; font-size:12.5px;}
+  .st .p{font-size:10px; letter-spacing:.4px; font-weight:700;}
+  .done{background:var(--builtbg); border-color:var(--builtln);}
+  .done .p{color:var(--built);}
+  .todo{background:var(--planbg); border-color:var(--planln); color:#64748b;}
+  .todo .p{color:var(--plan);}
+  .arr{color:var(--faint); font-size:18px;}
+
+  .flow{display:flex; flex-direction:column; align-items:center;}
+  .box{border-radius:12px; padding:9px 13px; font-size:13px; text-align:center;
+    border:1px solid var(--line); background:#fff; max-width:540px; width:100%;}
+  .box b{display:block; font-size:13px;}
+  .box .t{font-size:11.5px; color:var(--muted);}
+  .box.built{background:var(--builtbg); border-color:var(--builtln);}
+  .box.model{background:var(--model); border-color:var(--modelln);}
+  .box.code{background:var(--code); border-color:var(--codeln);}
+  .box.plan{background:var(--planbg); border-color:var(--planln); border-style:dashed; color:#64748b;}
+  .down{color:var(--faint); font-size:18px; margin:3px 0;}
+  .tag{display:inline-block; font-size:9px; font-weight:700; letter-spacing:.5px;
+    padding:2px 6px; border-radius:20px; margin-bottom:4px; color:#fff;}
+  .tag.m{background:#4f46e5;} .tag.c{background:#d97706;} .tag.b{background:#16a34a;}
+  .tag.p{background:#94a3b8;}
+  .pair{display:flex; gap:10px; width:100%; max-width:540px;}
+  .pair>.box{flex:1;}
+  .legend{font-size:11.5px; color:var(--muted); display:flex; gap:16px; flex-wrap:wrap; margin-top:8px;}
+  .sw{display:inline-block; width:11px; height:11px; border-radius:3px; vertical-align:middle; margin-right:4px;}
+  .note{background:#fffbeb; border:1px solid #fde68a; border-radius:10px;
+    padding:10px 14px; font-size:13px; margin-top:10px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Stage 4 — Recommendation</h1>
+  <p class="sub">Living flow · system + LangGraph · updated 2026-07-24 (Phase 1a built)</p>
+
+  <h2>Whole system, where Stage 4 sits</h2>
+  <div class="card">
+    <div class="sys">
+      <div class="st done"><span class="p">DONE</span><b>Stage 1</b>Perceive</div>
+      <span class="arr">→</span>
+      <div class="st done"><span class="p">DONE</span><b>Stage 2</b>Assess</div>
+      <span class="arr">→</span>
+      <div class="st done"><span class="p">1a DONE</span><b>Stage 4</b>Recommend</div>
+      <span class="arr">→</span>
+      <div class="st todo"><span class="p">PLANNED</span><b>Stage 5</b>Pathology</div>
+      <span class="arr">→</span>
+      <div class="st todo"><span class="p">PLANNED</span><b>Stage 6</b>Intervention</div>
+    </div>
+    <p class="small" style="margin-top:8px;">Intervention is a separate later stage — not part of Stage 4. Stage 4 ends by naming <b>what to intervene on</b> + a trust score.</p>
+  </div>
+
+  <h2>Build status</h2>
+  <div class="card">
+    <pre>Phase 1a  recommend → Graph A → Graph B → pick targets     ✅ BUILT
+          Python control + LangGraph twin, byte-identical · 340 tests
+Phase 1b  uncertainty · conformance · alignment · trust     ◻ PLANNED (evals, at the end)
+Phase 2   judges · reflection (probe-gated) · petitions ·
+          UI panels · three-arm harness                     ◻ PLANNED</pre>
+  </div>
+
+  <h2>1 · System flow</h2>
+  <div class="card">
+    <div class="flow">
+      <div class="box built"><span class="tag b">INPUT</span><b>frozen record + assessment + image/caption</b>
+        <span class="t">Stage 1 entities · Stage 2 threats/at_risk · image as context (ids frozen)</span></div>
+      <div class="down">↓</div>
+      <div class="pair">
+        <div class="box model"><span class="tag m">MODEL · built</span><b>recommend</b>
+          <span class="t">HARD: frame + recommendations[] (quads)<br>ADVISORY: assumptions_advisory</span></div>
+        <div class="box code"><span class="tag c">CODE · built</span><b>build Graph A</b>
+          <span class="t">quads → nodes+edges<br>(Arm A build_causal_graph)</span></div>
+      </div>
+      <div class="down">↓</div>
+      <div class="box model"><span class="tag m">MODEL · built</span><b>Graph B</b>
+        <span class="t">independent graph + its suppression_pick (recs withheld)</span></div>
+      <div class="down">↓</div>
+      <div class="box built"><span class="tag b">built</span><b>pick targets — 3 ways</b>
+        <span class="t">A_pick = pick_suppression_framework(A) · B_pick = Graph B's pick ·
+        llm_pick = direct impact ask → what-to-intervene-on + pick-agreement</span></div>
+      <div class="down">↓ &nbsp;— evals, at the end (Phase 1b) —</div>
+      <div class="box plan"><span class="tag p">CODE · planned</span><b>uncertainty (granular + global)</b>
+        <span class="t">5 probes: per rec / slot / pick + global</span></div>
+      <div class="down">↓</div>
+      <div class="box plan"><span class="tag p">CODE · planned</span><b>conformance + alignment / A-vs-B</b>
+        <span class="t">check_graph_rule_conformance · compare_graphs_{strict,soft,topological}</span></div>
+      <div class="down">↓</div>
+      <div class="box plan"><span class="tag p">planned</span><b>final trust</b>
+        <span class="t">pick-agreement + A-vs-B + conformance validity + uncertainty</span></div>
+    </div>
+    <div class="legend">
+      <span><span class="sw" style="background:#eef2ff"></span>model</span>
+      <span><span class="sw" style="background:#fffbeb"></span>code</span>
+      <span><span class="sw" style="background:#f0fdf4"></span>built (Phase 1a)</span>
+      <span><span class="sw" style="background:#f8fafc;border:1px dashed #cbd5e1"></span>planned</span>
+    </div>
+    <div class="note">Phase 2 adds, onto this same spine: a <b>probe-gated reflection loop</b> (RAG quotes the fired rule; install only what the probes reproduce), a <b>petition</b> back to Stage 2 (new latent threat) and to Stage 1 (advisory → presumed entity), and the <b>advisory judges</b> (rubric / pairwise) that feed reflection but never gate.</div>
+  </div>
+
+  <h2>2 · LangGraph flow (what's compiled today)</h2>
+  <p>Same shape as <code>graph_live.py</code>. Phase 1a is a linear spine — no conditional edges yet.</p>
+  <div class="card">
+    <b style="font-size:13px;">State — <span class="mono">S4State (TypedDict)</span> — built</b>
+    <pre>record, assessment                # frozen inputs
+frame, recommendations, advisory  # recommend node output (HARD + ADVISORY)
+recommend_notes, recommend_raw    # boundary notes + verbatim answer
+graph_a, graph_b                  # the two graphs
+picks                             # A_pick / B_pick / llm_pick + agreement</pre>
+
+    <b style="font-size:13px;">Nodes &amp; edges — built (linear)</b>
+    <pre>g = StateGraph(S4State)
+g.add_node("recommend", recommend)   # MODEL → frame + recommendations + advisory
+g.add_node("graph_a",   graph_a)     # CODE  → build_causal_graph(quads)
+g.add_node("graph_b",   graph_b)     # MODEL → independent graph + suppression_pick
+g.add_node("picks",     picks)       # A_pick / B_pick / llm_pick + agreement
+
+g.add_edge(START,       "recommend")
+g.add_edge("recommend", "graph_a")
+g.add_edge("graph_a",   "graph_b")
+g.add_edge("graph_b",   "picks")
+g.add_edge("picks",     END)</pre>
+    <p class="small">Twin of <code>recommend.run_stage4</code>; proven byte-identical (Stage4Result + event stream). Dispatch via <code>stage4_with_control</code> on the shared <code>AGENTIC_CONTROL</code> flag — the existing UI control-mode picker already switches it.</p>
+
+    <b style="font-size:13px;">Planned additions (Phase 1b/2) — not yet wired</b>
+    <pre>+ add_node("uncertainty" | "conformance" | "alignment" | "trust")   # 1b, still linear at the end
++ add_node("probe" | "reflect" | "petition")                        # 2, the first conditional edges
+  route_after_checks: violations & round<2 → probe→reflect→(recheck)
+                      new latent threat     → petition
+                      else                  → done</pre>
+  </div>
+
+  <div class="note">
+    <b>Hand-drawn chart edit (iron rule 9).</b> Append a <b>Stage 4 · Recommend</b> box after Stage 2. Phase 1a fills it as a straight line of four sub-boxes: <b>recommend</b> (with two out-tabs: HARD → Graph A, ADVISORY) → <b>Graph A</b> (code) → <b>Graph B</b> → <b>pick targets (3 ways)</b> → out-arrow "what-to-intervene-on + trust". No loops or routes yet — leave room to the right for the Phase-2 probe→reflect loop and the two petition arrows (up to Stage 2, up to Stage 1).
+  </div>
+
+</div>
+</body>
+</html>

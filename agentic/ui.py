@@ -42,6 +42,7 @@ from __future__ import annotations
 import base64
 import json
 import mimetypes
+import os
 import sys
 import threading
 import uuid
@@ -160,6 +161,14 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
         # Auto result diff (both/rag mode, only when a fired rule differs):
         # whether RAG's rule choice actually moved the final answer.
         "retrieval_result_diff": None,
+        # Stage 4 (recommendation, Phase 1a): the full Stage4Result dump, or
+        # an error string. None until the run reaches Stage 4.
+        "stage4": None,
+        "stage4_error": None,
+        # Stage 4 progress, for the card's running/done badge.
+        "stage4_started": False,
+        "stage4_marks": set(),
+        "stage4_probe": 0,          # live count of uncertainty re-asks so far
     }
     for ev in events:
         t = ev.get("type")
@@ -212,6 +221,11 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
         elif t == "run_error":
             d["error"] = ev.get("message", "unknown error")
 
+        # Stage 4 starts when the recommend node begins — show the badge
+        # active immediately (the recommend call is the longest sub-step).
+        if t == "stage_started" and ev.get("stage") == "recommend":
+            d["stage4_started"] = True
+
         # ── Stage 2 events (stage name "assess" is not in the Phase 0
         # STAGES list, so the generic stage handlers above ignore it). ──
         A = d["assess"]
@@ -250,6 +264,25 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
                 "rag_line": ev.get("rag_line"),
                 "error": ev.get("error"),
             }
+        elif t == "stage4_result":
+            d["stage4"] = ev.get("result")
+        elif t == "stage4_error":
+            d["stage4_error"] = ev.get("message")
+        elif t == "recommendations_ready":
+            d["stage4_started"] = True
+            d["stage4_marks"].add("recommend")
+        elif t == "graph_a_built":
+            d["stage4_marks"].add("graph_a")
+        elif t == "graph_b_built":
+            d["stage4_marks"].add("graph_b")
+        elif t == "targets_picked":
+            d["stage4_marks"].add("picks")
+        elif t == "recommend_probe":
+            d["stage4_probe"] = d.get("stage4_probe", 0) + 1
+        elif t == "recommend_uncertainty_ready":
+            d["stage4_marks"].add("uncertainty")
+        elif t == "trust_ready":
+            d["stage4_marks"].add("trust")
         elif t == "hazard_derived":
             line = (f"{ev.get('medium')} '{ev.get('was')}' → "
                     f"'{ev.get('now')}' — {ev.get('victim')} is "
@@ -836,6 +869,41 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
                 except Exception as exc:
                     RUNS[run_id]["judge"] = {"winner": "error",
                                              "raw": str(exc)[:120]}
+            # ── Stage 4 · recommendations (Phase 1a spine) ──────────────
+            # Runs after Stage 2 is final: recommend -> Graph A -> Graph B ->
+            # pick targets. Image is bound into the query_fn as context (ids
+            # stay frozen — no re-perception). Best-effort: a Stage-4 failure
+            # surfaces as an event and never kills the Stage 1-2 screen.
+            try:
+                import base64
+                import mimetypes as _mt
+
+                from agentic.graph_s4 import stage4_with_control
+                from agentic.recommend import (DEFAULT_REC_N_PROBES,
+                                               REC_PROBE_TEMPERATURE, _query_vlm)
+                _mime = _mt.guess_type(str(image_path))[0] or "image/jpeg"
+                _data_url = (f"data:{_mime};base64,"
+                             f"{base64.b64encode(image_path.read_bytes()).decode()}")
+
+                def _s4_query(prompt, _u=_data_url):
+                    return _query_vlm(prompt, image_contents=_u, temperature=0.0)
+
+                # probe re-asks: same image, raised temperature (channel-2 U)
+                def _s4_probe(prompt, _u=_data_url):
+                    return _query_vlm(prompt, image_contents=_u,
+                                      temperature=REC_PROBE_TEMPERATURE)
+                _s4_n_probes = int(os.getenv("REC_N_PROBES",
+                                             str(DEFAULT_REC_N_PROBES)))
+                s4 = stage4_with_control(record, result.assessment,
+                                         str(image_path), query_fn=_s4_query,
+                                         probe_fn=_s4_probe,
+                                         n_probes=_s4_n_probes,
+                                         on_event=sink)
+                (run_dir / "stage4.json").write_text(s4.model_dump_json(indent=2))
+                RUNS[run_id]["stage4"] = s4.model_dump()
+                sink({"type": "stage4_result", "result": s4.model_dump()})
+            except Exception as exc:
+                sink({"type": "stage4_error", "message": str(exc)[:200]})
         except Exception as exc:  # surfaced as a card, never a dead screen
             sink({"type": "run_error", "message": str(exc)})
             RUNS[run_id]["error"] = str(exc)
@@ -1252,6 +1320,866 @@ def rag_shadow_panel(shadow: list[dict[str, Any]] | None, stage_label: str,
                        "marginTop": "5px", "fontStyle": "italic"}))
     return html.Div(rows, className="unc-panel",
                     style={"borderColor": "#a78bfa", "background": "#faf5ff"})
+
+
+def stage4_status_span(d: dict[str, Any]) -> html.Span:
+    """The running/done badge on the Stage 4 card header — same look as
+    Stages 1-2. Steps: recommend → Graph A → Graph B → pick."""
+    STEPS = [("recommend", "recommend"), ("uncertainty", "uncertainty"),
+             ("Graph A", "graph_a"), ("Graph B", "graph_b"),
+             ("pick", "picks"), ("trust", "trust")]
+    if d.get("stage4") is not None or d.get("stage4_error"):
+        return phase_status_span([(name, "done") for name, _ in STEPS])
+    marks = d.get("stage4_marks") or set()
+    if not (d.get("stage4_started") or marks):
+        return html.Span("○ waiting", className="phase-status pending")
+    steps: list[tuple[str, str]] = []
+    active_used = False
+    for name, key in STEPS:
+        if key in marks:
+            steps.append((name, "done"))
+        elif not active_used:
+            steps.append((name, "active"))
+            active_used = True
+        else:
+            steps.append((name, "pending"))
+    return phase_status_span(steps)
+
+
+def _node_chip(nid: str, node: dict[str, Any],
+               at_risk: bool = False) -> html.Span:
+    """One entity as a colored chip: red = hazard (source of harm),
+    amber = at-risk (target), gray = neutral. State shown when present.
+    `at_risk` is passed in because Graph B's nodes carry no at_risk flag —
+    the caller derives it from the graph structure so both graphs match."""
+    haz = bool(node.get("hazardous"))
+    atr = bool(node.get("at_risk")) or at_risk
+    state = node.get("state", "")
+    if haz:
+        bg, fg, bd = "#fee2e2", "#b91c1c", "#fca5a5"
+    elif atr:
+        bg, fg, bd = "#fef3c7", "#b45309", "#fde68a"
+    else:
+        bg, fg, bd = "#f1f5f9", "#334155", "#e2e8f0"
+    return html.Span(f"{nid}{(' · ' + state) if state else ''}",
+                     style={"fontSize": "11.5px", "fontWeight": "600",
+                            "padding": "1px 6px", "borderRadius": "6px",
+                            "background": bg, "color": fg,
+                            "border": f"1px solid {bd}",
+                            "display": "inline-block", "margin": "2px 3px 0 0"})
+
+
+def _alignment_edge_row(edge: Any, chipper=None,
+                        color: str = "#b45309") -> html.Div:
+    """Render one disagreeing causal link as 'source —effect→ target' with the
+    real entity ids as chips. `edge` is now an id-level dict {source, effect,
+    target}; a legacy tuple/list is still tolerated."""
+    if isinstance(edge, dict):
+        src, eff, tgt = (str(edge.get("source", "")), str(edge.get("effect", "")),
+                         str(edge.get("target", "")))
+    else:
+        parts = list(edge) if isinstance(edge, (list, tuple)) else [str(edge)]
+        src, eff, tgt = (parts + ["", "", ""])[:3]
+        src, eff, tgt = str(src), str(eff), str(tgt)
+
+    def _e(x):
+        return chipper(x) if chipper else html.Span(x, style={"fontWeight": "600"})
+    body = [_e(src), html.Span(f"  —{eff}→  ", style={"color": "#7c3aed"}), _e(tgt)]
+    return html.Div(body, style={"fontSize": "11.5px", "color": color,
+                                 "paddingLeft": "10px", "lineHeight": "1.9"})
+
+
+def _rec_uncertainty_row(threat: str, unc: dict, chipper):
+    """The granular measured-uncertainty slice for ONE recommendation, joined
+    by its threat: did this threat reappear across the re-asks, and did its
+    causal mechanism hold? Returns None when there's nothing notable to show."""
+    threat = str(threat or "").split("·")[0].strip()
+    n = int((unc or {}).get("n_probes") or 0)
+    if not n or not threat:
+        return None
+    gran = (unc or {}).get("granular") or {}
+    tu = (gran.get("threats") or {}).get(threat)
+    eu = (gran.get("effects") or {}).get(threat)
+    bits: list[Any] = []
+    if tu is None:
+        bits.append(html.Span(f"U 1.0 · never reappeared in {n} re-asks",
+                              style={"color": "#b91c1c", "fontWeight": "600"}))
+    elif tu.get("u", 0) > 0:
+        bits.append(html.Span(f"U {tu.get('u')} · named a threat in only "
+                              f"{tu.get('votes')} re-asks",
+                              style={"color": "#b45309"}))
+    if eu and eu.get("u", 0) > 0:
+        if bits:
+            bits.append(html.Span(" · ", style={"color": "#cbd5e1"}))
+        bits.append(html.Span(f"U {eu.get('u')} · mechanism splits: "
+                              f"{eu.get('evidence')}", style={"color": "#b45309"}))
+    if not bits:
+        return None
+    return html.Div(
+        [html.Span("uncertainty: ", style={"color": "#64748b",
+                                           "fontSize": "11px"}),
+         chipper(threat), html.Span(" ")] + bits,
+        style={"fontSize": "11px", "marginTop": "3px", "paddingTop": "3px",
+               "borderTop": "1px dashed #e2e8f0"})
+
+
+def _votes_to_chips(evidence: str, chipper) -> list[Any]:
+    """Render a votes string like 'house_1×3, dust_1×2' as role-colored chips:
+    [chip(house_1) ×3 · chip(dust_1) ×2]. A token that isn't 'entity×n' falls
+    back to plain text, so it never breaks on '∅' or odd input."""
+    out: list[Any] = []
+    for i, tok in enumerate(str(evidence or "").split(", ")):
+        if i:
+            out.append(html.Span(" · ", style={"color": "#cbd5e1"}))
+        ent, sep, cnt = tok.partition("×")
+        ent = ent.strip()
+        if sep and ent and ent != "∅":
+            out.append(chipper(ent))
+            out.append(html.Span(f"×{cnt}", style={"fontSize": "10.5px",
+                                                   "color": "#94a3b8"}))
+        else:
+            out.append(html.Span(tok, style={"fontSize": "10.5px",
+                                             "color": "#94a3b8"}))
+    return out
+
+
+def _make_chipper(graph: dict[str, Any]):
+    """Return chip(object_id) → a role-colored entity chip, using a graph's
+    node roles. at-risk is derived from structure (target of a harm edge) so
+    it works even for Graph B (whose nodes carry no at_risk flag). Ids not in
+    the graph render gray with the literal text (e.g. an un-normalized pick).
+    A trailing '·state' on the id is stripped for the lookup."""
+    nodes = {n.get("id"): n for n in (graph.get("nodes") or [])
+             if isinstance(n, dict)}
+    edges = [e for e in (graph.get("edges") or []) if isinstance(e, dict)]
+    # A non-hazard entity that a hazard THREATENS is at-risk — whether the
+    # harm reaches it directly (may_harm), by the hazard spreading to it
+    # (may_spread_to), or by exposure/isolation/blocked access. This keeps a
+    # quad's affected_objects colored consistently regardless of the effect.
+    # (increases_risk_to / worsens target hazards or latent threats, not
+    # victims, so they are left to their own role.)
+    harm = {"may_harm", "threatens", "may_spread_to",
+            "exposes", "isolates", "blocks_access_to"}
+    at_risk_ids = {nid for nid, n in nodes.items() if n.get("at_risk")}
+    for e in edges:
+        tgt = str(e.get("target", ""))
+        if str(e.get("effect", "")) in harm and not nodes.get(tgt, {}).get(
+                "hazardous"):
+            at_risk_ids.add(tgt)
+
+    def chip(oid: str):
+        oid = str(oid)
+        key = oid.split("·")[0].strip()          # tolerate "house_1·burning"
+        return _node_chip(key, nodes.get(key, {}), at_risk=key in at_risk_ids)
+    return chip
+
+
+def causal_graph_view(graph: dict[str, Any], title: str,
+                      open_default: bool = False) -> html.Details:
+    """A collapsible causal-graph view that shows EVERY node and edge and
+    still fits the narrow panel. Collapsed by default (just the counts) so
+    the panel isn't crowded; expand to see: edges grouped by source hazard
+    (targets as role-colored chips), then a chip row of every node."""
+    from collections import OrderedDict
+    nodes = {n.get("id"): n for n in (graph.get("nodes") or [])
+             if isinstance(n, dict)}
+    edges = [e for e in (graph.get("edges") or []) if isinstance(e, dict)]
+
+    chip = _make_chipper(graph)
+
+    summary = html.Summary([
+        html.Span(title, className="unc-tag"),
+        html.Span(f"  {len(nodes)} nodes · {len(edges)} edges",
+                  style={"fontSize": "11px", "color": "#64748b"}),
+        html.Span(" ▾", className="station-chev"),
+    ], style={"cursor": "pointer", "listStyle": "none"})
+
+    body: list[Any] = []
+
+    # EDGES — grouped by source hazard; targets as chips
+    by_source: "OrderedDict[str, list]" = OrderedDict()
+    for e in edges:
+        by_source.setdefault(str(e.get("source", "")), []).append(e)
+    if by_source:
+        body.append(html.Div("EDGES", style={"fontSize": "10px",
+                                             "letterSpacing": ".5px",
+                                             "color": "#94a3b8",
+                                             "margin": "6px 0 2px"}))
+    for src, es in by_source.items():
+        by_effect: "OrderedDict[str, list]" = OrderedDict()
+        for e in es:
+            by_effect.setdefault(str(e.get("effect", "")), []).append(
+                str(e.get("target", "")))
+        eff_rows = []
+        for effect, targets in by_effect.items():
+            eff_rows.append(html.Div(
+                [html.Span(f"—{effect}→ ", style={"color": "#7c3aed",
+                                                  "fontSize": "11.5px"})]
+                + [chip(t) for t in targets],
+                style={"paddingLeft": "12px", "lineHeight": "1.7"}))
+        body.append(html.Div([chip(src), html.Div(eff_rows)],
+                             style={"margin": "4px 0"}))
+    if not edges:
+        body.append(html.Div("no edges", style={"fontSize": "11px",
+                                                "color": "#94a3b8"}))
+
+    # NODES — every node as a chip, so isolated ones are visible too
+    body.append(html.Div("ALL NODES", style={"fontSize": "10px",
+                                            "letterSpacing": ".5px",
+                                            "color": "#94a3b8",
+                                            "margin": "8px 0 2px"}))
+    body.append(html.Div([chip(nid) for nid in nodes],
+                        style={"lineHeight": "1.9"}))
+    body.append(html.Div("red = hazard · amber = at-risk · gray = neutral",
+                        style={"fontSize": "10px", "color": "#cbd5e1",
+                               "marginTop": "4px"}))
+
+    return html.Details([summary, html.Div(body)], open=open_default,
+                        className="unc-panel")
+
+
+def _entity_boxes(d: dict[str, Any]) -> dict[str, list]:
+    """object_id -> a VALID bbox, from the final perception result, falling back
+    to the bound box then the anchor. Same sources scene_component draws."""
+    out: dict[str, list] = {}
+    for o in (d.get("result") or {}).get("detected_objects", []) or []:
+        if _valid_box(o.get("bbox")):
+            out[o["object_id"]] = o["bbox"]
+    for oid, bnd in (d.get("bound") or {}).items():
+        if oid not in out and _valid_box((bnd or {}).get("bbox")):
+            out[oid] = bnd["bbox"]
+    for a in d.get("anchors") or []:
+        oid = a.get("object_id")
+        if oid and oid not in out and _valid_box(a.get("anchor_bbox")):
+            out[oid] = a["anchor_bbox"]
+    return out
+
+
+def _hazard_unc_flag(oid: str, unc: dict) -> str | None:
+    """Short uncertainty flag for a hazard, from the probes: does it flicker as
+    a threat, or does its mechanism refuse to commit? None if stable."""
+    n = int((unc or {}).get("n_probes") or 0)
+    if not n:
+        return None
+    g = (unc or {}).get("granular") or {}
+    tu = (g.get("threats") or {}).get(oid)
+    eu = (g.get("effects") or {}).get(oid)
+    if tu is None:
+        return f"never reappeared in {n} re-asks"
+    if tu.get("u", 0) > 0:
+        return f"a threat in only {tu.get('votes')}"
+    if eu and eu.get("u", 0) > 0:
+        return "mechanism won't commit"
+    return None
+
+
+def _stage4_pins(d: dict[str, Any], chipper) -> list[Any]:
+    """ON THE IMAGE: clickable labels pinned near each hazard and at-risk victim,
+    rendered ONTO the main scene canvas (not a separate image). A label's compact
+    form shows the role + consequence + an uncertainty flag; clicking it
+    (html.Details, no callback) expands the recommendation that targets/protects
+    that entity. Pure function of the frozen boxes + the Stage-4 result, so a
+    reflection revision re-renders it — same as the perception/assessment boxes.
+    Returns [] when there's nothing to pin."""
+    s4 = d.get("stage4") or {}
+    size = d.get("image_size")
+    boxes = _entity_boxes(d)
+    if not (size and boxes and s4):
+        return []
+    ga = s4.get("graph_a", {}) or {}
+    nodes = {n.get("id"): n for n in ga.get("nodes", []) if isinstance(n, dict)}
+    recs = s4.get("recommendations", []) or []
+    unc = s4.get("uncertainty", {}) or {}
+    per_rec = {p.get("rank"): p for p in
+               ((s4.get("trust") or {}).get("per_rec") or [])}
+
+    def _bare(x):
+        return str(x or "").split("·")[0].strip()
+
+    # threat -> the recommendations that target it (top consequence first)
+    by_threat: dict[str, list] = {}
+    victims: dict[str, list] = {}       # victim id -> protecting recs
+    for r in recs:
+        q = r.get("structured_reasoning", {}) or {}
+        t = _bare(q.get("threat"))
+        if t:
+            by_threat.setdefault(t, []).append(r)
+        for v in (q.get("affected_objects") or []):
+            victims.setdefault(_bare(v), []).append(r)
+
+    def _pin(oid, role, border, bg, summary_kids, detail_kids):
+        style = {"position": "absolute", "maxWidth": "44%", "zIndex": 40,
+                 # nudge below the perception box-tag so they don't collide
+                 "transform": "translateY(16px)"}
+        pc = _pct_box(boxes[oid], size)
+        style["left"], style["top"] = pc["left"], pc["top"]
+        return html.Details([
+            html.Summary(summary_kids, style={
+                "cursor": "pointer", "listStyle": "none", "fontSize": "10.5px",
+                "fontWeight": "700", "padding": "2px 6px", "borderRadius": "6px",
+                "background": bg, "border": f"1.5px solid {border}",
+                "color": border, "whiteSpace": "nowrap", "boxShadow":
+                "0 1px 4px #0003"}),
+            html.Div(detail_kids, style={
+                "fontSize": "10.5px", "background": "#fff",
+                "border": f"1px solid {border}", "borderRadius": "6px",
+                "padding": "4px 6px", "marginTop": "2px", "maxWidth": "220px",
+                "boxShadow": "0 2px 8px #0002"}),
+        ], style=style, className="s4-map-pin")
+
+    labels: list[Any] = []
+    placed: set[str] = set()
+
+    # hazard pins (red) — the recommendation that targets each hazard
+    for oid in boxes:
+        rlist = by_threat.get(oid)
+        is_haz = nodes.get(oid, {}).get("hazardous")
+        if not (rlist or is_haz):
+            continue
+        rlist = sorted(rlist or [],
+                       key=lambda r: -((per_rec.get(r.get("rank"), {})
+                                        .get("consequence") or 0)))
+        top = rlist[0] if rlist else None
+        pr = per_rec.get(top.get("rank")) if top else {}
+        flag = _hazard_unc_flag(oid, unc)
+        cons = (pr or {}).get("consequence_band")
+        summ = [chipper(oid)]
+        if cons:
+            summ.append(html.Span(f" ⚠{cons}", style={"color": "#b91c1c"}))
+        if flag:
+            summ.append(html.Span(" · U!", style={"color": "#b45309"}))
+        detail: list[Any] = []
+        if top:
+            q = top.get("structured_reasoning", {}) or {}
+            detail.append(html.Div([html.B(f"#{top.get('rank')} "),
+                                    top.get("action", "")]))
+            detail.append(html.Div(["harm: ", chipper(oid),
+                                    html.Span(f" —{q.get('effect','')}→ ",
+                                              style={"color": "#7c3aed"})]
+                                   + [chipper(v) for v in
+                                      (q.get("affected_objects") or [])],
+                                   style={"marginTop": "2px"}))
+            if pr:
+                detail.append(html.Div(
+                    f"trust {pr.get('score')} · consequence "
+                    f"{pr.get('consequence_band')}", style={"marginTop": "2px",
+                                                            "color": "#64748b"}))
+        if flag:
+            detail.append(html.Div(f"uncertainty: {flag}",
+                                   style={"color": "#b45309", "marginTop": "2px"}))
+        labels.append(_pin(oid, "hazard", "#b91c1c", "#fee2e2", summ, detail))
+        placed.add(oid)
+
+    # victim pins (amber) — who's at risk, and the rec that protects them
+    for oid, rlist in victims.items():
+        if oid in placed or oid not in boxes:
+            continue
+        if nodes.get(oid, {}).get("hazardous"):
+            continue
+        prot = sorted(rlist, key=lambda r: r.get("rank") or 99)[0]
+        threat = _bare((prot.get("structured_reasoning", {}) or {}).get("threat"))
+        summ = [chipper(oid), html.Span(" at risk", style={"color": "#b45309"})]
+        detail = [html.Div(["threatened by ", chipper(threat)]),
+                  html.Div([html.B(f"#{prot.get('rank')} "),
+                            prot.get("action", "")], style={"marginTop": "2px"})]
+        labels.append(_pin(oid, "victim", "#b45309", "#fef3c7", summ, detail))
+        placed.add(oid)
+
+    return labels
+
+
+def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[Any]:
+    """STAGE 4 body: the ON-THE-IMAGE overlay, the trust headline, the three-way
+    intervention picks, measured uncertainty, the checks, the model's
+    recommendations with their quads + per-rec uncertainty, and both graphs."""
+    err = d.get("stage4_error")
+    s4 = d.get("stage4")
+    if err and not s4:
+        return [html.Div(f"Stage 4 could not run: {err}",
+                         className="ticket-empty", style={"color": "#b45309"})]
+    if not s4:
+        # live running view: show the steps ticking as events arrive, so the
+        # (slow, 5-probe) run never looks frozen. Blank only before it starts.
+        marks = d.get("stage4_marks") or set()
+        if not (d.get("stage4_started") or marks):
+            return [html.Div("Stage 4 runs after assessment finishes…",
+                             className="ticket-empty")]
+        probe = d.get("stage4_probe", 0)
+        LIVE = [("recommend", "recommend", "writing the plan"),
+                ("uncertainty", "uncertainty",
+                 f"re-asking to measure uncertainty · probe {probe}/5"),
+                ("graph_a", "graph_a", "assembling Graph A"),
+                ("graph_b", "graph_b", "asking for the independent Graph B"),
+                ("picks", "picks", "choosing what to intervene on"),
+                ("trust", "trust", "folding the trust score")]
+        rows: list[Any] = [html.Div("STAGE 4 · running…", className="unc-tag")]
+        active_used = False
+        for key, _k, label in LIVE:
+            if key in marks:
+                mark, col = "✓", "#16a34a"
+            elif not active_used:
+                mark, col, active_used = "⟳", "#2563eb", True
+            else:
+                mark, col = "○", "#cbd5e1"
+            rows.append(html.Div(f"{mark} {label}",
+                                 style={"fontSize": "12px", "color": col,
+                                        "padding": "1px 0"}))
+        return [html.Div(rows, className="unc-panel")]
+    out: list[Any] = []
+
+    # ── what to intervene on: the three picks + agreement ──
+    # one chipper from Graph A (has the frozen entities' roles + states);
+    # used for the picks and the recommendation quads too.
+    chipper = _make_chipper(s4.get("graph_a", {}) or {})
+
+    # (The recommendation + uncertainty labels are pinned ON the main scene
+    # image — the big canvas — not here; see _stage4_pins in scene_component.)
+
+    # ── TRUST · the headline verdict: can we trust the VLM's advice so far? ──
+    trust = s4.get("trust") or {}
+    if trust and trust.get("score") is not None:
+        tscore = trust.get("score")
+        band = trust.get("band", "")
+        bcol = ("#16a34a" if band == "high" else "#b45309" if band == "moderate"
+                else "#b91c1c")
+        trows: list[Any] = [
+            html.Div([
+                html.Span("TRUST · can we trust the VLM's advice so far?",
+                          className="unc-tag"),
+                html.Span(f"  {tscore} · {band}",
+                          style={"fontSize": "13px", "fontWeight": "800",
+                                 "color": bcol}),
+            ], style={"marginBottom": "3px"}),
+            html.Div(trust.get("explanation", ""),
+                     style={"fontSize": "12px", "color": "#334155",
+                            "margin": "2px 0 6px"}),
+        ]
+        # what this means → what to do (reliability of the advice, NOT the
+        # emergency's urgency, and NOT groundedness)
+        _WHATDO = {
+            "high": ("rely on it as the model's stable position (not yet "
+                     "proven grounded)", "#16a34a"),
+            "moderate": ("usable — review the flagged recommendations before "
+                         "acting", "#b45309"),
+            "low": ("don't rely on it; the model contradicts itself — send to "
+                    "reflection or a human", "#b91c1c")}
+        wd, wdcol = _WHATDO.get(band, ("", "#64748b"))
+        if wd:
+            trows.append(html.Div(
+                [html.Span("what to do: ", style={"fontWeight": "700",
+                                                  "color": "#64748b"}),
+                 html.Span(wd, style={"color": wdcol, "fontWeight": "600"})],
+                style={"fontSize": "11.5px", "margin": "0 0 6px"}))
+        # ranked contributors — WHY, worst-first. Only MATERIAL ones show by
+        # default (≥ TRUST_SHOW_MIN); the rest collapse into a "minor" details,
+        # so the card isn't a wall of near-zero factors.
+        TRUST_SHOW_MIN = 0.05
+        hits = [c for c in (trust.get("contributors") or [])
+                if c.get("contribution", 0) > 0]
+        major = [c for c in hits if c.get("contribution", 0) >= TRUST_SHOW_MIN]
+        minor = [c for c in hits if c.get("contribution", 0) < TRUST_SHOW_MIN]
+
+        # framing matches the verdict: under HIGH trust these are minor notes,
+        # muted — not red "pull-downs" (Sunny: don't parade low-consequence
+        # negatives beneath a green headline).
+        high_band = band == "high"
+        dent_col = "#94a3b8" if high_band else bcol
+
+        def _contrib_row(c):
+            return html.Div([
+                html.Span(f"−{c.get('contribution')}",
+                          style={"fontWeight": "700", "color": dent_col,
+                                 "fontSize": "11.5px", "marginRight": "6px"}),
+                html.Span(c.get("text", ""), style={"fontSize": "11.5px"}),
+                html.Span(f"  ({c.get('evidence', '')})",
+                          style={"fontSize": "10.5px", "color": "#94a3b8"}),
+            ], style={"padding": "1px 0"})
+        if major:
+            trows.append(html.Div(
+                "minor notes — didn't change the verdict:" if high_band
+                else "what pulls trust down (worst first):",
+                style={"fontSize": "11px", "color": "#64748b",
+                       "fontWeight": "600"}))
+            trows.extend(_contrib_row(c) for c in major)
+        elif hits:
+            trows.append(html.Div("no material concern — only minor factors",
+                                  style={"fontSize": "11px", "color": "#16a34a"}))
+        if minor:
+            trows.append(html.Details([
+                html.Summary(f"▸ {len(minor)} minor factor(s)",
+                             style={"cursor": "pointer", "fontSize": "10.5px",
+                                    "color": "#94a3b8", "listStyle": "none"}),
+                html.Div([_contrib_row(c) for c in minor]),
+            ], style={"marginTop": "2px"}))
+        # what HOLDS trust up — the checks that passed clean (balance the card)
+        _TRUST_POS = {"ab_alignment": "matches its own graph",
+                      "uncertainty": "stable on re-ask",
+                      "internal_alignment": "hangs together",
+                      "pick_agreement": "targets agree",
+                      "conformance": "graph well-formed"}
+        clean = [c for c in (trust.get("contributors") or [])
+                 if c.get("contribution", 0) == 0]
+        if clean:
+            trows.append(html.Div(
+                "holds up: " + " · ".join(_TRUST_POS.get(c["signal"], c["signal"])
+                                          for c in clean),
+                style={"fontSize": "11px", "color": "#16a34a",
+                       "fontWeight": "600", "marginTop": "4px"}))
+        # per-recommendation: ALL recs, best → worst trust. Two axes shown
+        # side by side — trust (reliability) and consequence (life-safety).
+        pr = [p for p in (trust.get("per_rec") or [])
+              if p.get("score") is not None]
+        if pr:
+            trows.append(html.Div("every recommendation · trust (best → worst) "
+                                  "· consequence to victims:",
+                                  style={"fontSize": "11px", "color": "#64748b",
+                                         "fontWeight": "600", "marginTop": "4px"}))
+
+        def _tcol(sc):
+            return ("#16a34a" if sc >= 0.7 else "#b45309" if sc >= 0.4
+                    else "#b91c1c")
+
+        def _ccol(bd):
+            return {"high": "#b91c1c", "medium": "#b45309",
+                    "low": "#16a34a"}.get(bd, "#94a3b8")
+        for p in sorted(pr, key=lambda x: -x.get("score", 1.0)):
+            w = p.get("worst_contributor") or {}
+            cb = p.get("consequence_band")
+            wv = p.get("worst_victim") or {}
+            row = [
+                html.Span(f"#{p.get('rank')} ", style={"fontWeight": "700",
+                                                       "fontSize": "11.5px"}),
+                chipper(p.get("threat", "")),
+                html.Span(f" trust {p.get('score')}",
+                          style={"fontSize": "11.5px",
+                                 "color": _tcol(p.get("score", 1.0)),
+                                 "fontWeight": "600", "margin": "0 4px"})]
+            if cb:
+                row.append(html.Span(
+                    f"· consequence {cb}",
+                    style={"fontSize": "11px", "color": _ccol(cb),
+                           "fontWeight": "600", "marginRight": "4px"}))
+                if wv.get("id"):
+                    row.append(chipper(wv.get("id")))
+            if w:
+                row.append(html.Span(f" — {w.get('text', '')}",
+                                     style={"fontSize": "10.5px",
+                                            "color": "#94a3b8"}))
+            trows.append(html.Div(row, style={"padding": "1px 0"}))
+        trows.append(html.Div(
+            "trust = weighted average of the checks (A-vs-B weighted highest). "
+            "two axes: TRUST = can we rely on the advice (reliability); "
+            "CONSEQUENCE = how bad for victims if the hazard isn't dealt with "
+            "(life-safety). Neither is groundedness. Objective (no model, no "
+            "answer key); weights are priors, to calibrate on the six scenes.",
+            style={"fontSize": "10px", "color": "#cbd5e1", "marginTop": "5px",
+                   "fontStyle": "italic"}))
+        out.append(html.Div(trows, className="unc-panel",
+                            style={"borderColor": bcol, "background": "#fff"}))
+
+    picks = s4.get("picks", {}) or {}
+    a = (picks.get("a_pick") or {}).get("threat") or "-"
+    b = (picks.get("b_pick") or {}).get("threat") or "-"
+    llm = (picks.get("llm_pick") or {}).get("threat") or "-"
+    agree = picks.get("agreement")
+    unan = picks.get("unanimous")
+    col = "#16a34a" if unan else "#b45309"
+
+    def _pk(label, val):
+        el = chipper(val) if val and val != "-" else html.Span("-")
+        return html.Div([html.Span(label, style={"color": "#64748b",
+                                                  "fontSize": "11px",
+                                                  "marginRight": "4px"}), el],
+                        style={"padding": "2px 0"})
+    out.append(html.Div([
+        html.Span("WHAT TO INTERVENE ON", className="unc-tag"),
+        _pk("algorithm · Graph A (out-degree):", a),
+        _pk("model · Graph B (independent):", b),
+        _pk("model · direct impact ask:", llm),
+        html.Div(f"agreement {agree}  "
+                 f"{'· all three agree' if unan else '· they disagree'}",
+                 style={"color": col, "fontWeight": "700", "fontSize": "12px",
+                        "marginTop": "4px"}),
+    ], className="unc-panel", style={"borderColor": "#a78bfa",
+                                     "background": "#faf5ff"}))
+
+    # ── measured uncertainty (Phase 1b): how stable is the advice on re-ask? ──
+    unc = s4.get("uncertainty") or {}
+    if unc and unc.get("n_probes"):
+        gran = unc.get("granular") or {}
+        score = unc.get("score")
+        scol = ("#16a34a" if (score or 0) < 0.2 else "#b45309"
+                if (score or 0) < 0.5 else "#b91c1c")
+        urows: list[Any] = [html.Div([
+            html.Span("MEASURED UNCERTAINTY · do the recommendations hold up "
+                      "on re-ask?", className="unc-tag"),
+            html.Span(f"  score {score} · {unc.get('n_probes')} probes",
+                      style={"fontSize": "11px", "color": scol,
+                             "fontWeight": "700"}),
+        ], style={"marginBottom": "3px"})]
+        # the two scalar fields (top target, count). The top-target evidence
+        # names entities, so render those as role-colored chips.
+        for key, lbl in (("top_priority_target", "top-priority target"),
+                         ("recommendation_count", "how many recommendations")):
+            f = (gran.get("fields") or {}).get(key) or {}
+            if f:
+                u = f.get("u", 0)
+                fc = "#16a34a" if u == 0 else "#b45309"
+                ev = f.get("evidence", "")
+                tail = (_votes_to_chips(ev, chipper)
+                        if key == "top_priority_target"
+                        else [html.Span(f"({ev})", style={"color": "#94a3b8",
+                                                          "fontSize": "10.5px"})])
+                urows.append(html.Div(
+                    [html.Span(f"{lbl}: ", style={"color": "#64748b",
+                                                  "fontSize": "11px"}),
+                     html.Span(f"U {u}  ", style={"color": fc,
+                                                  "fontWeight": "600",
+                                                  "fontSize": "11px"})] + tail,
+                    style={"padding": "1px 0"}))
+        # per-entity threat wobble + per-threat effect (mechanism) wobble
+        for tbl_key, tbl_lbl in (("threats", "entity flickers as a threat"),
+                                 ("effects", "mechanism won't commit")):
+            for oid, g in (gran.get(tbl_key) or {}).items():
+                if not g.get("u"):
+                    continue
+                ev = g.get("evidence", g.get("votes", ""))
+                urows.append(html.Div(
+                    [chipper(oid),
+                     html.Span(f" — {tbl_lbl}: U {g.get('u')} ({ev})",
+                               style={"color": "#b45309", "fontSize": "11px"})],
+                    style={"padding": "1px 0"}))
+        # distinct recommendation sets across the re-asks
+        cands = unc.get("candidates") or []
+        if len(cands) > 1:
+            urows.append(html.Div(
+                f"the {unc.get('n_probes')} re-asks produced {len(cands)} "
+                f"DIFFERENT recommendation sets "
+                f"(votes: {', '.join(str(c.get('votes')) for c in cands)})",
+                style={"fontSize": "11px", "color": "#b45309",
+                       "fontWeight": "600", "marginTop": "3px"}))
+        # (The dense driver narrative is intentionally NOT dumped here — the
+        # structured rows above already say what's unstable and by how much.)
+        out.append(html.Div(urows, className="unc-panel",
+                            style={"borderColor": "#c7d2fe",
+                                   "background": "#eef2ff"}))
+
+    # ── conformance breakdown (Phase 1b): WHERE the model's graph breaks ──
+    conf = s4.get("conformance") or {}
+    if conf:
+        bd = conf.get("breakdown") or []
+        head = html.Div([
+            html.Span("CONFORMANCE · is the model's causal graph well-formed?",
+                      className="unc-tag"),
+            html.Span(f"  corrected {conf.get('validity')} · "
+                      f"{conf.get('n_issues')} issue(s)",
+                      style={"fontSize": "11px", "color": "#64748b"}),
+        ], style={"marginBottom": "3px"})
+        cat_rows: list[Any] = []
+        for r in bd:
+            sev = r.get("severity", 1)
+            col = ("#b91c1c" if sev >= 2 else "#b45309" if sev == 1
+                   else "#94a3b8")
+            cat_rows.append(html.Details([
+                html.Summary([
+                    html.Span(r.get("category", ""),
+                              style={"fontWeight": "700", "color": col,
+                                     "fontSize": "12px"}),
+                    html.Span(f"  ×{r.get('count')}",
+                              style={"color": "#64748b", "fontSize": "11px"}),
+                    html.Span(" ▾", className="station-chev"),
+                ], style={"cursor": "pointer", "listStyle": "none"}),
+                html.Div([html.Div(ex, style={"fontSize": "10.5px",
+                                              "color": "#94a3b8",
+                                              "paddingLeft": "10px"})
+                          for ex in (r.get("examples") or [])]),
+            ], style={"margin": "2px 0"}))
+        if not bd:
+            cat_rows = [html.Div("clean — no rule breaks",
+                                style={"fontSize": "12px", "color": "#16a34a"})]
+        out.append(html.Div(
+            [head] + cat_rows + [html.Div(
+                f"Arm A raw validity (frozen, saturates): "
+                f"A={conf.get('raw_a_validity')} · B={conf.get('raw_b_validity')}"
+                f" — kept for comparison",
+                style={"fontSize": "10px", "color": "#cbd5e1",
+                       "marginTop": "4px"})],
+            className="unc-panel"))
+
+    # ── internal alignment of Graph A (within-recommendation coverage) ──
+    ia = s4.get("internal_alignment") or {}
+    if ia:
+        bd = ia.get("breakdown") or []
+        rows: list[Any] = [html.Div([
+            html.Span("INTERNAL ALIGNMENT · do the recommendations hang together?",
+                      className="unc-tag"),
+            html.Span(f"  score {ia.get('score')} · {ia.get('n_failures')} "
+                      f"issue(s)", style={"fontSize": "11px",
+                                          "color": "#64748b"}),
+        ], style={"marginBottom": "3px"})]
+        for r in bd:
+            sev = r.get("severity", 1)
+            col = ("#b91c1c" if sev >= 2 else "#b45309" if sev == 1
+                   else "#94a3b8")
+            rows.append(html.Details([
+                html.Summary([
+                    html.Span(r.get("category", ""),
+                              style={"fontWeight": "700", "color": col,
+                                     "fontSize": "12px"}),
+                    html.Span(f"  ×{r.get('count')}",
+                              style={"color": "#64748b", "fontSize": "11px"}),
+                    html.Span(" ▾", className="station-chev"),
+                ], style={"cursor": "pointer", "listStyle": "none"}),
+                html.Div([html.Div(ex, style={"fontSize": "10.5px",
+                                              "color": "#94a3b8",
+                                              "paddingLeft": "10px"})
+                          for ex in (r.get("examples") or [])]),
+            ], style={"margin": "2px 0"}))
+        if not bd:
+            rows.append(html.Div("clean — reason, quad, ids and coverage all line up",
+                                style={"fontSize": "12px", "color": "#16a34a"}))
+        rows.append(html.Div("id-level only; whether the prose and the quad "
+                             "MEAN the same is the semantic (RAG) check in Phase 2",
+                             style={"fontSize": "10px", "color": "#cbd5e1",
+                                    "marginTop": "3px", "fontStyle": "italic"}))
+        out.append(html.Div(rows, className="unc-panel"))
+
+    # ── ALIGNMENT: does the advice match the model's own beliefs? ──
+    # Graph A = the causal links the advice LEANS ON. Graph B = the links the
+    # model INDEPENDENTLY declares. This panel asks whether they agree — a
+    # self-consistency (faithfulness) check: does the model agree with itself.
+    # It is NOT on Pearl's rung 2. Rung 2 is DOING — an intervention: remove
+    # the hazard from the scene, re-run, check the advice changes (CEE+'s core
+    # groundedness test, a later stage). We change NOTHING in the scene here;
+    # we only compare two things the model already said. This is a prerequisite
+    # BELOW the ladder — and, because it compares the model against itself, it
+    # needs no ground truth and can run at runtime.
+    al = s4.get("alignment") or {}
+    if al:
+        a_only = al.get("a_only") or []      # in the advice, model doesn't back
+        b_only = al.get("b_only") or []      # model believes, no advice acts on
+        af, bc = al.get("a_fidelity"), al.get("b_coverage")
+        if af is not None and bc is not None:
+            if af >= 0.8 and bc >= 0.8:
+                verdict = ("the advice and the model's own causal beliefs tell "
+                           "the SAME story — self-consistent")
+                vcol = "#16a34a"
+            else:
+                verdict = ("the advice and the model's own causal beliefs "
+                           "DIVERGE — it recommends links it doesn't "
+                           "independently hold, and/or holds dangers it "
+                           "never acts on")
+                vcol = "#b45309"
+        else:
+            verdict, vcol = "", "#64748b"
+        rows2: list[Any] = [
+            html.Div([
+                html.Span("ALIGNMENT · does the advice match the "
+                          "model's own causal beliefs?", className="unc-tag"),
+            ]),
+            html.Div(verdict, style={"fontSize": "12px", "color": vcol,
+                                     "fontWeight": "600", "margin": "2px 0 5px"}),
+            html.Div([html.B(f"{af} "), "of the links the advice leans on are "
+                      "backed by the model's own graph ",
+                      html.Span("(low = links asserted only to justify actions)",
+                                style={"color": "#94a3b8"})],
+                     style={"fontSize": "11.5px"}),
+            html.Div([html.B(f"{bc} "), "of the links the model believes are "
+                      "acted on by the advice ",
+                      html.Span("(low = dangers it sees but didn't act on)",
+                                style={"color": "#94a3b8"})],
+                     style={"fontSize": "11.5px"}),
+            html.Div(f"overall agreement: {al.get('structural')}",
+                     style={"fontSize": "12px", "fontWeight": "600",
+                            "marginTop": "2px"}),
+        ]
+        # the ACTUAL disagreeing edges — the whole point of the reframe
+        if a_only:
+            rows2.append(html.Div(
+                f"asserted in the advice, but the model doesn't independently "
+                f"believe it ({len(a_only)}):",
+                style={"fontSize": "11px", "color": "#b45309", "fontWeight": "600",
+                       "marginTop": "6px"}))
+            for k in a_only:
+                rows2.append(_alignment_edge_row(k, chipper, "#b45309"))
+        if b_only:
+            rows2.append(html.Div(
+                f"the model believes it, but no advice acts on it "
+                f"({len(b_only)}):",
+                style={"fontSize": "11px", "color": "#b45309", "fontWeight": "600",
+                       "marginTop": "6px"}))
+            for k in b_only:
+                rows2.append(_alignment_edge_row(k, chipper, "#b45309"))
+        if not a_only and not b_only:
+            rows2.append(html.Div("every link lines up — nothing to show",
+                                  style={"fontSize": "11px", "color": "#16a34a",
+                                         "marginTop": "4px"}))
+        rows2.append(html.Div(
+            "self-consistency check — does the model agree with itself. NOT an "
+            "intervention: Pearl's rung 2 is removing the hazard and seeing if "
+            "the advice changes (a later stage). Runs at runtime with no ground "
+            "truth, because it compares the model against itself.",
+            style={"fontSize": "10px", "color": "#cbd5e1", "marginTop": "5px",
+                   "fontStyle": "italic"}))
+        out.append(html.Div(rows2, className="unc-panel"))
+
+    # ── recommendations (the model's output, under test) ──
+    for r in s4.get("recommendations", []):
+        q = r.get("structured_reasoning", {}) or {}
+        quad_row = ([html.Span("quad: ", style={"color": "#94a3b8",
+                                                "fontSize": "11.5px"}),
+                     chipper(q.get("threat", "")),
+                     html.Span(f" —{q.get('effect', '')}→ ",
+                               style={"color": "#7c3aed", "fontSize": "11.5px"})]
+                    + [chipper(t) for t in (q.get("affected_objects") or [])])
+        out.append(html.Div([
+            html.Div([
+                html.Span(f"#{r.get('rank')}", className="phase-num",
+                          style={"marginRight": "6px"}),
+                html.Span(r.get("action", ""), style={"fontWeight": "700"})],
+                style={"marginBottom": "3px"}),
+            html.Div(r.get("reason", ""), style={"fontSize": "12.5px",
+                                                 "color": "#334155"}),
+            html.Div(quad_row, style={"margin": "4px 0", "lineHeight": "1.8"}),
+            html.Div(f"expected: {r.get('expected_consequence', '')}",
+                     style={"fontSize": "11.5px", "color": "#64748b"}),
+            html.Div(f"remaining risk: {r.get('remaining_risk', '')}",
+                     style={"fontSize": "11.5px", "color": "#64748b"}),
+            html.Div(f"follow-up: {r.get('possible_follow_up_action', '')}",
+                     style={"fontSize": "11.5px", "color": "#94a3b8"}),
+        ] + ([_rec_uncertainty_row(q.get("threat", ""), unc, chipper)]
+             if _rec_uncertainty_row(q.get("threat", ""), unc, chipper) else []),
+           className="ticket", style={"margin": "6px 0"}))
+
+    # ── the assumptions advisory (recorded, not in the graph) ──
+    adv = s4.get("advisory", []) or []
+    if adv:
+        rows = [html.Div("ASSUMPTIONS ADVISORY · not in the graph",
+                         className="unc-tag")]
+        for a_ in adv:
+            rows.append(html.Div(
+                f"⚑ {a_.get('suspected', '')} "
+                f"(anchor {a_.get('anchor_object_id', '')}) — "
+                f"{a_.get('cue', '')} → {a_.get('suggested_action', '')}",
+                style={"fontSize": "12px", "color": "#b45309",
+                       "padding": "2px 0"}))
+        out.append(html.Div(rows, className="unc-panel",
+                            style={"borderColor": "#fde68a",
+                                   "background": "#fffbeb"}))
+
+    # ── both causal graphs, as grouped causal-edge views ──
+    ga = s4.get("graph_a", {}) or {}
+    gb = s4.get("graph_b", {}) or {}
+    warns = ga.get("graph_warnings", []) or []
+    out.append(causal_graph_view(ga, "GRAPH A · from recommendations"))
+    out.append(causal_graph_view(gb, "GRAPH B · independent"))
+    if warns:
+        out.append(html.Div(f"⚠ {len(warns)} Graph A warning(s): {warns[0]}",
+                            style={"fontSize": "11px", "color": "#b45309"}))
+    out.append(html.Div("A-vs-B agreement + trust arrive in Phase 1b",
+                        style={"fontSize": "11px", "color": "#94a3b8",
+                               "fontStyle": "italic", "marginTop": "3px"}))
+    return out
 
 
 def assess_component(d: dict[str, Any], unc_view: str = "both",
@@ -2205,6 +3133,12 @@ def scene_component(d: dict[str, Any], image_src: str | None) -> list[Any]:
                                              style={"left": style["left"], "top": style["top"]}))
                     continue
             children.append(html.Div(chip_txt, className="chip docked"))
+        # Stage 4: pin the recommendation + uncertainty labels ONTO this same
+        # canvas (not a separate image), once the run has a Stage-4 result.
+        s4 = d.get("stage4")
+        if s4:
+            children.extend(_stage4_pins(d, _make_chipper(s4.get("graph_a", {})
+                                                          or {})))
     return children
 
 
@@ -2290,9 +3224,9 @@ app.index_string = """<!DOCTYPE html>
   .tile.amber .tile-value { color:#d97706; } .tile.green .tile-value { color:#16a34a; }
   .tile.gray .tile-value { color:var(--faint); }
   .main { display:grid; grid-template-columns: 1fr 540px; gap:20px; }
-  .scene { position:relative; border-radius:14px; overflow:hidden; background:#0f172a;
+  .scene { position:relative; border-radius:14px; overflow:visible; background:#0f172a;
       box-shadow:var(--shadow-lift); }
-  .scene-img { width:100%; display:block; }
+  .scene-img { width:100%; display:block; border-radius:14px; }
   .scene-empty, .ticket-empty { color:var(--faint); padding:34px; text-align:center;
       background:var(--card); border-radius:12px; border:1px dashed var(--line); }
   .scene-box { position:absolute; border:3px solid #94a3b8; border-radius:4px; cursor:pointer; }
@@ -2578,6 +3512,15 @@ app.layout = html.Div([
                     className="unc-toggle"),
                 html.Div(id="assess-body"),
             ], className="phase-card", open=True, id="phase1-card"),
+            html.Details([
+                html.Summary([html.Span("STAGE 4", className="phase-num"),
+                              html.Span("RECOMMENDATION",
+                                        className="phase-title"),
+                              html.Span(id="phase2-status"),
+                              html.Span("▾", className="station-chev")],
+                             className="phase-head"),
+                html.Div(id="stage4-body"),
+            ], className="phase-card", open=True, id="phase2-card"),
         ]),
     ], className="main"),
     html.Div(id="inspector-modal"),
@@ -2783,8 +3726,10 @@ def select_entity(box_clicks, close_clicks):
     Output("inspector-modal", "children"),
     Output("scrub", "max"), Output("scrub", "value"),
     Output("agent-transcript", "children"),
-    Output("assess-body", "children"), Output("phase0-card", "open"),
+    Output("assess-body", "children"), Output("stage4-body", "children"),
+    Output("phase0-card", "open"),
     Output("phase0-status", "children"), Output("phase1-status", "children"),
+    Output("phase2-status", "children"),
     Output("render-key", "data"),
     Input("tick", "n_intervals"), Input("scrub", "value"),
     Input("unc-view", "value"),
@@ -2802,7 +3747,7 @@ def render(_n, scrub_value, unc_view, run_id, selected, scrub_max, cached,
         key = ["empty", bool(cached and cached.get("contents")), agent_sig,
                unc_view, "pending"]
         if key == prev_key:
-            return (dash.no_update,) * 13
+            return (dash.no_update,) * 15
         # A picked-but-unanalyzed image previews in the scene immediately,
         # with a ribbon saying it's ready.
         if cached and cached.get("contents"):
@@ -2815,8 +3760,10 @@ def render(_n, scrub_value, unc_view, run_id, selected, scrub_max, cached,
                 instruments_component(empty), scene,
                 inspector_component(empty, None), 1, 1,
                 agent_transcript_component(log),
-                assess_component(empty, unc_view), dash.no_update,
-                phase_status_span([]), phase_status_span([]), key)
+                assess_component(empty, unc_view), stage4_component(empty, None),
+                dash.no_update,
+                phase_status_span([]), phase_status_span([]),
+                html.Span("○ waiting", className="phase-status pending"), key)
     events = run["events"]
     total = max(1, len(events))
     # Follow-live rule: the slider sticks to the right edge unless the user
@@ -2832,7 +3779,7 @@ def render(_n, scrub_value, unc_view, run_id, selected, scrub_max, cached,
            (run.get("judge") or {}).get("winner",
                                         (run.get("judge") or {}).get("status"))]
     if key == prev_key and ctx.triggered_id != "scrub":
-        return (dash.no_update,) * 13
+        return (dash.no_update,) * 15
     # Auto-collapse Phase 0 exactly ONCE, at the moment Phase 1 starts
     # (comparing against prev_key keeps later renders from stomping the
     # user's manual re-open).
@@ -2898,8 +3845,8 @@ def render(_n, scrub_value, unc_view, run_id, selected, scrub_max, cached,
             inspector_component(d, selected),
             total, total if following else k,
             agent_transcript_component(log),
-            assess_view,
-            phase0_open, p0_badge, p1_badge, key)
+            assess_view, stage4_component(d, run.get("image_src")),
+            phase0_open, p0_badge, p1_badge, stage4_status_span(d), key)
 
 
 if __name__ == "__main__":

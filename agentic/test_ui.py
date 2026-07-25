@@ -23,6 +23,7 @@ from agentic.ui import (  # noqa: E402
     instruments_component,
     rail_component,
     scene_component,
+    stage4_component,
     tickets_component,
 )
 
@@ -1031,6 +1032,249 @@ def test_real_embedding_engine_named_plainly():
     out = str(tickets_component(derive(ev)))
     assert "real embedding (semantic)" in out
     assert "real embedding OFF" not in out
+
+
+def test_stage4_panel_renders_from_event():
+    """A stage4_result event flows through derive → stage4_component and the
+    panel shows the three picks + agreement, the recommendations with quads,
+    the assumptions advisory, and both graph sizes. (Phase 1a wiring.)"""
+    s4 = {"frame": {}, "recommendations": [
+        {"rank": 1, "action": "Rescue person_1 from the upper window.",
+         "reason": "Because building_1 is collapsed, it may_harm person_1.",
+         "related_object_ids": ["building_1", "person_1"],
+         "structured_reasoning": {"threat": "building_1", "state": "collapsed",
+                                  "effect": "may_harm",
+                                  "affected_objects": ["person_1"]},
+         "expected_consequence": "person_1 is out.",
+         "remaining_risk": "(dust_1, rising)",
+         "possible_follow_up_action": "oxygen"}],
+        "advisory": [{"suspected": "occupants inside building_1",
+                      "anchor_object_id": "building_1", "cue": "residential",
+                      "suggested_action": "search"}],
+        "graph_a": {"nodes": [
+            {"id": "building_1", "label": "building", "state": "collapsed",
+             "hazardous": True},
+            {"id": "person_1", "label": "person", "state": "trapped",
+             "hazardous": False}],
+            "edges": [{"source": "building_1", "target": "person_1",
+                       "effect": "may_harm", "via_state": "collapsed"}],
+            "graph_warnings": []},
+        "graph_b": {"nodes": [
+            {"id": "building_1", "label": "building", "state": "collapsed",
+             "hazardous": True}], "edges": []},
+        "picks": {"a_pick": {"threat": "dust_1"},
+                  "b_pick": {"threat": "building_1"},
+                  "llm_pick": {"threat": "building_1"},
+                  "agreement": 0.667, "unanimous": False}, "parse_notes": []}
+    d = derive([{"type": "stage4_result", "result": s4}])
+    assert d["stage4"] is not None
+    out = str(stage4_component(d))
+    for needle in ("WHAT TO INTERVENE ON", "dust_1", "building_1", "0.667",
+                   "they disagree", "Rescue person_1", "may_harm",
+                   "ASSUMPTIONS ADVISORY", "GRAPH A", "GRAPH B", "Phase 1b"):
+        assert needle in out, f"missing {needle!r}"
+
+
+def test_stage4_conformance_and_alignment_panels():
+    """Phase 1b: the conformance breakdown (by failure pattern, corrected +
+    Arm A raw) and the A-vs-B alignment render in the Stage 4 panel."""
+    s4 = {"frame": {}, "recommendations": [], "advisory": [],
+          "graph_a": {"nodes": [], "edges": []},
+          "graph_b": {"nodes": [], "edges": []},
+          "picks": {"a_pick": {"object_id": "h_1"},
+                    "b_pick": {"object_id": "h_1"},
+                    "llm_pick": {"object_id": "h_1"},
+                    "agreement": 1.0, "unanimous": True},
+          "conformance": {"validity": 0.54, "n_issues": 3,
+                          "raw_a_validity": 0.5, "raw_b_validity": 0.0,
+                          "breakdown": [
+                              {"category": "role mix-up", "count": 1,
+                               "severity": 2, "examples": ["hazard_flag: h_1"]},
+                              {"category": "cosmetic", "count": 2,
+                               "severity": 0, "examples": ["node_budget: x"]}]},
+          "internal_alignment": {"score": 0.7, "n_failures": 1, "breakdown": [
+              {"category": "coverage gap", "count": 1, "severity": 2,
+               "examples": ["at-risk dog_1 not addressed"]}]},
+          "alignment": {"a_fidelity": 0.5, "b_coverage": 0.33,
+                        "structural": 0.4, "a_only": ["x"], "b_only": ["y", "z"]}}
+    out = str(stage4_component(derive([{"type": "stage4_result", "result": s4}])))
+    assert "CONFORMANCE" in out and "corrected 0.54" in out
+    assert "role mix-up" in out and "cosmetic" in out
+    assert "Arm A raw validity" in out             # frozen number kept
+    assert "INTERNAL ALIGNMENT" in out and "coverage gap" in out
+    assert "ALIGNMENT ·" in out and "DIVERGE" in out         # self-consistency reframe
+    assert "ALIGNMENT (rung 2)" not in out          # NOT mislabeled as an intervention rung
+    assert "NOT an intervention" in out             # rung 2 named only to say we don't do it
+    assert "no advice acts on it" in out            # b_only wording
+    assert "y" in out and "z" in out                # actual disagreeing edges shown
+
+
+def test_stage4_uncertainty_panel_renders():
+    """Phase 1b: the measured-uncertainty panel shows the score, the flipped
+    top target, and the mechanism that won't commit."""
+    s4 = {"frame": {}, "recommendations": [], "advisory": [],
+          "graph_a": {"nodes": [], "edges": []},
+          "graph_b": {"nodes": [], "edges": []},
+          "picks": {"a_pick": {"object_id": "house_1"},
+                    "b_pick": {"object_id": "house_1"},
+                    "llm_pick": {"object_id": "car_1"},
+                    "agreement": 0.667, "unanimous": False},
+          "uncertainty": {"n_probes": 5, "score": 0.34,
+                          "explanation": "probes split",
+                          "granular": {
+                              "fields": {
+                                  "top_priority_target": {
+                                      "u": 0.4, "evidence": "house_1×3, car_1×2"},
+                                  "recommendation_count": {
+                                      "u": 0.0, "evidence": "2×5"}},
+                              "threats": {"car_1": {"u": 0.4, "votes": "3/5"}},
+                              "affected": {},
+                              "effects": {"house_1": {
+                                  "u": 0.4, "votes": "3/5",
+                                  "evidence": "may_harm×3, may_spread_to×2"}}},
+                          "candidates": [{"votes": 3, "edges": []},
+                                         {"votes": 2, "edges": []}],
+                          "drivers": []}}
+    out = str(stage4_component(derive([{"type": "stage4_result", "result": s4}])))
+    assert "MEASURED UNCERTAINTY" in out and "0.34" in out
+    assert "house_1" in out and "car_1" in out and "×3" in out  # top-target flip, chipped
+    assert "mechanism won't commit" in out          # per-threat effect wobble
+    assert "DIFFERENT recommendation sets" in out   # distinct sets surfaced (renamed)
+
+
+def test_stage4_trust_panel_and_per_rec_uncertainty():
+    """The trust panel renders as its own headline (score, band, ranked why),
+    and each recommendation card carries its granular uncertainty slice — the
+    car_1 'never reappeared' case."""
+    s4 = {"frame": {}, "advisory": [],
+          "graph_a": {"nodes": [{"id": "car_1", "label": "car"}], "edges": []},
+          "graph_b": {"nodes": [], "edges": []},
+          "picks": {"a_pick": {"object_id": "house_1"}, "agreement": 0.667},
+          "recommendations": [
+              {"rank": 3, "action": "tow the car", "reason": "car_1 blocks",
+               "structured_reasoning": {"threat": "car_1", "effect":
+                                        "blocks_access_to", "affected_objects":
+                                        ["house_1"]}}],
+          "uncertainty": {"n_probes": 5, "score": 0.2,
+                          "granular": {"threats": {"house_1": {"u": 0.0,
+                                                               "votes": "5/5"}},
+                                       "effects": {}, "fields": {}},
+                          "candidates": []},
+          "trust": {"score": 0.55, "band": "moderate", "global_penalty": 0.45,
+                    "explanation": "Trust is moderate (0.55). Biggest reason: "
+                                   "the recommendations diverge...",
+                    "contributors": [
+                        {"signal": "ab_alignment", "contribution": 0.21,
+                         "text": "the recommendations diverge from the model's "
+                                 "own independent causal graph",
+                         "evidence": "agreement 0.3"},
+                        {"signal": "conformance", "contribution": 0.0,
+                         "text": "well-formed", "evidence": "validity 1.0"}],
+                    "per_rec": [{"rank": 3, "threat": "car_1", "score": 0.0,
+                                 "worst_contributor": {"signal": "uncertainty",
+                                     "text": "car_1 never reappeared in 5 re-asks"},
+                                 "contributors": []}]}}
+    out = str(stage4_component(derive([{"type": "stage4_result", "result": s4}])))
+    # trust headline panel
+    assert "TRUST · can we trust" in out and "moderate" in out
+    assert "what pulls trust down" in out
+    assert "the recommendations diverge" in out          # ranked contributor
+    assert "every recommendation" in out and "trust 0.0" in out  # all recs, best→worst
+    assert "what to do:" in out                          # band interpretation line
+    # per-recommendation granular uncertainty on the card
+    assert "never reappeared in 5 re-asks" in out
+
+
+def _stage4_pin_fixture():
+    ga = {"nodes": [{"id": "house_1", "hazardous": True, "state": "burning",
+                     "label": "house"},
+                    {"id": "person_1", "hazardous": False, "state": "trapped",
+                     "label": "person"}],
+          "edges": [{"source": "house_1", "target": "person_1",
+                     "effect": "may_harm"}]}
+    d = {"image_size": [100, 100], "bound": {}, "anchors": [],
+         "result": {"detected_objects": [
+             {"object_id": "house_1", "bbox": [10, 10, 40, 40]},
+             {"object_id": "person_1", "bbox": [60, 60, 80, 90]}]},
+         "stage4": {"graph_a": ga,
+                    "recommendations": [{"rank": 1, "action": "evacuate person_1",
+                        "structured_reasoning": {"threat": "house_1",
+                            "effect": "may_harm", "affected_objects": ["person_1"]}}],
+                    "uncertainty": {"n_probes": 5, "granular": {
+                        "threats": {"house_1": {"u": 0.0, "votes": "5/5"}},
+                        "effects": {"house_1": {"u": 0.4, "votes": "3/5",
+                                                "evidence": "may_harm×3"}}}},
+                    "trust": {"per_rec": [{"rank": 1, "threat": "house_1",
+                                           "score": 0.8, "consequence_band": "high"}]}}}
+    return ga, d
+
+
+def test_stage4_pins_hazard_and_victim():
+    """ON THE MAIN IMAGE: a hazard pin (its rec + consequence + uncertainty
+    flag) and a victim pin (who's at risk + the protecting rec)."""
+    from agentic.ui import _make_chipper, _stage4_pins
+    ga, d = _stage4_pin_fixture()
+    out = str(_stage4_pins(d, _make_chipper(ga)))
+    assert "house_1" in out and "person_1" in out          # both pinned
+    assert "evacuate person_1" in out                      # rec in the expand
+    assert "may_harm" in out                               # the harm
+    assert "mechanism won't commit" in out                 # uncertainty flag
+    assert "at risk" in out                                # victim pin
+
+
+def test_stage4_pins_render_on_the_main_scene_canvas():
+    """The pins go onto the primary scene image, not a separate panel image."""
+    from agentic.ui import scene_component
+    _ga, fx = _stage4_pin_fixture()
+    d = derive([])                                    # full scene state...
+    d.update({k: fx[k] for k in ("image_size", "result", "bound", "anchors",
+                                 "stage4")})           # ...then the Stage-4 bits
+    out = str(scene_component(d, "data:image/png;base64,xx"))
+    assert "scene-img" in out                              # the big canvas image
+    assert "evacuate person_1" in out                     # pin content is on it
+
+
+def test_stage4_pins_empty_without_boxes_or_stage4():
+    from agentic.ui import _make_chipper, _stage4_pins
+    d = {"image_size": [100, 100], "result": {"detected_objects": []},
+         "bound": {}, "anchors": [], "stage4": {"graph_a": {}}}
+    assert _stage4_pins(d, _make_chipper({})) == []        # no boxes
+    assert _stage4_pins({"stage4": None}, _make_chipper({})) == []  # no stage4
+
+
+def test_stage4_live_running_view():
+    """While Stage 4 runs (no final result yet) the body shows a live step
+    checklist, not a blank — the 'shows nothing' bug."""
+    d = derive([{"type": "recommendations_ready", "ranks": [1], "n_recs": 1,
+                 "n_advisory": 0},
+                {"type": "recommend_probe", "index": 0, "n_recs": 1,
+                 "top_threat": "house_1"}])
+    out = str(stage4_component(d))
+    assert "running" in out and "probe 1/5" in out
+
+
+def test_stage4_status_badge():
+    """The Stage 4 card shows a running/done badge like Stages 1-2:
+    waiting → active (with step count) → done."""
+    from agentic.ui import stage4_status_span
+
+    def badge(events):
+        return str(stage4_status_span(derive(events)))
+    assert "waiting" in badge([{"type": "stage_started",
+                                "stage": "assess"}]).lower()
+    assert "●" in badge([{"type": "stage_started", "stage": "recommend"}])
+    mid = badge([{"type": "recommendations_ready", "ranks": [1], "n_recs": 1,
+                  "n_advisory": 0},
+                 {"type": "graph_a_built", "n_nodes": 3, "n_edges": 2}])
+    assert "step 3/6" in mid                       # 2 done, on step 3 of 6
+    assert "done" in badge([{"type": "stage4_result",
+                             "result": {"picks": {}}}])
+
+
+def test_stage4_panel_empty_and_error():
+    assert "after assessment" in str(stage4_component(derive([]))).lower()
+    err = derive([{"type": "stage4_error", "message": "boom"}])
+    assert "could not run" in str(stage4_component(err)).lower()
 
 
 def test_stage1_shadow_routes_to_perception_panel():
