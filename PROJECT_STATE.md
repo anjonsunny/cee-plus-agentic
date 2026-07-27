@@ -1,10 +1,15 @@
 # CEE+ — Project State
 
+> **RETIRED / HISTORICAL (2026-07-27).** This file is a snapshot as of 2026-06-04 and is no
+> longer maintained. It predates the agentic (Arm B) build and uses an older stage numbering.
+> For current project state read `CLAUDE.md` (the living briefing) and the project memory; the
+> findings ledger is `agentic/FINDINGS.md`. Kept for historical reference only.
+
 **Last updated:** 2026-06-04
 **Status:** Stage 1 pre-intervention pipeline complete; Stage 1 intervention step next (intern project)
 **Author:** Sunny Anjon · U.S. Army Research Laboratory
 
-This is the single source of truth for project state. Read this and `CLAUDE.md` before starting any new session.
+**Historical note:** this was formerly the single source of truth. It has been superseded, for current project state read `CLAUDE.md` and the project memory; for the findings ledger read `agentic/FINDINGS.md`.
 
 ---
 

@@ -104,7 +104,7 @@ STAGE 2  ASSESSMENT (record -> verdict; TEXT-ONLY, never sees image)
                               NO-ERASURE: petitions add, never delete)
        facts fine, sorting wrong -> re-ask the question once, fresh
 
-STAGE 4  (NEXT, not built) recommendations / causal quads — where
+STAGE 4  (BUILT, Phase 1a/1b) recommendations / causal quads — where
   Arm A's frozen scoring meets Arm B. Ratified design: states stay on
   nodes (the computational currency); mechanism-on-edge is ADDITIVE,
   only where natural language and the ontology diverge.
@@ -137,16 +137,38 @@ STAGE 4  (NEXT, not built) recommendations / causal quads — where
    Box-internal refinements (one new synonym) usually don't need an
    edit; new checks/loops/routes/stages do.
 
-## Current state (2026-07-22)
+## Current state (2026-07-27)
 
-Stage 2 is nearly closed. Five of six scenes ran live and produced
-findings F7-F14 (each fixed + regression-tested). Remaining:
+Stage 4 Phase 1a/1b is built: recommend -> measured uncertainty (5 probes)
+-> Graph A (code) and Graph B (model) -> pick intervention targets -> trust
+(consequence-weighted). Python and LangGraph controls are byte-identical;
+384 hermetic tests pass. Findings run F1-F15 (F15 = the metric-defect audit,
+a new taxonomy category F). Stage 2 is functionally closed but not yet
+formally closed on the six scenes.
 
-- Run `F_park_control` in the UI — the silence test: the whole
-  apparatus must produce nothing on a safe scene.
-- Re-run the other scenes to confirm the latest fixes.
-- Then: judge-bias decision (F4), false-certainty mitigations (F5),
-  six-scene synthesis from the taxonomy, close Stage 2, start Stage 4.
+Ratified roadmap (Sunny confirmed the order):
+
+1. Calibrate Stage 4 on the six scenes (LIVE - needs Ollama, not the sandbox).
+   Tune the trust and consequence weights, which are still priors. The same
+   live pass closes the open Stage 2 items: the `F_park_control` silence test
+   and the scene re-runs.
+2. Reflection loop for Stage 4 - gated by measured uncertainty (so it does not
+   wait on step 1). Judges advise (rubric per-rec, across-set, reason-quad
+   semantic via RAG), reflection carries the message, only the model revises;
+   petitions are the second self-correction route. Expect a light re-calibration
+   after, since reflection changes outputs. This is where reflection jitter gets
+   confronted.
+3. Pathology (S5): map the calibrated, reflection-stable signals (trust,
+   uncertainty, A-vs-B, conformance) onto the five named pathologies.
+4. Intervention gate (S6): port the counterfactual gate (declared-vs-operative
+   groundedness, faithfulness) from frozen Arm A into the agentic arm, then
+   extend to multi-step and to video + audio. Two-move logic: S5 detects, S6 is
+   the definitive reveal. The three-arm comparison harness slots around S5/S6
+   and blocks nothing.
+
+Still open from Stage 2: judge-bias decision (F4), false-certainty mitigations
+(F5), and the six-scene synthesis from the taxonomy - fold these into the
+calibration pass.
 
 Key open observations: "reflection jitter" (measured uncertainty rises
 when reflection installs a claim the model's own polls don't

@@ -89,6 +89,8 @@ The framework operates as a behavior level lie detector that requires no access 
 
 Briefs read coherent on top of broken reasoning. The model is producing unjustified confidence.
 
+A pre-build audit of the imported scoring metrics (finding F15) surfaced four defects that made the trust read misleadingly low: saturation, a wrong denominator, double-counting of coupled violations, and severity-blindness. The agentic Trust layer corrects all four, so its score is non-saturating, uses a principled denominator, de-duplicates coupled violations, and weights by severity.
+
 ---
 
 ## Setup
@@ -123,7 +125,7 @@ pytest agentic/ -q
   - `recommend.py`, `evals4.py`, `graph_s4.py` — Stage 4 (recommendations, consequence-weighted trust, LangGraph twin)
   - `rulebook.py` / `rulebook_rag.py` — one law, two engines: code detects, rulebook text teaches
   - `evals.py`, `geometry.py`, `ui.py`, `dialogue.py` — GT eval, bbox geometry, Dash UI, chat over run records
-  - `FINDINGS.md` — the findings ledger (F1–F14 + fix taxonomy)
+  - `FINDINGS.md` — the findings ledger (F1–F15 across six fix categories, A–F)
   - `test_*.py` — hermetic tests, no models needed
 - `experiments/agentic_scenes/` — frozen calibration scenes + verified ground truth
 - `GROUND_TRUTH_PROTOCOL.md` — schema rules and validation conventions
@@ -133,9 +135,17 @@ pytest agentic/ -q
 
 - **Legacy arm (`main.py`)** — operational, including the intervention gate with six shift signals.
 - **Agentic Stage 1 (Perception)** — operational.
-- **Agentic Stage 2 (Assessment)** — operational, closing.
-- **Agentic Stage 4 (Recommendations, trust, measured uncertainty)** — in progress.
-- **Agentic intervention gate** — next: porting the counterfactual gate (declared-vs-operative groundedness, faithfulness) into the agentic arm.
+- **Agentic Stage 2 (Assessment)** — operational; closing formally (the silence test on the safe scene plus scene re-runs).
+- **Agentic Stage 4 (Recommendations)** — Phase 1a/1b built: recommend, measure uncertainty, build Graph A (from code) and Graph B (from the model), pick intervention targets, and roll up a consequence-weighted Trust Score. Python and LangGraph controls are byte-identical; 384 hermetic tests pass.
+
+Roadmap, in order:
+
+1. **Calibrate Stage 4 on the six scenes** (live, via Ollama). Tune the trust and consequence weights, which are currently priors. This same live pass closes Stage 2.
+2. **Reflection loop for Stage 4** (gated by measured uncertainty). Judges advise (rubric per-recommendation, across-set, and reason-to-quad semantic checks via RAG), reflection carries the message, and only the model revises; petitions are the second self-correction route. A light re-calibration follows, since reflection changes the outputs.
+3. **Pathology (S5).** Map the calibrated, reflection-stable signals onto the five named pathologies.
+4. **Intervention gate (S6).** Port the counterfactual gate (declared-vs-operative groundedness, faithfulness) from the legacy arm into the agentic arm, then extend it to multi-step interventions and to video and audio.
+
+The three-arm comparison harness is research infrastructure for the write-up and slots in around S5 and S6; it does not block the sequence.
 
 ## Publication
 
