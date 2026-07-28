@@ -435,3 +435,124 @@ def test_duplicate_check_survives_malformed_boxes():
          {"label": "responder", "state": "standing"}],
         caption="")
     assert not any(x.kind == "duplicate_entity" for x in v)
+
+
+# ── P7 / F21: caption CONDITION words, not just caption entities ─────────
+
+def test_caption_danger_states_uses_only_the_closed_vocabulary():
+    from agentic.repair_loop import caption_danger_states
+    got = caption_danger_states(
+        "another child floats motionless and unconscious face down")
+    assert "unconscious" in got                  # a legal at_risk state
+    assert "motionless" not in got               # not in the vocabulary
+    # normal-state words are never evidence of anything
+    assert caption_danger_states("a child is swimming in a pool") == {}
+    assert caption_danger_states("") == {}
+    assert caption_danger_states(None) == {}
+
+
+def test_p7_fires_when_the_caption_condition_is_not_declared():
+    """The B_pool regression: caption says unconscious, list says swimming.
+    'swimming' is a legal state and the entity exists, so nothing else fires."""
+    entities = [{"label": "child", "state": "swimming",
+                 "anchor_bbox": [0, 0, 9, 9]},
+                {"label": "child", "state": "drowning",
+                 "anchor_bbox": [0, 0, 9, 9]}]
+    caption = ("A child is struggling in a swimming pool; another child "
+               "floats motionless and unconscious face down farther away.")
+    kinds = [v.kind for v in detect_violations(entities, caption)]
+    assert "caption_state_contradiction" in kinds
+
+
+def test_p7_silent_when_the_condition_is_declared():
+    entities = [{"label": "child", "state": "unconscious",
+                 "anchor_bbox": [0, 0, 9, 9]}]
+    kinds = [v.kind for v in detect_violations(entities, "a child is unconscious")]
+    assert "caption_state_contradiction" not in kinds
+
+
+def test_p7_silent_on_the_safe_scene():
+    """F_park: no danger word in the caption, so the check must say nothing."""
+    entities = [{"label": "person", "state": "standing",
+                 "anchor_bbox": [0, 0, 9, 9]}]
+    caption = "Families relax in a park on a sunny afternoon."
+    kinds = [v.kind for v in detect_violations(entities, caption)]
+    assert "caption_state_contradiction" not in kinds
+
+
+def test_p7_never_names_the_right_state():
+    """Iron rule 5: quote the caption, never supply the answer."""
+    entities = [{"label": "child", "state": "swimming",
+                 "anchor_bbox": [0, 0, 9, 9]}]
+    v = [x for x in detect_violations(entities, "a child is unconscious")
+         if x.kind == "caption_state_contradiction"][0]
+    text = v.instruction.lower()
+    assert "unconscious" in text                 # the caption's own word
+    assert "should be" not in text and "change it to" not in text
+    assert "leave it" in text or "unchanged" in text   # standing is allowed
+
+
+def test_p7_normalises_both_sides_through_one_function():
+    """Both sides go through arm_b_canonical_state: Arm B's declined folds
+    first, Arm A's deeper map underneath. Arm A alone is not enough (it folds
+    struggling into trapped); Arm B alone is not enough (it cannot resolve
+    'down' or 'on fire')."""
+    from agentic.perception import arm_b_canonical_state
+    from agentic.repair_loop import caption_danger_states
+    assert arm_b_canonical_state("down") == "fallen"        # from Arm A
+    assert arm_b_canonical_state("on fire") == "burning"    # from Arm A
+    assert arm_b_canonical_state("struggling") == "struggling"   # Arm B declines
+    assert arm_b_canonical_state("stuck") == "trapped"      # other folds intact
+    assert caption_danger_states("a person is struggling")["struggling"] == "struggling"
+
+
+def test_p7_silent_when_a_synonym_already_covers_the_caption():
+    """The declared side is canonicalised too, so an entity carrying a
+    SYNONYM of the caption's word must not raise a disagreement."""
+    entities = [{"label": "house", "state": "on fire",
+                 "anchor_bbox": [0, 0, 9, 9]}]
+    kinds = [v.kind for v in detect_violations(entities, "a house is burning")]
+    assert "caption_state_contradiction" not in kinds
+
+
+def test_p7_adds_no_words_to_arm_b_vocabulary():
+    """The depth fix must come from importing Arm A, never from extending
+    Arm B's own lists."""
+    from agentic import vocabulary
+    for name in ("trapped", "fallen"):
+        assert not any(name in str(getattr(vocabulary, a, ""))
+                       for a in dir(vocabulary) if a.startswith("_EXTRA"))
+
+
+def test_p7_ticket_quotes_the_captions_own_word_not_the_canonical_form():
+    """Matching happens on the canonical form; the TICKET must still show the
+    word the caption actually used. Showing 'trapped' when the caption said
+    'struggling' would put a word in the caption's mouth — we would be
+    quoting something the given text never said."""
+    entities = [{"label": "person", "state": "standing",
+                 "anchor_bbox": [0, 0, 9, 9]}]
+    v = [x for x in detect_violations(
+        entities, "a person is struggling and another is face down")
+        if x.kind == "caption_state_contradiction"][0]
+    line = v.instruction.splitlines()[0]      # the template line
+    assert '"struggling"' in line and '"down"' in line
+    assert "trapped" not in line and "fallen" not in line
+
+
+def test_arm_b_has_exactly_one_state_normaliser():
+    """A declined fold is only real if nothing bypasses it. Any Arm B module
+    calling Arm A's canonicalize_state directly would silently re-apply the
+    fold, and two checks in the same file could disagree about one word."""
+    import pathlib
+    import re
+    root = pathlib.Path(__file__).parent
+    offenders = []
+    for f in root.glob("*.py"):
+        if f.name.startswith("test_"):
+            continue
+        for i, line in enumerate(f.read_text().splitlines(), 1):
+            if re.search(r"\bcanonicalize_state\s*\(", line):
+                offenders.append(f"{f.name}:{i}")
+    # perception.py defines arm_b_canonical_state and is the ONLY place the
+    # frozen Arm A function may be invoked.
+    assert all(o.startswith("perception.py") for o in offenders), offenders

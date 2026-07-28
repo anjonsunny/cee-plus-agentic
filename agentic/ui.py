@@ -1523,6 +1523,40 @@ def causal_graph_view(graph: dict[str, Any], title: str,
         body.append(html.Div("no edges", style={"fontSize": "11px",
                                                 "color": "#94a3b8"}))
 
+    # F18 — ONE-ENDED CLAIMS, drawn as stub rows (Sunny's option A). The stub
+    # occupies the space the real edge would occupy and points at an empty
+    # endpoint, so the DIRECTION of the missing half is visible: a hazard
+    # aimed at nobody reads differently from a victim with no source. Amber +
+    # dashed + open endpoint so it can never be mistaken for a claim — and
+    # amber, not grey, because grey dashing already means vlm_sam_fallback.
+    #
+    # These are rendered FROM THE NODE FLAGS and are never in edges[]; the
+    # frozen comparators still see the real edge count.
+    _stub = {"display": "inline-block", "width": "34px",
+             "borderTop": "2px dashed #d97706", "verticalAlign": "middle",
+             "margin": "0 6px"}
+    _empty = {"display": "inline-block", "width": "11px", "height": "11px",
+              "borderRadius": "50%", "border": "1.5px dashed #d97706",
+              "verticalAlign": "middle"}
+    _note = {"fontSize": "10px", "color": "#b45309", "marginLeft": "8px",
+             "fontStyle": "italic"}
+    one_ended = [n for n in nodes.values()
+                 if n.get("unattached") or n.get("unattributed")]
+    if one_ended:
+        body.append(html.Div("ONE-ENDED CLAIMS",
+                             style={"fontSize": "10px", "letterSpacing": ".5px",
+                                    "color": "#b45309", "margin": "8px 0 2px"}))
+    for n in one_ended:
+        nid = str(n.get("id") or "")
+        if n.get("unattached"):          # hazard -> nothing
+            row = [chip(nid), html.Span(style=_stub), html.Span(style=_empty),
+                   html.Span("no target named", style=_note)]
+        else:                            # nothing -> victim
+            row = [html.Span(style=_empty), html.Span(style=_stub), chip(nid),
+                   html.Span("no source named", style=_note)]
+        body.append(html.Div(row, style={"margin": "3px 0",
+                                         "lineHeight": "1.9"}))
+
     # NODES — every node as a chip, so isolated ones are visible too
     body.append(html.Div("ALL NODES", style={"fontSize": "10px",
                                             "letterSpacing": ".5px",
@@ -1892,7 +1926,13 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                                                   "marginRight": "4px"}), el],
                         style={"padding": "2px 0"})
     out.append(html.Div([
-        html.Span("WHAT TO INTERVENE ON", className="unc-tag"),
+        html.Span("SUPPRESSION TARGET (FOR THE CAUSAL TEST)",
+                  className="unc-tag"),
+        html.Div("Which mechanism is load-bearing — what we remove from the "
+                 "scene to test whether the recommendation was grounded in "
+                 "it. Not an instruction to a responder.",
+                 style={"fontSize": "11px", "opacity": 0.75,
+                        "padding": "2px 0 4px"}),
         _pk("algorithm · Graph A (out-degree):", a),
         _pk("model · Graph B (independent):", b),
         _pk("model · direct impact ask:", llm),

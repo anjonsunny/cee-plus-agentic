@@ -338,3 +338,136 @@ def test_probe_garbage_answer_counts_as_empty_reading():
     # 5 readings recorded (3 empty from garbage), count wobble surfaced
     assert mu.n_probes == 5
     assert mu.granular["fields"]["recommendation_count"]["u"] > 0.0
+
+
+# ── F16: one separator, one meaning ──────────────────────────────────────
+
+def test_bare_id_normalises_every_shape():
+    from agentic.recommend import bare_id
+    assert bare_id("ambulance_1·proximity") == "ambulance_1"
+    assert bare_id("house_1·burning") == "house_1"
+    assert bare_id("house_1") == "house_1"
+    assert bare_id("  spill_1 ") == "spill_1"
+    assert bare_id(None) == "" and bare_id("") == "" and bare_id(17) == "17"
+
+
+def test_scene_block_never_emits_a_second_dot_meaning():
+    """The prompt taught 'id·role' beside 'id·state'; the model copied it.
+    at-risk roles now travel under their own key."""
+    from agentic.recommend import _scene_block
+    block = _scene_block(_record(), _asm())
+    assert "·" not in block
+    assert "at_risk_as=" in block
+
+
+# ── F18: one-ended claims become node annotations ────────────────────────
+
+def _g(nodes, edges):
+    return {"nodes": nodes, "edges": edges}
+
+
+def test_placeholder_self_loop_leaves_the_edge_set():
+    """B_pool's shape: the victim named as its own threat is a placeholder for
+    a missing half, not a causal claim. It must not survive as an edge."""
+    from agentic.recommend import annotate_one_ended
+    g = annotate_one_ended(_g(
+        [{"id": "child_1", "at_risk": True}, {"id": "chair_1"}],
+        [{"source": "child_1", "effect": "may_harm", "target": "child_1"},
+         {"source": "chair_1", "effect": "may_harm", "target": "child_1"}]))
+    assert len(g["edges"]) == 1
+    assert g["edges"][0]["source"] == "chair_1"
+    assert any("F18" in w for w in g.get("graph_warnings", []))
+
+
+def test_no_self_loop_survives_not_even_worsens():
+    """Sunny, 2026-07-28: exclude self-loops COMPLETELY, so there is no
+    confusion. A 'worsens' self-loop looks identical to a placeholder one, and
+    two identical shapes with opposite meanings is the F16 ambiguity again.
+    A hazard that threatens nothing is 'unattached', said one way only."""
+    from agentic.recommend import annotate_one_ended
+    g = annotate_one_ended(_g(
+        [{"id": "fire_1", "hazardous": True}],
+        [{"source": "fire_1", "effect": "worsens", "target": "fire_1"}]))
+    assert g["edges"] == []
+    assert g["nodes"][0]["unattached"] is True
+
+
+def test_unattached_hazard_is_flagged():
+    from agentic.recommend import annotate_one_ended
+    g = annotate_one_ended(_g([{"id": "spill_1", "hazardous": True}], []))
+    assert g["nodes"][0]["unattached"] is True
+    assert "no target" in g["nodes"][0]["annotation_note"]
+
+
+def test_unattributed_ignores_a_self_loop_as_an_incoming_edge():
+    """Cowork's catch: 'no incoming edge' would NOT fire on B_pool, because
+    child_1 has one — from itself. It must be 'from a DIFFERENT node'."""
+    from agentic.recommend import annotate_one_ended
+    g = annotate_one_ended(_g(
+        [{"id": "child_1", "at_risk": True}],
+        [{"source": "child_1", "effect": "may_harm", "target": "child_1"}]))
+    assert g["nodes"][0]["unattributed"] is True
+
+
+def test_a_victim_with_a_real_source_is_not_flagged():
+    from agentic.recommend import annotate_one_ended
+    g = annotate_one_ended(_g(
+        [{"id": "pool_1", "hazardous": True}, {"id": "child_1", "at_risk": True}],
+        [{"source": "pool_1", "effect": "may_harm", "target": "child_1"}]))
+    by = {n["id"]: n for n in g["nodes"]}
+    assert not by["child_1"].get("unattributed")
+    assert not by["pool_1"].get("unattached")
+
+
+def test_annotate_tolerates_malformed_graphs():
+    from agentic.recommend import annotate_one_ended
+    for junk in (None, {}, {"nodes": None, "edges": None},
+                 {"nodes": ["x", 3], "edges": ["y", None]}):
+        g = annotate_one_ended(junk)
+        assert isinstance(g.get("nodes"), list) and isinstance(g.get("edges"), list)
+
+
+# ── O1: both permissions ride one flag ───────────────────────────────────
+
+def _prompt_with(flag: bool) -> str:
+    import agentic.recommend as R
+    old = R.RECS_MAY_BE_EMPTY
+    R.RECS_MAY_BE_EMPTY = flag
+    try:
+        return R.RECOMMEND_PROMPT.format(
+            scene_block=R._scene_block(_record(), _asm()),
+            effects=R._EFFECT_LINE,
+            empty_clause=R.EMPTY_RECS_CLAUSE if flag else "",
+            affected_clause=(R.AFFECTED_OPTIONAL if flag
+                             else R.AFFECTED_REQUIRED))
+    finally:
+        R.RECS_MAY_BE_EMPTY = old
+
+
+def test_permissions_are_off_by_default():
+    """O1 ships OFF. The clause-off arm must be the prompt we already ran, or
+    the paired experiment has no baseline."""
+    import agentic.recommend as R
+    assert R.RECS_MAY_BE_EMPTY is False
+    off = _prompt_with(False)
+    assert "NON-EMPTY list of object_ids harmed." in off
+    assert "MAY BE EMPTY" not in off
+
+
+def test_both_permissions_flip_together():
+    """The two permissions are one experiment. If they could flip separately a
+    paired run could not say which one moved the output."""
+    on = _prompt_with(True)
+    assert "MAY BE EMPTY if no entity in the scene is hazardous" in on
+    assert "MAY BE EMPTY if this hazard threatens nothing in particular" in on
+    assert "NON-EMPTY" not in on
+
+
+def test_the_permission_grants_and_never_steers():
+    """Iron rule 5: it may say the array CAN be empty; it must never say the
+    scene is safe, or to be cautious, or not to invent hazards — that teaches
+    the answer and destroys the measurement we are taking."""
+    on = _prompt_with(True).lower()
+    for banned in ("do not invent", "be conservative", "only if you are sure",
+                   "avoid", "no hazards are present", "be careful"):
+        assert banned not in on

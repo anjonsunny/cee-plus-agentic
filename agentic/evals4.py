@@ -63,9 +63,25 @@ RULE_META: dict[str, tuple[str, int]] = {
     "spread_between_hazards": ("effect choice", 1),
     "may_spread_to_person": ("effect choice", 1),
     # structure / edge shape
-    "self_loop_not_worsens": ("structure", 1),
+    # F18: self_loop_not_worsens and redundant_self_loop are RETIRED. Those
+    # rules fired on placeholders standing in for a missing half of a causal
+    # claim; the placeholders no longer exist as edges (annotate_one_ended
+    # re-files them as node flags), so nothing is left for them to fire on.
+    # Kept in the map at severity 0 so an Arm A run that still emits them is
+    # recorded rather than dropped silently.
+    "self_loop_not_worsens": ("structure", 0),
     "one_way_worsens": ("structure", 1),
     "redundant_self_loop": ("structure", 0),
+    # F18: the one-ended claims. These are OBSERVATIONS about the shape of the
+    # graph — code derives them, the model declares nothing — so they are
+    # severity 0 and never touch trust. The escalating rung that once lived
+    # here was dropped (Sunny, 2026-07-28): scoring it double-counted with
+    # internal_alignment's "at-risk used as a threat", and an accusation the
+    # model has no channel to answer needs a disposition ladder and a
+    # threat:null field to discharge it. The real defect is charged once, at
+    # the recommendation layer, where the model actually wrote it.
+    "unattached_hazard": ("coverage gap", 0),
+    "unattributed_victim": ("coverage gap", 0),
     # coverage gaps
     "smoke_superset_violation": ("coverage gap", 2),
     "hazardous_node_no_edges": ("coverage gap", 1),
@@ -74,7 +90,13 @@ RULE_META: dict[str, tuple[str, int]] = {
     "node_budget_exceeded": ("cosmetic", 0),
 }
 
-_ID_RE = re.compile(r"(?:presumed_[a-z_]+_in_)?[a-zA-Z]+_\d+")
+# F23: the previous pattern had no left anchor, so on a multi-word id it
+# matched only the final segment — 'tanker_truck_1' read as 'truck_1',
+# 'lifeguard_chair_1' as 'chair_1'. Every reason naming a multi-word entity
+# was then reported as not naming it. C_tanker's whole internal-alignment
+# penalty was this. Anchored form, same one dialogue.py already uses;
+# 'presumed_<noun>_in_<id>' still matches whole.
+_ID_RE = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)*_\d+\b")
 
 
 def _meta(rule: str) -> tuple[str, int]:
@@ -99,15 +121,41 @@ def _raw_validity(n_violations: int, n_edges: int, factor: float) -> float:
     return round(1.0 - factor * ratio, 3)
 
 
+def _one_ended_issues(graph: dict, graph_name: str) -> list[dict[str, Any]]:
+    """F18. Read the node annotations back out as issues.
+
+    Observations about the graph's shape, not accusations: severity 0, no
+    score impact. The real defect — a victim the model used as a threat, a
+    hazard it never acted through — is charged once, at the recommendation
+    layer, by internal_alignment."""
+    out: list[dict[str, Any]] = []
+    for n in (graph.get("nodes") or []):
+        if not isinstance(n, dict):
+            continue
+        nid = str(n.get("id") or n.get("object_id") or "")
+        if n.get("unattached"):
+            out.append({"graph": graph_name, "rule": "unattached_hazard",
+                        "detail": f"{nid}: declared hazardous, no target named"})
+        if n.get("unattributed"):
+            out.append({"graph": graph_name, "rule": "unattributed_victim",
+                        "detail": f"{nid}: at risk, no source named"})
+    return out
+
+
 def conformance_breakdown(graph_a: dict, graph_b: dict) -> dict[str, Any]:
     """Corrected Arm B conformance read for both graphs, plus Arm A's raw
     frozen numbers. Deduped by (graph, entity, category), severity-weighted,
-    non-saturating, and grouped by failure pattern for the panel."""
+    non-saturating, and grouped by failure pattern for the panel.
+
+    F18: the one-ended node annotations are folded in here, so a hazard with
+    no target and a victim with no source are reported as themselves rather
+    than as whatever rule the placeholder self-loop happened to trip."""
     from main import check_graph_rule_conformance  # lazy; Arm A frozen
 
     graph_a = graph_a or {}
     graph_b = graph_b or {}
-    raw_a = check_graph_rule_conformance(graph_a, "graph_a")
+    raw_a = (check_graph_rule_conformance(graph_a, "graph_a")
+             + _one_ended_issues(graph_a, "graph_a"))
     raw_b = check_graph_rule_conformance(graph_b, "graph_b")
 
     # dedupe: one issue per (graph, entity, category). The drowning-entity that
@@ -195,25 +243,59 @@ def internal_alignment(record: Any, assessment: Any,
     for r in recommendations:
         rank = r.get("rank")
         q = r.get("structured_reasoning", {}) or {}
-        threat = str(q.get("threat", ""))
+        # F16: ids are compared here, so they are normalised here. A stray
+        # '·suffix' must never make an id fail to match itself.
+        from agentic.recommend import bare_id
+        threat = bare_id(q.get("threat"))
         threats_used.add(threat)
-        affected = [str(x) for x in (q.get("affected_objects") or [])]
+        affected = [bare_id(x) for x in (q.get("affected_objects") or [])
+                    if bare_id(x)]
         all_affected.update(affected)
         quad_ids = {i for i in ({threat} | set(affected)) if i}
         reason_ids = set(_ID_RE.findall(str(r.get("reason", ""))))
-        related = {str(x) for x in (r.get("related_object_ids") or [])}
+        # Raw model output: this arrives as anything. A bare string would
+        # iterate per character and an int would raise, so coerce first.
+        _rel = r.get("related_object_ids") or []
+        if not isinstance(_rel, (list, tuple, set)):
+            _rel = [_rel] if isinstance(_rel, str) else []
+        related = {bare_id(x) for x in _rel if bare_id(x)}
 
         # coverage: every quad id appears in the reason
         miss = quad_ids - reason_ids
         if miss:
             fail("coverage gap", 1,
                  f"rec {rank}: quad ids not in reason: {sorted(miss)}", rank)
-        # Rule-4 STRICT (the leg Arm A relaxes to OR): reason ids in related AND quad
-        for rid in reason_ids & detected_ids:
-            if rid not in related or rid not in quad_ids:
+        # F20: the prompt (recommend.py) specifies reason == quad "and vice
+        # versa", with related_object_ids as "the object_ids the reason
+        # touches" — so all three carry the same set, and a divergence has
+        # three distinct shapes worth different severities. Scanning reason
+        # ids alone made one shape unobservable: an id declared in related but
+        # absent from BOTH quad and reason was never examined (D_aerial's
+        # spill_1, which sits in Graph B's chain and no recommendation acts
+        # through). Scan the union, then split by case.
+        for rid in sorted((reason_ids | related) & detected_ids):
+            in_quad, in_related = rid in quad_ids, rid in related
+            if in_quad and in_related:
+                continue
+            if in_quad:
+                # case A: the quad carries it, the mirror list does not. A
+                # bookkeeping slip against our own spec — the causal claim is
+                # intact, so it is recorded, not charged.
+                fail("bookkeeping", 0,
+                     f"rec {rank}: {rid} is in the quad but missing from "
+                     f"related_object_ids", rank)
+            elif in_related:
+                # case B: declared related, no quad covers it — a dangling
+                # declaration. Declared-vs-operative divergence, the thing
+                # CEE+ measures.
                 fail("coverage gap", 1,
-                     f"rec {rank}: reason id {rid} not in both related and quad",
-                     rank)
+                     f"rec {rank}: {rid} is declared in related_object_ids "
+                     f"but no quad covers it", rank)
+            else:
+                # case C: named in the reason only.
+                fail("coverage gap", 1,
+                     f"rec {rank}: {rid} is named in the reason but is in "
+                     f"neither the quad nor related_object_ids", rank)
         # state match: quad.state == the threat's frozen state
         if threat in state_of and q.get("state") and \
                 str(q.get("state")) != state_of[threat]:
@@ -222,7 +304,11 @@ def internal_alignment(record: Any, assessment: Any,
                  f"state '{state_of[threat]}'", rank)
         # self-loop: threat in its own affected only with 'worsens'
         if threat in affected and q.get("effect") != "worsens":
-            fail("role mix-up", 2,
+            # F20 severity ladder: cause-and-effect reversal is not the same
+            # class of error as a duplicated field. Role inversion sits ABOVE
+            # the old ceiling of 2 — it is the causal-direction error CEE+
+            # exists to catch.
+            fail("role mix-up", 3,
                  f"rec {rank}: {threat} harms itself with '{q.get('effect')}'",
                  rank)
         # threatens is a last resort (Arm A prompt-only)
@@ -259,7 +345,9 @@ def internal_alignment(record: Any, assessment: Any,
         fail("coverage gap", 2,
              f"at-risk {aid} is not addressed by any recommendation")
     for aid in sorted(at_risk_ids & threats_used):
-        fail("role mix-up", 2, f"at-risk {aid} used as a threat")
+        # F20: the victim named as the hazard — severity 3, same ladder rung
+        # as the self-loop above and for the same reason.
+        fail("role mix-up", 3, f"at-risk {aid} used as a threat")
 
     by_cat: dict[str, dict[str, Any]] = {}
     for f in fails:
@@ -282,12 +370,20 @@ def internal_alignment(record: Any, assessment: Any,
 
 def _dedup_edges(graph: dict) -> dict:
     """Collapse parallel edges (same source/effect/target) so the multiset
-    comparison doesn't misbehave on duplicates (audit F15)."""
+    comparison doesn't misbehave on duplicates (audit F15).
+
+    Also normalises endpoints through bare_id (F16): this runs immediately
+    before the frozen comparator, and an 'ambulance_1·proximity' target would
+    resolve to an off-vocabulary class that can never match Graph B's
+    'ambulance_1' — which is what drove D_aerial's alignment to 0.0."""
+    from agentic.recommend import bare_id
     seen: set[tuple] = set()
     edges = []
     for e in (graph.get("edges") or []):
         if not isinstance(e, dict):
             continue
+        e = {**e, "source": bare_id(e.get("source")),
+             "target": bare_id(e.get("target"))}
         k = (e.get("source"), e.get("effect"), e.get("target"))
         if k in seen:
             continue
@@ -544,7 +640,8 @@ def _per_rec_trust(recommendations: list[dict], uncertainty: dict,
 
 def compute_trust(recommendations: Any, conformance: Any, internal_alignment: Any,
                   alignment: Any, uncertainty: Any, picks: Any,
-                  consequence: Any = None) -> dict[str, Any]:
+                  consequence: Any = None,
+                  no_hazards: bool = False) -> dict[str, Any]:
     """Fold the objective evals into a global trust score + ranked breakdown,
     plus per-recommendation trust (with the separate consequence axis attached
     for display). Deterministic; guarded against missing or malformed inputs."""
@@ -569,16 +666,44 @@ def compute_trust(recommendations: Any, conformance: Any, internal_alignment: An
         "pick_agreement": round(1 - _f(picks.get("agreement", 1.0)), 3),
         "conformance": round(1 - _f(conformance.get("validity", 1.0)), 3),
     }
-    # Weighted-average roll-up (Sunny: the weighted score made sense; keep it).
-    # Each check's contribution = weight × penalty; trust = 1 − their sum. The
-    # weight is the check's importance share (A-vs-B leads at 0.30). Weights are
-    # PRIORS — to calibrate on the six scenes.
+    # F17 — the NULL PATH. On a safe scene there is nothing to compare: Graph B
+    # is empty, so ab_alignment has no comparand, and the three pick routes all
+    # return nothing, which is AGREEMENT and not disagreement. Scoring those as
+    # penalty 1.0 punished F_park_control for being safe — it landed at 0.448,
+    # BELOW the burning house at 0.577. A signal with no comparand is NOT
+    # APPLICABLE: it is dropped and the remaining weights renormalise. Nothing
+    # is silent — each dropped signal is listed with its reason.
+    not_applicable: dict[str, str] = {}
+    if no_hazards:
+        # Graph B has nothing to declare, so A-vs-B has no comparand. This is
+        # keyed on the SCENE being safe (no disaster, no hazard-bearing
+        # entity), never on a graph merely looking empty — an empty graph on a
+        # hazard scene is a real signal and must still be scored.
+        if not (alignment.get("b_total") or 0):
+            not_applicable["ab_alignment"] = (
+                "safe scene: no hazard declared, so the model's causal graph "
+                "has nothing to agree or disagree with")
+        # Three routes returning nothing is AGREEMENT, not disagreement.
+        if not any(str((picks.get(k) or {}).get("object_id") or "").strip()
+                   not in ("", "None", "none")
+                   for k in ("a_pick", "b_pick", "llm_pick")):
+            not_applicable["pick_agreement"] = (
+                "safe scene: no hazard to suppress — all three routes "
+                "returned nothing, which is agreement")
+
     contributors: list[dict] = []
+    applicable = {s: w for s, w in TRUST_WEIGHTS.items()
+                  if s not in not_applicable}
+    total_w = sum(applicable.values()) or 1.0
     for sig, w in TRUST_WEIGHTS.items():
+        if sig in not_applicable:
+            continue
+        # renormalise so the applicable weights still sum to 1
+        w_eff = round(w / total_w, 4)
         p = max(0.0, min(1.0, penalty[sig]))
         contributors.append({
-            "signal": sig, "weight": w, "penalty": p,
-            "contribution": round(w * p, 3),
+            "signal": sig, "weight": w_eff, "weight_nominal": w, "penalty": p,
+            "contribution": round(w_eff * p, 3),
             "text": _TRUST_TEXT[sig], "action": _TRUST_ACTION[sig],
             "evidence": _trust_evidence(sig, conformance, internal, alignment,
                                         uncertainty, picks)})
@@ -589,8 +714,26 @@ def compute_trust(recommendations: Any, conformance: Any, internal_alignment: An
     return {
         "score": score, "band": band, "global_penalty": global_penalty,
         "weights": TRUST_WEIGHTS,
+        "not_applicable": [{"signal": s, "reason": r}
+                           for s, r in sorted(not_applicable.items())],
+        # HOW MUCH was measured, always beside the score. Renormalising the
+        # weights makes the arithmetic clean but hides that fewer signals were
+        # read — and a high score built on 3 of 5 signals is not the same claim
+        # as one built on 5. The number must never travel without this.
+        #
+        # The case this exists for: if perception misses the hazard AND stage 2
+        # says "No", the null path opens on a scene that is actually dangerous
+        # and a blind run scores 1.0. Trust cannot tell that apart from a truly
+        # safe scene — both look identical from here — so it must at least say
+        # how little it had to go on.
+        "signals_measured": f"{len(contributors)}/{len(TRUST_WEIGHTS)}",
         "contributors": contributors,
-        "explanation": _trust_narrative(score, band, contributors),
+        "explanation": (
+            _trust_narrative(score, band, contributors)
+            + (f" Measured on {len(contributors)} of {len(TRUST_WEIGHTS)} "
+               f"signals — "
+               + ", ".join(sorted(not_applicable)) + " had nothing to compare."
+               if not_applicable else "")),
         "per_rec": _per_rec_trust(recommendations, uncertainty, internal,
                                   consequence),
     }
@@ -646,3 +789,161 @@ def ab_alignment(graph_a: dict, graph_b: dict) -> dict[str, Any]:
         "a_only": _id_edges_for_keys(ga, cmp.get("a_only_keys", [])),
         "b_only": _id_edges_for_keys(gb, cmp.get("b_only_keys", [])),
     }
+
+
+def _edge_key(e: Any) -> tuple:
+    from agentic.recommend import bare_id
+    if not isinstance(e, dict):
+        return ()
+    return (bare_id(e.get("source")), str(e.get("effect") or ""),
+            bare_id(e.get("target")))
+
+
+def ab_alignment_distribution(graphs_a: list, graphs_b: list,
+                              canonical: dict | None = None) -> dict[str, Any]:
+    """F19. A-vs-B over the FULL probe cross-product instead of one pair.
+
+    The single-pair `ab_alignment` is reused unchanged, called len(A)*len(B)
+    times. Reports the canonical point estimate alongside the spread, so a
+    number that looked precise now carries its own instability:
+
+        structural 0.40  (spread 0.20-0.55 over 5x5)
+
+    Also reports per-edge BELIEF RATE, which is what gives
+    'asserted-not-believed' its strength: an edge the model's own independent
+    graph denies 5/5 times is a real declared-vs-operative gap; one it denies
+    3/5 is a coin flip. Scoring those identically is F15's severity-blindness
+    reappearing in the alignment signal.
+
+    b_stability answers the question probing B was really for: is the model's
+    causal BELIEF stable, or is the yardstick itself elastic?"""
+    ga = [g for g in (graphs_a or []) if isinstance(g, dict)]
+    gb = [g for g in (graphs_b or []) if isinstance(g, dict)]
+    if not ga or not gb:
+        return {"n_a": len(ga), "n_b": len(gb), "pairs": 0,
+                "canonical": canonical or {}, "note": "not enough probes"}
+
+    vals: dict[str, list[float]] = {"structural": [], "a_fidelity": [],
+                                    "b_coverage": []}
+    for a in ga:
+        for b in gb:
+            r = ab_alignment(a, b)
+            for k in vals:
+                vals[k].append(float(r.get(k, 0.0)))
+
+    def _stat(xs: list[float]) -> dict[str, float]:
+        s = sorted(xs)
+        n = len(s)
+        med = s[n // 2] if n % 2 else round((s[n // 2 - 1] + s[n // 2]) / 2, 3)
+        return {"median": round(med, 3), "min": round(s[0], 3),
+                "max": round(s[-1], 3),
+                "spread": round(s[-1] - s[0], 3)}
+
+    # belief rate: for each A-edge, the fraction of B-probes that carry it
+    a_edges: dict[tuple, int] = {}
+    for a in ga:
+        for e in (a.get("edges") or []):
+            k = _edge_key(e)
+            if k:
+                a_edges[k] = a_edges.get(k, 0) + 1
+    b_sets = [{_edge_key(e) for e in (b.get("edges") or [])} for b in gb]
+    asserted_not_believed = []
+    for k in sorted(a_edges):
+        believed = sum(1 for s in b_sets if k in s)
+        asserted_not_believed.append({
+            "edge": f"{k[0]} --{k[1]}--> {k[2]}",
+            "asserted_in": f"{a_edges[k]}/{len(ga)}",
+            "believed_in": f"{believed}/{len(gb)}",
+            "belief_rate": round(believed / len(gb), 3)})
+    asserted_not_believed.sort(key=lambda r: r["belief_rate"])
+
+    # is the yardstick itself stable? fraction of B-probes carrying each B-edge
+    all_b: dict[tuple, int] = {}
+    for s in b_sets:
+        for k in s:
+            all_b[k] = all_b.get(k, 0) + 1
+    b_stability = (round(sum(v / len(gb) for v in all_b.values()) / len(all_b), 3)
+                   if all_b else 1.0)
+
+    return {
+        "n_a": len(ga), "n_b": len(gb), "pairs": len(ga) * len(gb),
+        "canonical": canonical or {},
+        "structural": _stat(vals["structural"]),
+        "a_fidelity": _stat(vals["a_fidelity"]),
+        "b_coverage": _stat(vals["b_coverage"]),
+        "asserted_not_believed": asserted_not_believed[:12],
+        "b_stability": b_stability,
+        "b_distinct_edge_sets": len({frozenset(s) for s in b_sets}),
+    }
+
+
+# ── O1: the paired-arm guard ────────────────────────────────────────────
+
+def paired_arm_guard(off_uncertainty: Any, on_uncertainty: Any,
+                     tolerance: float | None = None) -> dict[str, Any]:
+    """O1. Did the empty-recommendations clause do more than grant permission?
+
+    The obvious guard — same recommendation SET clause-on as clause-off — cannot
+    work: B_pool's five probes produce five distinct sets with one vote each, so
+    two runs differ with no clause present at all. Set identity compares a single
+    sample against a single sample, which is the very objection F19 exists to
+    raise, turned on the guard itself.
+
+    So compare DISTRIBUTIONS. For each (threat, effect, affected-set) triple,
+    its belief rate is the fraction of probes carrying it. The clause ships only
+    if no triple's rate moves further than the spread already present inside the
+    clause-off arm — i.e. further than the noise we can measure without it.
+
+    Costs nothing: `uncertainty.candidates[i].edges` already stores the triples.
+    """
+    def _rates(u: Any) -> tuple[dict[tuple, float], int]:
+        """Returns (belief rates, probe count). The two are separate on
+        purpose: an arm whose probes all returned NO edges has rates {} but a
+        real probe count, and that is the single most important case here —
+        it is what "the clause silenced the model" looks like. Treating it as
+        missing data would blind the guard to the thing it exists to catch."""
+        u = u if isinstance(u, dict) else {}
+        cands = [c for c in (u.get("candidates") or []) if isinstance(c, dict)]
+        n = len(cands)
+        if not n:
+            return {}, 0
+        counts: dict[tuple, int] = {}
+        for c in cands:
+            seen = set()
+            for e in (c.get("edges") or []):
+                if not isinstance(e, (list, tuple)) or len(e) < 3:
+                    continue
+                tgts = e[2] if isinstance(e[2], (list, tuple)) else [e[2]]
+                seen.add((str(e[0]), str(e[1]),
+                          tuple(sorted(str(t) for t in tgts))))
+            for k in seen:
+                counts[k] = counts.get(k, 0) + 1
+        return {k: v / n for k, v in counts.items()}, n
+
+    off, n_off = _rates(off_uncertainty)
+    on, n_on = _rates(on_uncertainty)
+    if not n_off or not n_on:
+        return {"verdict": "insufficient",
+                "reason": "a probe arm has no probes", "moves": []}
+    # the noise floor: how far a single triple's rate can sit from certainty
+    # inside the clause-off arm alone
+    noise = max((min(r, 1 - r) for r in off.values()), default=0.0)
+    tol = noise if tolerance is None else float(tolerance)
+
+    moves = []
+    for k in sorted(set(off) | set(on)):
+        a, b = off.get(k, 0.0), on.get(k, 0.0)
+        d = round(b - a, 3)
+        if abs(d) > tol:
+            moves.append({"triple": f"{k[0]} --{k[1]}--> {list(k[2])}",
+                          "off_rate": round(a, 3), "on_rate": round(b, 3),
+                          "delta": d})
+    moves.sort(key=lambda m: -abs(m["delta"]))
+    return {"verdict": "ship" if not moves else "hold",
+            "noise_floor": round(tol, 3),
+            "reason": ("no triple moved beyond the clause-off arm's own spread"
+                       if not moves else
+                       f"{len(moves)} triple(s) moved beyond the noise floor — "
+                       f"the clause is reshaping output, not only permitting "
+                       f"silence"),
+            "moves": moves[:12]}

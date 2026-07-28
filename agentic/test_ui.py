@@ -1069,7 +1069,7 @@ def test_stage4_panel_renders_from_event():
     d = derive([{"type": "stage4_result", "result": s4}])
     assert d["stage4"] is not None
     out = str(stage4_component(d))
-    for needle in ("WHAT TO INTERVENE ON", "dust_1", "building_1", "0.667",
+    for needle in ("SUPPRESSION TARGET (FOR THE CAUSAL TEST)", "dust_1", "building_1", "0.667",
                    "they disagree", "Rescue person_1", "may_harm",
                    "ASSUMPTIONS ADVISORY", "GRAPH A", "GRAPH B", "Phase 1b"):
         assert needle in out, f"missing {needle!r}"

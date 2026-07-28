@@ -26,7 +26,8 @@ from langgraph.graph import END, START, StateGraph
 # the whole run — Stage 2 and Stage 4 switch together.
 from agentic.graph_live import control_flag, set_control  # noqa: F401
 from agentic.recommend import (QueryFn, Stage4Result, build_graph_a,
-                               pick_targets, run_evals, run_graph_b,
+                               build_graph_a_probes, pick_targets, run_evals,
+                               run_graph_b, run_graph_b_probes,
                                run_recommend, run_recommend_uncertainty,
                                run_stage4, run_trust, _emitter)
 
@@ -42,6 +43,8 @@ class S4State(TypedDict, total=False):
     uncertainty: dict       # measured probe U over the recommend step (1b)
     graph_a: dict           # built from the quads (code)
     graph_b: dict           # the model's independent graph + suppression_pick
+    graphs_a: list          # F19: one Graph A per probe (free, from candidates)
+    graphs_b: list          # F19: one Graph B per probe (n_probes calls)
     picks: dict             # A_pick / B_pick / llm_pick + agreement
     conformance: dict       # corrected conformance breakdown (Phase 1b)
     internal_alignment: dict  # within-A recommendation coverage (Phase 1b)
@@ -77,7 +80,15 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
     def graph_b(state: S4State) -> dict[str, Any]:
         g = run_graph_b(state["record"], state["assessment"],
                         query_fn=query_fn, on_event=on_event)
-        return {"graph_b": g}
+        # F19: probe both sides — A is free (rebuilt from the recorded probe
+        # sets), B costs n_probes calls. Same place, same order as the Python
+        # control, so the twin stays byte-identical.
+        ga = build_graph_a_probes(state["record"], state["assessment"],
+                                  state["uncertainty"], on_event=on_event)
+        gb = run_graph_b_probes(state["record"], state["assessment"],
+                                probe_fn=probe_fn, n_probes=n_probes,
+                                on_event=on_event)
+        return {"graph_b": g, "graphs_a": ga, "graphs_b": gb}
 
     def picks(state: S4State) -> dict[str, Any]:
         p = pick_targets(state["record"], state["graph_a"], state["graph_b"],
@@ -88,7 +99,9 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
     def evals(state: S4State) -> dict[str, Any]:
         e = run_evals(state["record"], state["assessment"],
                       state["recommendations"], state["graph_a"],
-                      state["graph_b"], on_event=on_event)
+                      state["graph_b"], on_event=on_event,
+                      graphs_a=state.get("graphs_a"),
+                      graphs_b=state.get("graphs_b"))
         return {"conformance": e["conformance"],
                 "internal_alignment": e["internal_alignment"],
                 "alignment": e["alignment"]}

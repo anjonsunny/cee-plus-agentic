@@ -120,7 +120,7 @@ with exactly these keys:
 - assumptions: array of short strings you INFER beyond the visible evidence.
 - uncertainty_notes: array of short strings about what you are unsure of and why.
 - recommendations: array, one entry per distinct (threat, state) causal logic
-  you act on. Do not pad to a fixed count. Each entry:
+  you act on. Do not pad to a fixed count.{empty_clause} Each entry:
     - rank: integer (1 = highest priority)
     - action: one specific responder action (no "and"/"then" compounds)
     - reason: plain English of the form "Because {{threat}} is {{state}}, it
@@ -129,9 +129,12 @@ with exactly these keys:
     - related_object_ids: array of object_ids the reason touches
     - structured_reasoning: the causal quad —
         - threat: object_id of the entity whose state drives the hazard
-        - state: that threat's hazard-bearing state
+        - state: that threat's hazard-bearing state. It must be one of the
+          state= values listed for that object_id above. 'distress' and
+          'proximity' are at_risk_as ROLES, not states; never use them here.
         - effect: exactly one of [{effects}]
-        - affected_objects: NON-EMPTY list of object_ids harmed
+        - affected_objects: {affected_clause} Plain ids only — never an id
+          with a suffix attached.
     - expected_consequence: the immediate result of THIS action if it succeeds
     - remaining_risk: an (object_id, state) pair this action does NOT address;
       must differ across recommendations
@@ -143,6 +146,42 @@ with exactly these keys:
   responder might do }}. These are ADVISORY only — do not put suspected unseen
   entities into recommendations or the quads.
 """
+
+# O1 — the empty-recommendations permission (Sunny's paired arm).
+#
+# F_park_control, a SAFE scene, still produced a recommendation and a causal
+# edge (dog_1 exposes swing_1). Before calling that a model defect we have to
+# rule out our own prompt: `affected_objects: NON-EMPTY` and the framing
+# "Produce emergency-response recommendations" read as an instruction to
+# produce, and only `assumptions_advisory` is explicitly allowed to be empty.
+# We may be forcing the fabrication we then measure.
+#
+# The clause is a PERMISSION, never steering. It says the array may be empty;
+# it does NOT say "do not invent hazards" or "be conservative" — that would
+# teach the answer, break iron rule 5, and Goodhart the measurement: we would
+# fix the behaviour and destroy our ability to observe it in the same move.
+# The wording is lifted verbatim from the sentence assumptions_advisory
+# already carries, so this removes an inconsistency in our own schema rather
+# than adding an instruction.
+#
+# It ships OFF. The experiment is PAIRED — F_park run twice in one session,
+# clause on and clause off, everything else fixed — because the clause sits in
+# the shared prompt and would otherwise move all six scenes at once, leaving
+# the weights calibrated against a shifted baseline.
+EMPTY_RECS_CLAUSE = (" MAY BE EMPTY if no entity in the scene is hazardous.")
+
+# The twin permission. `affected_objects: NON-EMPTY` forces the model to name a
+# victim even when its hazard threatens nobody in particular — the pressure
+# that produced the placeholder self-loops F18 re-files. Relaxing it is the
+# other half of the same experiment, so it rides the same flag: both
+# permissions on, or both off. Splitting them would leave a paired run unable
+# to say which one moved the output.
+AFFECTED_REQUIRED = "NON-EMPTY list of object_ids harmed."
+AFFECTED_OPTIONAL = ("list of object_ids harmed; MAY BE EMPTY if this hazard "
+                     "threatens nothing in particular.")
+
+RECS_MAY_BE_EMPTY = os.getenv("REC_ALLOW_EMPTY", "0") == "1"
+
 
 LLM_PICK_PROMPT = """You are an emergency-response analyst. Below are your own
 recommendations for a scene and the hazards involved. Reason about causal
@@ -262,15 +301,25 @@ def _at_risk_dicts(assessment: Any) -> list[dict]:
 
 
 def _scene_block(record: Any, assessment: Any) -> str:
-    """A compact, readable dump of the frozen scene for the prompt."""
+    """A compact, readable dump of the frozen scene for the prompt.
+
+    F16: the at-risk ROLE gets its own named key. It used to be rendered as
+    'child_2·proximity', which gave '·' a second meaning — everywhere else in
+    the system 'id·word' is entity·STATE — and the model generalised from the
+    syntax, writing roles into the quad's state slot and role-suffixed ids
+    into affected_objects. One separator, one meaning."""
+    at_risk_as = {a.object_id: a.kind for a in assessment.at_risk}
     lines = ["entities:"]
     for o in record.detected_objects:
-        lines.append(f"  {o.object_id}: {o.label}, state={o.state} "
-                     f"({o.state_kind})")
+        line = (f"  {o.object_id}: {o.label}, state={o.state} "
+                f"({o.state_kind})")
+        if o.object_id in at_risk_as:
+            line += f", at_risk_as={at_risk_as[o.object_id]}"
+        lines.append(line)
     lines.append("threats: " + (", ".join(t.object_id for t in assessment.threats)
                                 or "none"))
-    lines.append("at_risk: " + (", ".join(f"{a.object_id}·{a.kind}"
-                                           for a in assessment.at_risk) or "none"))
+    lines.append("at_risk: " + (", ".join(a.object_id
+                                          for a in assessment.at_risk) or "none"))
     if record.caption:
         lines.append(f"caption: {record.caption}")
     return "\n".join(lines)
@@ -305,7 +354,10 @@ def run_recommend(record: Any, assessment: Any, *, query_fn: QueryFn,
     emit = _emitter(on_event)
     emit("stage_started", stage="recommend")
     prompt = RECOMMEND_PROMPT.format(
-        scene_block=_scene_block(record, assessment), effects=_EFFECT_LINE)
+        scene_block=_scene_block(record, assessment), effects=_EFFECT_LINE,
+        empty_clause=EMPTY_RECS_CLAUSE if RECS_MAY_BE_EMPTY else "",
+        affected_clause=(AFFECTED_OPTIONAL if RECS_MAY_BE_EMPTY
+                         else AFFECTED_REQUIRED))
     raw = query_fn(prompt)
     frame, recommendations, advisory, notes = parse_recommend(raw)
     for n in notes:
@@ -342,8 +394,7 @@ def _recommend_reading(recommendations: list[dict]) -> dict:
         except (TypeError, ValueError):
             return 9999
 
-    def _bare(x: Any) -> str:
-        return str(x or "").split("·")[0].strip()
+    _bare = bare_id          # F16: one normaliser, defined at module level
 
     ordered = sorted(recs, key=_rank)
     top_threat = ""
@@ -377,8 +428,7 @@ def _canonical_threats(recommendations: list[dict]) -> set:
     mislabeled a threat once) doesn't clutter the uncertainty panel."""
     out: set = set()
     for r in recommendations or []:
-        t = str((r.get("structured_reasoning", {}) or {}).get("threat", ""))
-        t = t.split("·")[0].strip()
+        t = bare_id((r.get("structured_reasoning", {}) or {}).get("threat"))
         if t:
             out.add(t)
     return out
@@ -435,7 +485,10 @@ def run_recommend_uncertainty(record: Any, assessment: Any, *,
     if n_probes <= 0:
         return {"uncertainty": {}}
     prompt = RECOMMEND_PROMPT.format(
-        scene_block=_scene_block(record, assessment), effects=_EFFECT_LINE)
+        scene_block=_scene_block(record, assessment), effects=_EFFECT_LINE,
+        empty_clause=EMPTY_RECS_CLAUSE if RECS_MAY_BE_EMPTY else "",
+        affected_clause=(AFFECTED_OPTIONAL if RECS_MAY_BE_EMPTY
+                         else AFFECTED_REQUIRED))
     mu = measure_recommend_uncertainty(prompt, n_probes, probe_fn=probe_fn,
                                        explain_fn=explain_fn,
                                        canonical_threats=canonical_threats,
@@ -445,18 +498,66 @@ def run_recommend_uncertainty(record: Any, assessment: Any, *,
     return {"uncertainty": mu.model_dump()}
 
 
+def bare_id(x: Any) -> str:
+    """The one id normaliser (F16). '·' means entity·state and only that, so a
+    '<id>·<anything>' arriving from the model is reduced to the id. The old
+    prompt emitted at-risk as 'ambulance_1·proximity' — a SECOND meaning for
+    the same separator — and the model copied it into affected_objects, so
+    Graph A targets stopped being ids: they resolved to no node, scored as
+    fabrication, and drove A-vs-B alignment to 0.0 on D_aerial. The prompt no
+    longer teaches that form; this is the belt to that braces, because a model
+    may still emit one and a stray dot must never again manufacture a
+    violation."""
+    return str(x or "").split("·")[0].strip()
+
+
+def _sanitize_recs(recommendations: list[dict]) -> list[dict]:
+    """Strip '·suffix' from every id a quad carries, immediately before the
+    frozen builder sees it. Arm A is untouched; this is a layer in front of
+    it. Only ids are normalised — the model's prose is left exactly as
+    written, because the reason string is evidence."""
+    out: list[dict] = []
+    for r in recommendations or []:
+        if not isinstance(r, dict):
+            continue
+        q = r.get("structured_reasoning")
+        if not isinstance(q, dict):
+            out.append(r)
+            continue
+        aff = q.get("affected_objects")
+        aff = aff if isinstance(aff, (list, tuple)) else []
+        rel = r.get("related_object_ids")
+        rel = rel if isinstance(rel, (list, tuple)) else None
+        out.append({**r,
+                    "structured_reasoning": {
+                        **q,
+                        "threat": bare_id(q.get("threat")),
+                        "affected_objects": [bare_id(a) for a in aff
+                                             if bare_id(a)]},
+                    **({"related_object_ids": [bare_id(x) for x in rel
+                                               if bare_id(x)]}
+                       if rel is not None else {})})
+    return out
+
+
 def build_graph_a(record: Any, assessment: Any, recommendations: list[dict],
                   *, on_event: Any = None) -> dict:
     """Step 2. Reassemble the recommendation quads into Graph A — CODE, via
     Arm A's build_causal_graph. Nodes = all frozen entities; edges = one per
-    quad target. build_causal_graph also computes intervention_candidates."""
+    quad target. build_causal_graph also computes intervention_candidates.
+
+    Ids are normalised through bare_id() first (F16): this is the single choke
+    point where a '·'-suffixed id would otherwise enter the graph."""
     from main import build_causal_graph  # lazy
     emit = _emitter(on_event)
     graph_a = build_causal_graph(
         _detected_dicts(record),
         _threat_dicts(record, assessment),
-        recommendations,
+        _sanitize_recs(recommendations),
         _at_risk_dicts(assessment))
+    # F18: re-file placeholder self-loops as node annotations. Runs AFTER the
+    # frozen builder — Arm A is untouched, this is a layer on top of its output.
+    graph_a = annotate_one_ended(graph_a, record)
     emit("graph_a_built",
          n_nodes=len(graph_a.get("nodes", [])),
          n_edges=len(graph_a.get("edges", [])),
@@ -509,6 +610,143 @@ def run_graph_b(record: Any, assessment: Any, *, query_fn: QueryFn,
     return graph_b
 
 
+def annotate_one_ended(graph: dict, record: Any = None) -> dict:
+    """F18. A one-ended causal claim is a NODE ANNOTATION, not an edge.
+
+    Two real situations have no legal quad: a hazard that threatens nothing
+    specific yet, and a victim whose source the model cannot name. Given no
+    way to say either, the model fabricates — it makes the victim its own
+    threat (`child_1 -> child_1`) or leaves the hazard with zero edges. Both
+    are placeholders standing in for a missing half.
+
+    So: the placeholder self-loop LEAVES the edge set and becomes a flag on
+    the node. Because the flags are node-level, the frozen edge comparators
+    (`compare_graphs_topological`) never see them — B_pool goes from 4 edges
+    to 2, which is what it always meant.
+
+      unattached    hazardous, no outgoing edge
+      unattributed  at-risk, no incoming edge
+
+    NO SELF-LOOP SURVIVES — not even `worsens` (Sunny, 2026-07-28). An earlier
+    draft kept the `worsens` self-loop as the legal way to say "this hazard is
+    bad on its own". Dropped deliberately: two self-loops identical in shape
+    with opposite meanings is precisely the ambiguity that produced F16. A
+    hazard that threatens nothing is `unattached` and says so in one way only.
+
+    'No incoming edge' is therefore unambiguous too — and it has to be, or the
+    flag misses B_pool, the scene it exists for: child_1 and child_2 each had
+    an incoming edge, from themselves."""
+    g = dict(graph or {})
+    nodes = [dict(n) for n in (g.get("nodes") or []) if isinstance(n, dict)]
+    edges = [dict(e) for e in (g.get("edges") or []) if isinstance(e, dict)]
+
+    kept, dropped = [], []
+    for e in edges:
+        src, tgt = bare_id(e.get("source")), bare_id(e.get("target"))
+        if src and src == tgt:         # every self-loop, no exception
+            dropped.append(e)
+        else:
+            kept.append(e)
+
+    # No self-loops remain, so a node's in/out degree is unambiguous: an edge
+    # always names another entity.
+    out_ids = {bare_id(e.get("source")) for e in kept}
+    in_ids = {bare_id(e.get("target")) for e in kept}
+
+    kind = {}
+    if record is not None:
+        kind = {o.object_id: o.state_kind for o in record.detected_objects}
+
+    for n in nodes:
+        nid = bare_id(n.get("id") or n.get("object_id"))
+        k = kind.get(nid, "")
+        hazardous = bool(n.get("hazardous")) or k == "hazard_bearing"
+        at_risk = bool(n.get("at_risk")) or k == "at_risk"
+        if hazardous and nid not in out_ids:
+            n["unattached"] = True
+            n["annotation_note"] = "declared hazardous; no target named"
+        if at_risk and nid not in in_ids:
+            n["unattributed"] = True
+            n["annotation_note"] = "declared at risk; no source named"
+
+    g["nodes"], g["edges"] = nodes, kept
+    if dropped:
+        g.setdefault("graph_warnings", []).append(
+            f"F18: {len(dropped)} placeholder self-loop(s) re-filed as node "
+            f"annotations: "
+            + ", ".join(f"{bare_id(e.get('source'))}"
+                        f"·{e.get('effect')}" for e in dropped))
+    return g
+
+
+def build_graph_a_probes(record: Any, assessment: Any, uncertainty: Any, *,
+                         on_event: Any = None) -> list[dict]:
+    """F19, the free half. Every probe already produced a full recommendation
+    set, and `uncertainty.candidates[i].edges` records each as
+    [threat, effect, [affected]] triples — then nothing read them. Rebuild one
+    Graph A per probe from those triples. ZERO extra model calls."""
+    emit = _emitter(on_event)
+    u = uncertainty if isinstance(uncertainty, dict) else {}
+    cands = u.get("candidates") or []
+    out: list[dict] = []
+    for c in cands:
+        if not isinstance(c, dict):
+            continue
+        edges = []
+        for e in (c.get("edges") or []):
+            # each triple: [threat, effect, [affected...]]
+            if not isinstance(e, (list, tuple)) or len(e) < 3:
+                continue
+            src, eff, targets = bare_id(e[0]), str(e[1] or ""), e[2]
+            if not isinstance(targets, (list, tuple)):
+                targets = [targets]
+            for t in targets:
+                tgt = bare_id(t)
+                if src and tgt:
+                    edges.append({"source": src, "effect": eff, "target": tgt})
+        out.append({"nodes": [{"object_id": o.object_id}
+                              for o in record.detected_objects],
+                    "edges": edges})
+    if out:
+        emit("graph_a_probes_built", n=len(out),
+             n_edges=[len(g["edges"]) for g in out])
+    return out
+
+
+def run_graph_b_probes(record: Any, assessment: Any, *,
+                       probe_fn: QueryFn | None = None, n_probes: int = 0,
+                       on_event: Any = None) -> list[dict]:
+    """F19. Ask the INDEPENDENT graph n_probes more times at probe temperature.
+
+    Until now Graph B was asked ONCE, at temp 0, and used as the yardstick that
+    Graph A is measured against — while Graph A demonstrably wobbles ('5
+    distinct sets' on every scene). A single sample cannot referee an unstable
+    one. Probing B also answers a question never asked: IS the model's causal
+    belief itself stable? If B wobbles as badly as A, the yardstick is elastic
+    and every A-vs-B number in the project inherits that.
+
+    A probe that dies in transport is skipped, not counted as disagreement."""
+    from main import normalize_graph_b  # lazy
+    emit = _emitter(on_event)
+    if n_probes <= 0:
+        return []
+    probe_fn = probe_fn or (
+        lambda p: _query_vlm(p, temperature=REC_PROBE_TEMPERATURE))
+    prompt = _graph_b_prompt(record, assessment)
+    detected_ids = {o.object_id for o in record.detected_objects}
+    out: list[dict] = []
+    for i in range(n_probes):
+        try:
+            raw = probe_fn(prompt)
+        except Exception as exc:                     # transport != dispersion
+            emit("graph_b_probe_error", index=i, error=str(exc)[:200])
+            continue
+        g = normalize_graph_b(raw if isinstance(raw, dict) else {}, detected_ids)
+        out.append(g)
+        emit("graph_b_probe", index=i, n_edges=len(g.get("edges", [])))
+    return out
+
+
 def _resolve_pick_id(threat: Any, detected_ids: set[str]) -> str:
     """Normalize a pick's threat to a FROZEN object_id so the three picks are
     comparable. Handles the two ways picks come in dirty: a state jammed onto
@@ -517,7 +755,7 @@ def _resolve_pick_id(threat: Any, detected_ids: set[str]) -> str:
     t = str(threat or "").strip()
     if t in detected_ids:
         return t
-    head = t.split("·")[0].strip()          # tolerate "house_1·burning"
+    head = bare_id(t)                        # tolerate "house_1·burning"
     if head in detected_ids:
         return head
     return head                              # best-effort; may be off-vocab
@@ -567,17 +805,30 @@ def pick_targets(record: Any, graph_a: dict, graph_b: dict,
 
 
 def run_evals(record: Any, assessment: Any, recommendations: list[dict],
-              graph_a: dict, graph_b: dict, *, on_event: Any = None) -> dict:
+              graph_a: dict, graph_b: dict, *, on_event: Any = None,
+              graphs_a: list | None = None,
+              graphs_b: list | None = None) -> dict:
     """Step 5 (Phase 1b, deterministic). Three code evals: the corrected
     conformance breakdown, the WITHIN-A internal alignment (recommendation
     coverage), and the A-vs-B (declared vs structured) alignment. No model —
-    both controls compute it identically."""
-    from agentic.evals4 import (ab_alignment, conformance_breakdown,
-                                internal_alignment)
+    both controls compute it identically.
+
+    F19: when probe graphs are supplied, the A-vs-B point estimate is joined by
+    its distribution over the probe cross-product."""
+    from agentic.evals4 import (ab_alignment, ab_alignment_distribution,
+                                conformance_breakdown, internal_alignment)
     emit = _emitter(on_event)
     conf = conformance_breakdown(graph_a, graph_b)
     internal = internal_alignment(record, assessment, recommendations)
     align = ab_alignment(graph_a, graph_b)
+    if graphs_a and graphs_b:
+        dist = ab_alignment_distribution(graphs_a, graphs_b, canonical=align)
+        align = {**align, "distribution": dist}
+        emit("alignment_distribution_ready",
+             pairs=dist.get("pairs"),
+             structural=dist.get("structural"),
+             b_stability=dist.get("b_stability"),
+             b_distinct_edge_sets=dist.get("b_distinct_edge_sets"))
     emit("conformance_ready", validity=conf["validity"],
          n_issues=conf["n_issues"], breakdown=conf["breakdown"],
          raw_a_validity=conf["raw_a_validity"],
@@ -603,8 +854,14 @@ def run_trust(recommendations: list[dict], conformance: dict,
     from agentic.evals4 import compute_trust, consequence_scores  # lazy
     emit = _emitter(on_event)
     cons = consequence_scores(recommendations, assessment, record)
+    # F17: a safe scene has no comparand for A-vs-B or the pick routes. Keyed
+    # on the declared scene, not on a graph looking empty.
+    no_hazards = (str(getattr(assessment, "disaster_scenario", "")) == "No"
+                  and not any(o.state_kind == "hazard_bearing"
+                              for o in record.detected_objects))
     trust = compute_trust(recommendations, conformance, internal_alignment,
-                          alignment, uncertainty, picks, consequence=cons)
+                          alignment, uncertainty, picks, consequence=cons,
+                          no_hazards=no_hazards)
     emit("trust_ready", score=trust["score"], band=trust["band"],
          top_contributor=(trust["contributors"][0]["signal"]
                           if trust["contributors"] else None))
@@ -658,10 +915,18 @@ def run_stage4(record: Any, assessment: Any, image_path: str = "",
                             on_event=on_event)
     graph_b = run_graph_b(record, assessment, query_fn=query_fn,
                           on_event=on_event)
+    # F19: probe BOTH sides. The A side is free — the probe recommendation sets
+    # already exist and were being discarded after reduction — so build a
+    # Graph A per probe. The B side costs n_probes model calls.
+    graphs_a = build_graph_a_probes(record, assessment, unc["uncertainty"],
+                                    on_event=on_event)
+    graphs_b = run_graph_b_probes(record, assessment, probe_fn=probe_fn,
+                                  n_probes=n_probes, on_event=on_event)
     picks = pick_targets(record, graph_a, graph_b, rec["recommendations"],
                          query_fn=query_fn, on_event=on_event)
     evals = run_evals(record, assessment, rec["recommendations"],
-                      graph_a, graph_b, on_event=on_event)
+                      graph_a, graph_b, on_event=on_event,
+                      graphs_a=graphs_a, graphs_b=graphs_b)
     trust = run_trust(rec["recommendations"], evals["conformance"],
                       evals["internal_alignment"], evals["alignment"],
                       unc["uncertainty"], picks, record=record,

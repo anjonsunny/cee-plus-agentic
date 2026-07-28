@@ -70,7 +70,7 @@ RULES: dict[str, RuleChunk] = {
                   "lists, and ultimately how many lives the scene "
                   "contains. Merging is not erasure — the individual "
                   "stays in the record under its better label.",
-        example="WRONG: person_2 AND police_officer_1 with near-identical "
+        example="WRONG: a generic person entry AND a specific-role entry with near-identical "
                 "boxes for one officer. RIGHT: a single police_officer "
                 "entry (the more specific label wins).",
         template="Entities {index_a} ('{label_a}': \"{desc_a}\") and "
@@ -148,6 +148,38 @@ RULES: dict[str, RuleChunk] = {
                  "with its state and bbox. If you truly cannot see it in "
                  "the image, leave your list unchanged.",
     ),
+    "caption_state_contradiction": RuleChunk(
+        rule_id="P7",
+        rule="A condition word the caption uses must be accounted for in the "
+             "declared states. P5 checks whether a caption's ENTITY is "
+             "missing; this checks whether its CONDITION is. When the "
+             "caption describes a dangerous condition and no entity carries "
+             "that condition as its state, the list and the given text "
+             "disagree.",
+        rationale="A state word can be legal and still be wrong. When it is, "
+                  "the vocabulary check passes it — the word is in the "
+                  "vocabulary — and the completeness check passes it too, "
+                  "because the entity itself is present. A mistaken condition "
+                  "then enters the record unopposed and every later stage "
+                  "inherits it. Every other pressure signal here is a "
+                  "SELF-consistency signal: probes, triggers and petitions all "
+                  "ask the answer about itself, and an answer that is wrong "
+                  "the same way each time satisfies all of them. This check is "
+                  "the only one that reads a source outside the answer — the "
+                  "caption supplied with the task. It quotes that caption's "
+                  "own words and never names which state is right; leaving "
+                  "the list unchanged is a legal outcome and is recorded.",
+        example="A condition named in the caption that no entity carries as a "
+                "state -> the disagreement is raised for reconciliation. A "
+                "condition the declared states already express -> nothing "
+                "fires. A caption word that is not a state at all is raised "
+                "the same way and is dismissed by leaving the list unchanged.",
+        template="The caption uses condition words that none of your entities "
+                 "carries as a state: {word}. Your declared states are: "
+                 "{declared}. Look at the image again and reconcile your list "
+                 "with the caption. Some of these may not be states at all — "
+                 "if your list is right, leave it unchanged.",
+    ),
     # ── Stage 2 scene-assessment rules (S-family, added for the Stage 2
     # loop). Worked examples are drawn from the six frozen scenes — the
     # calibration set Sunny designated as working GT. ──────────────────
@@ -197,8 +229,8 @@ RULES: dict[str, RuleChunk] = {
              "upstream state and must be justified or revised.",
         rationale="The verdict must follow from declared perception. "
                   "Dismissing declared hazards without addressing them is "
-                  "the push_06 failure shape: a drowning scene assessed as "
-                  "no-disaster.",
+                  "the failure shape where a scene carrying danger states is "
+                  "assessed as no-disaster.",
         example="WRONG: declared entities include a leaking tanker and a "
                 "spreading fire, yet the verdict says No/0. RIGHT: Yes, "
                 "with a level that reflects the active hazards.",

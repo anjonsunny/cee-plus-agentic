@@ -131,15 +131,22 @@ def test_internal_alignment_uncovered_at_risk():
 
 
 def test_internal_alignment_state_mismatch_and_self_loop():
+    """F18/F20: the self-loop is still a role mix-up at the RECOMMENDATION
+    layer (the model wrote a quad whose threat harms itself), now at the
+    raised severity 3. What F18 changes is the GRAPH layer — the placeholder
+    edge is re-filed as a node annotation there, not here."""
     rec, asm = _rec_pair()
     bad = {**_rec_ok(),
            "structured_reasoning": {"threat": "house_1", "state": "smoldering",
                                     "effect": "may_harm",
                                     "affected_objects": ["house_1"]},
            "reason": "Because house_1 is smoldering it may_harm house_1."}
-    cats = {r["category"] for r in internal_alignment(rec, asm, [bad])["breakdown"]}
+    ia = internal_alignment(rec, asm, [bad])
+    cats = {r["category"] for r in ia["breakdown"]}
     assert "inconsistency" in cats      # state 'smoldering' != frozen 'burning'
     assert "role mix-up" in cats        # house_1 harms itself, effect != worsens
+    assert max(f["severity"] for f in ia["failures"]
+               if f["category"] == "role mix-up") == 3
 
 
 def test_internal_alignment_duplicate_action():
@@ -329,3 +336,236 @@ def test_ab_alignment_dedupes_parallel_edges():
     single = {"nodes": g["nodes"],
               "edges": [{"source": "w_1", "target": "p_1", "effect": "may_harm"}]}
     assert ab_alignment(g, single)["structural"] == 1.0
+
+
+# ── F23: the id regex must read multi-word ids whole ─────────────────────
+
+def test_id_regex_reads_multiword_ids_whole():
+    """F23: the old pattern had no left anchor, so 'tanker_truck_1' matched as
+    'truck_1' and every reason naming a multi-word entity was reported as not
+    naming it. C_tanker's entire internal-alignment penalty was this bug."""
+    from agentic.evals4 import _ID_RE
+    reason = ("Because fire_1 is spreading, it may harm tanker_truck_1 and "
+              "person_1 if not contained.")
+    assert set(_ID_RE.findall(reason)) == {"fire_1", "tanker_truck_1", "person_1"}
+    for oid in ("lifeguard_chair_1", "hazmat_worker_1", "police_officer_2"):
+        assert _ID_RE.findall(oid) == [oid]
+
+
+def test_id_regex_still_reads_presumed_ids_whole():
+    """The presumed_<noun>_in_<id> form must survive the anchoring."""
+    from agentic.evals4 import _ID_RE
+    for oid in ("presumed_residents_in_house_1", "presumed_driver_in_car_1"):
+        assert _ID_RE.findall(oid) == [oid]
+
+
+def test_id_regex_ignores_non_ids():
+    """Malformed / adjacent text must not manufacture ids."""
+    from agentic.evals4 import _ID_RE
+    assert _ID_RE.findall("no ids here at all") == []
+    assert _ID_RE.findall("") == []
+    assert _ID_RE.findall("Rule 4 says 12 things about 3 items") == []
+
+
+def test_multiword_id_named_in_reason_is_not_a_failure():
+    """The C_tanker regression: a reason that names a multi-word entity in
+    plain English must not be reported as omitting it."""
+    rec = PerceptionResult(
+        image_path="/x", image_size=[10, 10], entity_source="vlm",
+        detected_objects=[_obj("fire_1", "spreading", "hazard_bearing"),
+                          _obj("tanker_truck_1", "leaking", "hazard_bearing"),
+                          _obj("person_1", "standing", "at_risk")])
+    asm = SceneAssessment(disaster_scenario="Yes", disaster_type="fire",
+                          disaster_level=7, severity_bucket="serious",
+                          threats=[ThreatEntry(object_id="fire_1")],
+                          at_risk=[AtRiskEntry(object_id="person_1",
+                                               kind="proximity")])
+    r = {"rank": 1, "action": "contain fire_1",
+         "reason": ("Because fire_1 is spreading, it may_harm tanker_truck_1 "
+                    "and person_1."),
+         "related_object_ids": ["fire_1", "tanker_truck_1", "person_1"],
+         "structured_reasoning": {"threat": "fire_1", "state": "spreading",
+                                  "effect": "may_harm",
+                                  "affected_objects": ["tanker_truck_1",
+                                                       "person_1"]}}
+    ia = internal_alignment(rec, asm, [r])
+    assert ia["n_failures"] == 0, ia["failures"]
+    assert ia["score"] == 1.0
+
+
+# ── F20: the case split, and the widened scan domain ─────────────────────
+
+def test_case_a_quad_not_mirrored_is_severity_zero():
+    """Case A — the quad carries the id, related_object_ids does not. A
+    bookkeeping slip against our own spec: the causal claim is intact, so it
+    is recorded but must not dent the score."""
+    rec, asm = _rec_pair()
+    r = {**_rec_ok(), "related_object_ids": ["house_1"]}   # person_1 dropped
+    ia = internal_alignment(rec, asm, [r])
+    hits = [f for f in ia["failures"] if f["category"] == "bookkeeping"]
+    assert len(hits) == 1 and hits[0]["severity"] == 0
+    assert "person_1" in hits[0]["detail"]
+    assert ia["score"] == 1.0          # severity 0 => no score impact
+
+
+def test_case_b_declared_related_but_no_quad_covers_it():
+    """Case B — the D_aerial/spill_1 shape. Declared in related, absent from
+    the quad AND from the reason, so the old reason-only scan never saw it."""
+    rec, asm = _rec_pair()
+    rec.detected_objects.append(_obj("spill_1", "spreading", "hazard_bearing"))
+    r = {**_rec_ok(),
+         "related_object_ids": ["house_1", "person_1", "spill_1"]}
+    ia = internal_alignment(rec, asm, [r])
+    hits = [f for f in ia["failures"]
+            if f["category"] == "coverage gap" and "spill_1" in f["detail"]]
+    assert len(hits) == 1 and hits[0]["severity"] == 1
+
+
+def test_case_b_was_invisible_to_a_reason_only_scan():
+    """Guard on the widening itself: the case-B id appears in NEITHER the
+    reason nor the quad, so a reason-only scan is structurally blind to it."""
+    import re
+    from agentic.evals4 import _ID_RE
+    r = {**_rec_ok(), "related_object_ids": ["house_1", "person_1", "spill_1"]}
+    reason_ids = set(_ID_RE.findall(r["reason"]))
+    quad = {"house_1", "person_1"}
+    assert "spill_1" not in reason_ids and "spill_1" not in quad
+
+
+def test_case_c_named_in_reason_only():
+    """Case C — in the reason, in neither the quad nor related."""
+    rec, asm = _rec_pair()
+    rec.detected_objects.append(_obj("car_1", "parked", "normal"))
+    r = {**_rec_ok(),
+         "reason": "Because house_1 is burning it may_harm person_1 near car_1."}
+    ia = internal_alignment(rec, asm, [r])
+    hits = [f for f in ia["failures"]
+            if f["category"] == "coverage gap" and "car_1" in f["detail"]]
+    assert len(hits) == 1 and hits[0]["severity"] == 1
+    assert "neither" in hits[0]["detail"]
+
+
+def test_case_split_tolerates_malformed_related_field():
+    """related_object_ids arriving as None, a bare string, or junk must not
+    crash the check (boundary that eats raw model output)."""
+    rec, asm = _rec_pair()
+    for junk in (None, [], ["", None], "house_1", 17):
+        r = {**_rec_ok(), "related_object_ids": junk}
+        ia = internal_alignment(rec, asm, [r])
+        assert isinstance(ia["n_failures"], int)
+
+
+# ── F16: a stray dot must never manufacture a violation ──────────────────
+
+def test_dot_suffixed_ids_still_resolve_in_internal_alignment():
+    """Belt to the prompt's braces: even if the model emits 'x·proximity'
+    anyway, the id must match itself and raise no failure."""
+    rec, asm = _rec_pair()
+    r = {**_rec_ok(),
+         "structured_reasoning": {"threat": "house_1·burning",
+                                  "state": "burning", "effect": "may_harm",
+                                  "affected_objects": ["person_1·proximity"]},
+         "related_object_ids": ["house_1·burning", "person_1·proximity"]}
+    ia = internal_alignment(rec, asm, [r])
+    assert ia["n_failures"] == 0, ia["failures"]
+
+
+def test_dot_suffixed_edges_match_clean_edges_in_ab_alignment():
+    """D_aerial's collapse: A's 'x·proximity' target could never match B's
+    'x', so structural alignment read 0.0 on a genuine agreement."""
+    ga = {"nodes": [], "edges": [{"source": "tanker_truck_1",
+                                  "target": "hazmat_worker_1·proximity",
+                                  "effect": "may_spread_to"}]}
+    gb = {"nodes": [], "edges": [{"source": "tanker_truck_1",
+                                  "target": "hazmat_worker_1",
+                                  "effect": "may_spread_to"}]}
+    assert ab_alignment(ga, gb)["structural"] == 1.0
+
+
+def test_normalisation_does_not_hide_a_real_fabrication():
+    """Guard against the fix concealing what it was built to expose: an id
+    the record never declared is still a failure after normalising."""
+    rec, asm = _rec_pair()
+    r = {**_rec_ok(),
+         "reason": "Because house_1 is burning it may_harm ghost_9.",
+         "related_object_ids": ["house_1", "ghost_9"],
+         "structured_reasoning": {"threat": "house_1", "state": "burning",
+                                  "effect": "may_harm",
+                                  "affected_objects": ["ghost_9"]}}
+    ia = internal_alignment(rec, asm, [r])
+    assert ia["n_failures"] > 0
+
+
+# ── O1: the paired-arm guard ─────────────────────────────────────────────
+
+def _u(*probe_edge_sets):
+    return {"candidates": [{"votes": 1, "edges": e} for e in probe_edge_sets]}
+
+
+def test_paired_guard_ships_when_only_noise_moves():
+    from agentic.evals4 import paired_arm_guard
+    arm = _u([["h_1", "may_harm", ["p_1"]]], [["h_1", "may_harm", ["p_1"]]],
+             [["h_1", "may_harm", ["p_1"]]], [["h_1", "may_harm", ["p_1"]]],
+             [["h_1", "may_harm", ["p_1"]]])
+    assert paired_arm_guard(arm, arm)["verdict"] == "ship"
+
+
+def test_paired_guard_holds_when_the_clause_reshapes_output():
+    """The failure we are guarding against: the clause suppresses a claim on a
+    hazard scene rather than only permitting silence on a safe one."""
+    from agentic.evals4 import paired_arm_guard
+    off = _u(*[[["h_1", "may_harm", ["p_1"]]]] * 5)          # 5/5
+    on = _u([], [], [], [], [])                               # 0/5
+    g = paired_arm_guard(off, on)
+    assert g["verdict"] == "hold"
+    assert g["moves"] and g["moves"][0]["delta"] == -1.0
+
+
+def test_paired_guard_does_not_fire_on_probe_noise_alone():
+    """B_pool's shape — five distinct sets, one vote each — must not read as
+    the clause doing something. Set identity would fail here; rates must not."""
+    from agentic.evals4 import paired_arm_guard
+    off = _u([["a_1", "may_harm", ["p_1"]]], [["b_1", "may_harm", ["p_1"]]],
+             [["c_1", "may_harm", ["p_1"]]], [["d_1", "may_harm", ["p_1"]]],
+             [["e_1", "may_harm", ["p_1"]]])
+    on = _u([["e_1", "may_harm", ["p_1"]]], [["d_1", "may_harm", ["p_1"]]],
+            [["c_1", "may_harm", ["p_1"]]], [["b_1", "may_harm", ["p_1"]]],
+            [["a_1", "may_harm", ["p_1"]]])
+    assert paired_arm_guard(off, on)["verdict"] == "ship"
+
+
+def test_paired_guard_handles_empty_and_malformed_arms():
+    from agentic.evals4 import paired_arm_guard
+    assert paired_arm_guard({}, {})["verdict"] == "insufficient"
+    assert paired_arm_guard(None, None)["verdict"] == "insufficient"
+    assert paired_arm_guard(_u([["h_1", "may_harm", ["p_1"]]]),
+                            {"candidates": [{"edges": ["junk", None, 7]}]}
+                            )["verdict"] in ("ship", "hold")
+
+
+def test_a_score_built_on_fewer_signals_says_so():
+    """F17's hole: if perception misses the hazard AND stage 2 says No, the
+    null path opens on a dangerous scene and a blind run scores 1.0. Trust
+    cannot distinguish that from a genuinely safe scene — so it must at least
+    report how little it measured. The number never travels alone."""
+    t = compute_trust([], conformance={"validity": 1.0},
+                      internal_alignment={"score": 1.0},
+                      alignment={"structural": 0.0, "a_total": 0, "b_total": 0},
+                      uncertainty={"score": 0.0},
+                      picks={"agreement": 0.333, "a_pick": {}, "b_pick": {},
+                             "llm_pick": {}},
+                      no_hazards=True)
+    assert t["score"] == 1.0
+    assert t["signals_measured"] == "3/5"
+    assert "3 of 5 signals" in t["explanation"]
+    assert {x["signal"] for x in t["not_applicable"]} == {"ab_alignment",
+                                                          "pick_agreement"}
+
+
+def test_full_measurement_reports_all_five():
+    t = compute_trust([], conformance={"validity": 1.0},
+                      internal_alignment={"score": 1.0},
+                      alignment={"structural": 1.0}, uncertainty={"score": 0.0},
+                      picks={"agreement": 1.0})
+    assert t["signals_measured"] == "5/5"
+    assert "signals —" not in t["explanation"]

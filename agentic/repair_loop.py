@@ -185,6 +185,43 @@ def caption_labels(caption: str) -> dict[str, str]:
     return found
 
 
+def caption_danger_states(caption: str) -> dict[str, str]:
+    """P7 (F21). Condition words the caption uses that are DANGER states in the
+    closed state vocabulary. Returns {caption_word: canonical_state}.
+
+    The lexicon is the existing vocabulary, deliberately: the check can then
+    say "the caption names a condition you did not use" without inventing a
+    single word of its own, and it can never propose which state is correct.
+    Only hazard_bearing / at_risk states qualify — a caption saying 'swimming'
+    is not evidence of anything.
+
+    NORMALISATION DEPTH (Sunny, 2026-07-28). Both sides of the comparison go
+    through `arm_b_canonical_state` — Arm B's declined folds first, then Arm
+    A's frozen synonym map underneath, which is deeper than Arm B's own
+    ('down' -> 'fallen', 'on fire' -> 'burning'). Comparing a shallow
+    caption form against a deep declared form manufactures disagreements that
+    are not there. ONE normaliser, both sides."""
+    from agentic.perception import (  # local: cycle
+        arm_b_canonical_state, state_kind)
+    words = re.findall(r"[a-z]+", str(caption or "").lower())
+    found: dict[str, str] = {}
+    for w in words:
+        canon = arm_b_canonical_state(w)
+        if state_kind(canon) in ("hazard_bearing", "at_risk"):
+            found.setdefault(w, canon)
+    return found
+
+
+def _caption_state_satisfied(canon_state: str,
+                             entities: list[dict[str, Any]]) -> bool:
+    """True when some entity already carries that state. The declared side is
+    canonicalised through the SAME Arm A function as the caption side — one
+    normaliser, both sides, or the comparison is not like-for-like."""
+    from agentic.perception import arm_b_canonical_state  # local: cycle
+    return any(arm_b_canonical_state(str(e.get("state", ""))) == canon_state
+               for e in entities)
+
+
 def _caption_label_satisfied(wanted: str, entities: list[dict[str, Any]]) -> bool:
     """Exact-label match; family-level match for living beings only."""
     wanted_family = family_of(wanted)
@@ -238,10 +275,12 @@ def _satisfied_by_attached_state(
     spec = _ATTACHED_STATE_SATISFIERS.get(wanted)
     if spec is None or str(raw_phrase).lower() not in spec["phrases"]:
         return False
-    from agentic.perception import canonicalize_state, normalize_state
+    # One normaliser across Arm B: arm_b_canonical_state applies our declined
+    # folds and then Arm A's map. Calling Arm A directly here would bypass the
+    # override and let two checks in the same file disagree about one word.
+    from agentic.perception import arm_b_canonical_state
     for e in entities:
-        s = canonicalize_state(normalize_state(str(e.get("state", ""))))
-        if s in spec["states"]:
+        if arm_b_canonical_state(str(e.get("state", ""))) in spec["states"]:
             return True
     return False
 
@@ -376,6 +415,36 @@ def detect_violations(
                 instruction=rulebook.instruction_for(
                     "caption_entity_missing",
                     raw_phrase=raw_phrase, wanted=wanted),
+            ))
+    # Rule P7 (F21): the caption's CONDITION words, not just its entities.
+    # B_pool: caption "floats motionless and unconscious", list says
+    # child_2·swimming — a legal state, an entity that exists, so nothing
+    # fired and an unconscious child entered the record as 'normal'. This is
+    # the only check that reads a source outside the model's own answer, which
+    # is why it can reach a model that is stably wrong. We quote the caption
+    # and never name the right state; standing your ground is legal.
+    #
+    # ONE TICKET PER CAPTION, not one per word. B_pool's caption fires on
+    # 'unconscious' (the real signal), on 'struggling' (arguably already
+    # covered by child_1·drowning), and on 'down' (from "face down" — the
+    # vocabulary carries 'down' as a hazard state, as in a downed power line).
+    # Three tickets for one disagreement buries the signal in its own noise
+    # and repeats the double-counting we corrected twice already. One ticket
+    # lists every unmatched word and lets the model sort them out — including
+    # standing its ground on the ones that are not states at all.
+    if caption:
+        declared = sorted({str(e.get("state", "")) for e in entities
+                           if e.get("state")})
+        unmatched = [w for w, canon in caption_danger_states(caption).items()
+                     if not _caption_state_satisfied(canon, entities)]
+        if unmatched:
+            violations.append(Violation(
+                entity_index=-1, raw_label=", ".join(unmatched),
+                kind="caption_state_contradiction",
+                instruction=rulebook.instruction_for(
+                    "caption_state_contradiction",
+                    word=", ".join(f'"{w}"' for w in unmatched),
+                    declared=", ".join(declared) or "(none)"),
             ))
     return violations
 

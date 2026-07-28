@@ -63,6 +63,25 @@ from main import (  # noqa: E402
 # a paved road describing itself as paved is in a normal condition.
 EXTRA_NORMAL_STATES = {"swimming", "walking", "running", "parked",
                        "driving", "paved"}
+# Arm B at-risk states, same standing as EXTRA_NORMAL_STATES above.
+# "struggling" added 2026-07-28: Arm A folds it into 'trapped' alongside
+# stuck / stranded / clinging, but a person fighting to stay afloat is not
+# confined — trapped means cannot move, struggling means fighting to. Losing
+# the distinction costs a real at-risk signal, so Arm B keeps it as a state of
+# its own. See ARM_B_STATE_OVERRIDES for the half that declines Arm A's fold.
+EXTRA_AT_RISK_STATES = {"struggling"}
+
+# Where Arm B DECLINES an Arm A synonym fold. Arm A is frozen and stays
+# untouched (iron rule 1); this is the Arm B layer on top, the same pattern
+# evals4 uses for the corrected trust read. Each entry is a mapping we
+# deliberately do not inherit, with the reason.
+ARM_B_STATE_OVERRIDES = {
+    # Arm A: struggling -> trapped. A swimmer in difficulty is in distress,
+    # not confined; folding the two makes a caption's "struggling" read as a
+    # claim about confinement it never made.
+    "struggling": "struggling",
+}
+
 EXTRA_STATE_SYNONYMS = {
     "overturned": "fallen",
     "seated": "resting",
@@ -121,13 +140,26 @@ class PerceptionResult(BaseModel):
     repair_trace: Optional[dict[str, Any]] = None
 
 
-def state_kind(state: str) -> str:
+def arm_b_canonical_state(state: str) -> str:
+    """THE Arm B canonical form of a state — the one normaliser, used on both
+    sides of every state comparison Arm B makes.
+
+    Order matters: Arm B's own overrides are applied FIRST, so a fold we have
+    declined is never re-applied by Arm A underneath. Everything we have not
+    declined falls through to Arm A's frozen synonym map, which is deeper than
+    ours and stays authoritative. Arm A is imported, never edited."""
     raw = str(state or "").strip().lower()
     raw = EXTRA_STATE_SYNONYMS.get(raw, raw)
-    s = canonicalize_state(raw)
+    if raw in ARM_B_STATE_OVERRIDES:
+        return ARM_B_STATE_OVERRIDES[raw]
+    return canonicalize_state(raw)
+
+
+def state_kind(state: str) -> str:
+    s = arm_b_canonical_state(state)
     if s in HAZARD_BEARING_STATES:
         return "hazard_bearing"
-    if s in AT_RISK_STATES:
+    if s in AT_RISK_STATES or s in EXTRA_AT_RISK_STATES:
         return "at_risk"
     if s in NORMAL_STATES or s in EXTRA_NORMAL_STATES:
         return "normal"

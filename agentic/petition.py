@@ -142,6 +142,18 @@ def detect_petition(reflection_trace: Optional[dict[str, Any]],
                                        "scene contains",
                         "locates": None,
                         "target": "stage1"})
+                # F21: same shape, one level down — the caption's CONDITION
+                # rather than its entity. Perception-shaped, so stage 1.
+                if v.get("kind") == "caption_state_contradiction":
+                    reasons.append({
+                        "kind": "caption_state_contradiction",
+                        "evidence": f"caption describes '{v.get('raw_label')}' "
+                                    f"but no entity carries that state",
+                        "implication": "the given caption and the entity "
+                                       "list disagree about the CONDITION "
+                                       "of something in the scene",
+                        "locates": None,
+                        "target": "stage1"})
     if not reasons:
         return None
     # One image look covers everything; so if ANY reason points at the
