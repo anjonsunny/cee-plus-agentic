@@ -52,7 +52,7 @@ class S4State(TypedDict, total=False):
     picks: dict             # A_pick / B_pick / llm_pick + agreement
     conformance: dict       # corrected conformance breakdown (Phase 1b)
     internal_alignment: dict  # within-A recommendation coverage (Phase 1b)
-    explanation_alignment: dict  # F24: action / reason / quad, one law
+    explanation_alignment: dict  # F24: action / reason / quad, same rules
     set_report: dict        # F29: findings about the SET, not one card
     card_judge: dict        # F24: the advisory judge (display-only)
     graph_judge: dict       # F38: the graph judge (display-only)

@@ -44,7 +44,7 @@ agentic/                         Arm B — all the new code
   petition.py                    contextual re-perception + routing:
                                  stage-1 (re-look at image) vs stage-2
                                  (re-ask the question once, fresh)
-  rulebook.py / rulebook_rag.py  one law, two engines: code detects,
+  rulebook.py / rulebook_rag.py  same rules, two engines: code detects,
                                  rulebook text teaches (quoted into
                                  reflection prompts)
   evals.py                       GT eval, quadrant, citation counts,

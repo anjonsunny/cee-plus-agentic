@@ -21,7 +21,7 @@ hides the findings that matter.
 |---|---|---|---|---|---|---|
 | at-risk entity not addressed | ✅ | ✅ | ✅ | | ✅ | ✅ verifiable |
 | **declared hazard not addressed** (F39) | ✅ | ✅ | ✅ | | ✅ | ✅ verifiable |
-| a_fidelity / b_coverage | ✅ | ✅ | ✅ | | | |
+| a_fidelity / b_coverage (F45: effect ignored) | ✅ | ✅ | ✅ | | | |
 | A-vs-B decomposition (F35) | ✅ | | ✅ | | | |
 | action names no object_id | | ✅ | ✅ | | ✅ testability | ✅ verifiable |
 | reason ↔ quad mismatch | ✅ | ✅ | ✅ | | | ✅ verifiable |
@@ -50,11 +50,11 @@ neutral — it hides the lines that matter.
 |---|---|---|---|---|---|---|
 | `a_fidelity` | ✅ sycophancy | ✅ 0.30 | ✅ | | | |
 | `b_coverage` | ✅ rationalized minimization | ✅ 0.30 | ✅ | | | |
-| invented-id warning (F40) | | gates whether the two above mean anything | ✅ | | | |
+| invented-id warning (F40, F45 ladder + rung shown) | | gates whether the two above mean anything | ✅ | | | |
 | reading sentence (F35) | ✅ "wrong victims" candidate | | ✅ | | | |
-| `hazards` / `victims` numbers | ✅ same candidate | | ✅ | | | |
-| ~~`pairs` number~~ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| ~~`whole claim` number~~ | ❌ — it IS `a_fidelity` | ❌ | ❌ | ❌ | ❌ | ❌ |
+| `hazards` / `victims` numbers (F45: now the two halves `a_fidelity` is the mean OF) | ✅ same candidate | | ✅ | | | |
+| `pairs` number (F45: restored, in the toggle) | ✅ crossed wiring | | ✅ | | | |
+| `*_strict` pair (F45: in the toggle) | | reproduces every pre-F45 run | ✅ | | | |
 | hazards only in A / in B | ✅ | | ✅ | | ✅ suppressible | ✅ |
 | victims only in A | ✅ asset-over-life | | ✅ | | | ✅ |
 | ~~victims only in B~~ | duplicates ACROSS coverage | | | | | |
@@ -63,8 +63,16 @@ neutral — it hides the lines that matter.
 | ~~`overall agreement`~~ | ❌ derived from the two above | ❌ | ❌ | ❌ | ❌ | ❌ |
 | disagreement pairs (F40) | ✅ | | ✅ | | ✅ | ✅ concrete pairs |
 
-**Serves nothing:** `pairs`, `whole claim`, `overall agreement` — all derivable
-from `a_fidelity` plus the reading sentence.
+**Serves nothing:** `overall agreement` — derivable from `a_fidelity` and
+`b_coverage`, printed directly beneath both.
+
+**Reinstated by F45.** `pairs` was cut here as derivable. It is not: once
+`a_fidelity` became the mean of two SETS, `pairs` is the only line that checks
+the WIRING between them — same hazards and same victims, crossed connections,
+reads 1.00 and agrees on no claim. It lives inside the effect toggle, one click
+down, with a warning when the wires actually are crossed. `whole claim` was cut
+for being identical to `a_fidelity`; after F45 it is not identical, and it
+returns as `*_strict` so no earlier run becomes unquotable.
 
 **Duplicates:** `victims only in B` restates ACROSS's severity-2 coverage
 finding. Coverage is the better home: it is a set-level fact.
@@ -281,6 +289,12 @@ Found while building the A-vs-B decomposition (F35). Across the runs checked:
 | ui_21f1cdad · D_aerial | 0.00 | **1.00** | 0.25 | agrees on the hazards, disagrees on who they threaten |
 | ui_be09616d · A_fire | 0.50 | **1.00** | 0.50 | same |
 | ui_90b5fdad · D_aerial | 0.00 | 0.50 | 0.00 | partial (Graph B invented `chemical_spill_1`) |
+| ui_8b73bef0 · D_aerial | **0.625** | **1.00** | 0.25 | same — first run read under F45; was 0.00 |
+
+F45 changed the first column: `a_fidelity` is now the mean of `hazards` and
+`victims`, so the pattern this table records is visible IN the headline number
+instead of only in the split beside it. The three rows above are pre-F45 and
+are quoted in the old whole-edge definition (now `a_fidelity_strict`).
 
 The model knows what the dangers are and misroutes who they endanger. On
 D_aerial the victims Graph B believed in and the advice never acted on were

@@ -1101,7 +1101,11 @@ def test_stage4_conformance_and_alignment_panels():
     # F37: conformance no longer has its own panel — the findings render under
     # the graph or card they judge, and the ROLLUP sits at the foot of the
     # graph section rather than above the things it summarises.
-    assert "corrected 0.54" in out
+    # F46: the score now says which way is good ("clean"), and states that it
+    # covers both graphs and the cards together — there is no per-graph number,
+    # which is why each graph's CONFORMANCE band shows counts and not a score.
+    assert "0.54 clean" in out
+    assert "there is no per-graph number" in out
     assert "Arm A raw" in out                      # frozen number kept
     assert "ALIGNMENT ·" in out and "DIVERGE" in out         # self-consistency reframe
     assert "ALIGNMENT (rung 2)" not in out          # NOT mislabeled as an intervention rung
@@ -1772,7 +1776,7 @@ def test_a_cards_verdict_renders_under_that_card():
 
 
 def test_the_two_signals_stay_visibly_apart():
-    """'the surface broke the law' and 'two surfaces disagree' are different
+    """'the surface broke a rule' and 'two surfaces disagree' are different
     failures and map to different pathologies."""
     txt = _text(stage4_component(_s4_with_findings())).upper()
     assert "CONFORMANCE" in txt and "ALIGNMENT" in txt
@@ -2198,3 +2202,130 @@ def test_invented_entities_are_named_as_a_finding_not_buried_in_edges():
     t = _s4_panel(s4)
     assert "named 2 entit" in t
     assert "chemical_worker_1" in t and "spill_consequence_1" in t
+
+
+# ── F45: the effect toggle, and the wiring warning ──────────────────────
+
+def _al(**kw):
+    base = {"a_fidelity": 0.625, "b_coverage": 0.666,
+            "a_fidelity_strict": 0.0, "b_coverage_strict": 0.0,
+            "decomposition": {"hazards": 1.0, "victims": 0.25, "pairs": 0.25,
+                              "reading": "agrees on the hazards, disagrees on "
+                                         "who they threaten"}}
+    base.update(kw)
+    return base
+
+
+def test_the_toggle_says_the_effect_is_ignored_and_carries_the_old_numbers():
+    """Sunny: "Make it a toggle in that panel. by default effect is ignored."
+    Default state is stated on the summary line; the pre-F45 whole-edge pair is
+    one click away, so no earlier run becomes unquotable."""
+    from agentic.ui import _effect_toggle_rows
+    s = str(_effect_toggle_rows(_al()))
+    assert "effect word: IGNORED" in s
+    assert "0.00 / 0.00" in s                 # the strict pair, inside
+    assert "same pairs" in s                  # the wiring check, inside
+
+
+def test_the_wiring_warning_fires_only_when_the_wires_are_crossed():
+    """Same hazards and same victims but connected differently reads 1.00 on
+    the default — a mean of two sets cannot see wiring. That case, and only
+    that case, gets a warning."""
+    from agentic.ui import _effect_toggle_rows
+    crossed = _al(a_fidelity=1.0,
+                  decomposition={"hazards": 1.0, "victims": 1.0, "pairs": 0.0,
+                                 "reading": "x"})
+    assert "wired to each other differently" in str(_effect_toggle_rows(crossed))
+    # the ordinary D_aerial case must NOT be warned about — its victims differ,
+    # which the split above already says plainly.
+    assert "wired to each other differently" not in str(_effect_toggle_rows(_al()))
+
+
+def test_the_split_reads_as_the_two_halves_of_a_fidelity():
+    """F45 made `hazards` and `victims` the parts a_fidelity is the mean OF,
+    not a commentary beside it. The `+` is what makes that legible."""
+    from agentic.ui import _ab_decomposition_rows
+    s = str(_ab_decomposition_rows(_al()["decomposition"]))
+    assert "same hazards" in s and "same victims" in s
+    assert "+" in s
+
+
+def test_a_loose_id_merge_says_it_is_loose():
+    """`head noun, by number` is a weaker claim than `verbatim`, and a reader
+    who cannot tell them apart cannot audit either."""
+    from agentic.ui import _resolved_id_rows
+    s = str(_resolved_id_rows({"chemical_worker_1": "hazmat_worker_1"},
+                              {"chemical_worker_1": "head noun, by number"}))
+    assert "chemical_worker_1 → hazmat_worker_1 (head noun, by number)" in s
+
+
+# ── F46: every organized score is stated, and says which way is good ────
+
+def _s4_scores():
+    """A stage-4 result carrying one of every score family."""
+    return {
+        "recommendations": [{"rank": 1, "action": "cool fire_1",
+                             "reason": "fire_1 is burning and may_harm person_1",
+                             "structured_reasoning": {"threat": "fire_1",
+                                                      "state": "burning",
+                                                      "effect": "may_harm",
+                                                      "affected_objects": ["person_1"]}}],
+        "conformance": {"validity": 0.765, "n_issues": 11,
+                        "raw_a_validity": 0.7, "raw_b_validity": 0.9,
+                        "by_graph": {"card": {"count": 7, "max_severity": 2}}},
+        "internal_alignment": {"score": 0.667, "n_failures": 3},
+        "explanation_alignment": {"score": 0.533, "n_failures": 7,
+                                  "by_rank": {}, "modes": {}},
+        "set_report": {"n_cards": 2, "n_findings": 0, "coverage": [],
+                       "pairwise": [], "modes": {}, "suppression_testable": 1},
+        "uncertainty": {"score": 0.446, "n_probes": 5},
+        "graph_b_internal": {"measured": True, "score": 0.778,
+                             "n_failures": 1, "breakdown": []},
+        "graph_b_uncertainty": {"score": 0.217, "n_probes": 5,
+                                "edge_set_instability": 0.45,
+                                "direction_instability": 0.2,
+                                "pick_instability": 0.0},
+        "trust": {"score": 0.447, "band": "moderate", "contributors": {}},
+    }
+
+
+def test_the_card_rule_score_is_stated_not_just_tallied():
+    """It was computed and never shown; the header carried "7 rule breaks",
+    which cannot be compared between runs or scenes because there is no
+    denominator on screen."""
+    out = str(stage4_component(derive([{"type": "stage4_result",
+                                        "result": _s4_scores()}])))
+    assert "7 rule breaks" in out
+    assert "0.53 clean" in out
+
+
+def test_graph_b_uncertainty_states_its_score():
+    """0.217 is the number the yardstick gate and the pathology layer read.
+    The panel showed the probe count and three per-axis agreements, and not
+    the score itself."""
+    out = str(stage4_component(derive([{"type": "stage4_result",
+                                        "result": _s4_scores()}])))
+    assert "0.22 unsure" in out
+
+
+def test_higher_is_worse_numbers_never_borrow_the_higher_is_better_word():
+    """Two families run in OPPOSITE directions and both used to read "score".
+    `clean` rises as things get better; `unsure` rises as they get worse. A
+    number must never be labelled with the wrong family's word."""
+    out = str(stage4_component(derive([{"type": "stage4_result",
+                                        "result": _s4_scores()}])))
+    assert "0.45 unsure" in out                 # measured uncertainty
+    assert "0.45 clean" not in out
+    assert "0.78 clean" in out                  # Graph B self-consistency
+    assert "0.78 unsure" not in out
+    # and "score N" as a bare, directionless label is gone from the headers
+    assert "score 0.446" not in out and "score 0.778" not in out
+
+
+def test_no_score_is_presented_as_a_pass_fraction():
+    """None of these are "N of M checks passed" — they are 1 - x/(x + size)
+    shapes. Printing a denominator we do not have would be a fabrication."""
+    out = str(stage4_component(derive([{"type": "stage4_result",
+                                        "result": _s4_scores()}])))
+    for bad in ("of 15 checks", "checks passed", "out of 15", "/15"):
+        assert bad not in out

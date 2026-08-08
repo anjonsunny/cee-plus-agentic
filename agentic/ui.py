@@ -68,6 +68,21 @@ for _mod in ("pandas", "numpy", "PIL.Image"):
     except ImportError:
         pass
 
+# F46. Two families of number on this screen run in OPPOSITE directions, and
+# both were labelled "score", which left the reader to work out which way was
+# good. One word each, and the definition in a tooltip so it costs no space.
+#
+#   "clean"   1.00 = nothing broken.  HIGHER IS BETTER.
+#   "unsure"  0.00 = it said the same thing every time. HIGHER IS WORSE.
+#
+# Neither is a pass fraction — both are 1 - x/(x + size) shapes — so nothing
+# on screen may present them as "N of M checks", which would be a denominator
+# we do not have.
+_CLEAN_TIP = ("1.00 = nothing broken. Falls as rule breaks get more severe. "
+              "Not a pass fraction — there is no 'N out of M' here.")
+_UNSURE_TIP = ("0.00 = it gave the same answer every time. Rises as the "
+               "answers disagree with each other across re-asks.")
+
 SCENES_DIR = REPO_ROOT / "experiments" / "agentic_scenes"
 PERCEPTION_DIR = SCENES_DIR / "perception"
 ASSESSMENT_DIR = SCENES_DIR / "assessment"
@@ -1445,7 +1460,7 @@ def _alignment_edge_row(edge: Any, chipper=None,
                                  "paddingLeft": "10px", "lineHeight": "1.9"})
 
 
-def _resolved_id_rows(aliases: dict) -> list:
+def _resolved_id_rows(aliases: dict, notes: dict | None = None) -> list:
     """F40 — say ONCE, at the top, that the model named an entity the scene
     does not have.
 
@@ -1457,10 +1472,20 @@ def _resolved_id_rows(aliases: dict) -> list:
 
     The comparison below now runs on resolved ids. This line exists so a reader
     knows the model's own graph used a name that was not on offer.
+
+    F45: `notes` says WHICH rung of the matcher fired — verbatim, synonym or
+    head noun. `chemical_worker_2 → hazmat_worker_2 (head noun, by number)`
+    is a looser merge than `chemical_spill_1 → spill_1 (synonym)`, and a
+    reader who cannot tell them apart cannot audit either.
     """
     if not aliases:
         return []
-    pairs = ", ".join(f"{k} → {v}" for k, v in sorted(aliases.items()))
+    notes = notes or {}
+
+    def _one(k: str, v: str) -> str:
+        how = notes.get(k)
+        return f"{k} → {v} ({how})" if how else f"{k} → {v}"
+    pairs = ", ".join(_one(k, v) for k, v in sorted(aliases.items()))
     return [html.Div(
         f"⚠ the model's graph named entities the scene does not have: {pairs}. "
         f"Compared as the same entity.",
@@ -1594,6 +1619,74 @@ def _graph_judge_rows(gj: dict) -> list:
     return rows
 
 
+def _effect_toggle_rows(al: dict) -> list:
+    """F45. The effect switch, and the wiring check the default cannot see.
+
+    a_fidelity now IGNORES the effect word by default — `exposes`, `may_harm`
+    and `may_spread_to` all came out of the same model for the same tanker on
+    the same scene, so counting them as three disagreements measured
+    vocabulary rather than grounding.
+
+    Two things still have to be reachable, so they live one click away rather
+    than on screen:
+
+      EFFECT COUNTED   the old whole-edge numbers. Every run before this
+                       change is quoted in them, and a big gap between the
+                       two settings is itself the finding — it means the
+                       graphs agree on who endangers whom and disagree on
+                       HOW, which is exactly what the graph judge's second
+                       question is for.
+
+      SAME PAIRS       who threatens whom, effect ignored. The default is a
+                       mean of two SETS, and sets do not check wiring: name
+                       the same hazards and the same victims, cross the wires
+                       between them, and the default reads 1.00 while the two
+                       graphs agree on no single claim. This number is the
+                       one that would catch it.
+
+    html.Details, no callback — the same idiom the rest of the page uses.
+    """
+    dc = al.get("decomposition") or {}
+    a_s, b_s = al.get("a_fidelity_strict"), al.get("b_coverage_strict")
+    pairs = dc.get("pairs")
+    if a_s is None and pairs is None:
+        return []
+
+    body: list = []
+    if pairs is not None:
+        crossed = (dc.get("hazards") == 1.0 and dc.get("victims") == 1.0
+                   and pairs < 1.0)
+        body.append(html.Div(
+            [html.Span(f"{pairs:.2f}  ", style={"fontWeight": "600",
+                                                "color": "#334155"}),
+             html.Span("same pairs"),
+             html.Span("  — who threatens whom, still ignoring the effect "
+                       "word", style={"color": "#94a3b8"})],
+            style={"fontSize": "11.5px", "padding": "1px 0 1px 10px"}))
+        if crossed:
+            body.append(html.Div(
+                "⚠ same hazards and same victims, but wired to each other "
+                "differently — the two graphs agree on the cast and "
+                "disagree on every claim",
+                style={"fontSize": "11px", "color": "#b45309",
+                       "fontWeight": "600", "padding": "1px 0 1px 10px"}))
+    if a_s is not None:
+        body.append(html.Div(
+            [html.Span(f"{a_s:.2f} / {b_s:.2f}  ",
+                       style={"fontWeight": "600", "color": "#334155"}),
+             html.Span("a_fidelity / b_coverage with the effect word COUNTED"),
+             html.Span("  — the pre-F45 definition; every earlier run is "
+                       "quoted in these", style={"color": "#94a3b8"})],
+            style={"fontSize": "11.5px", "padding": "1px 0 1px 10px"}))
+    return [html.Details([
+        html.Summary("▸ effect word: IGNORED  (click for effect-counted, "
+                     "and the wiring check)",
+                     style={"fontSize": "11px", "color": "#64748b",
+                            "cursor": "pointer", "padding": "3px 0"}),
+        html.Div(body),
+    ])]
+
+
 def _ab_decomposition_rows(dc: dict) -> list:
     """F35 — the A-vs-B comparison broken into the parts of an edge.
 
@@ -1611,17 +1704,20 @@ def _ab_decomposition_rows(dc: dict) -> list:
     rows = [html.Div(dc.get("reading", ""),
                      style={"fontSize": "11.5px", "color": "#4f46e5",
                             "fontWeight": "600", "margin": "5px 0 2px"})]
-    # F43: `pairs` and `whole claim` removed. `whole claim` IS a_fidelity, and
-    # `pairs` adds nothing once you have hazards and victims plus the reading
-    # sentence above.
-    for key, label, hint in (
-            ("hazards", "same hazards", "do both name the same sources of harm"),
-            ("victims", "same victims", "the same people or things harmed")):
+    # F45: these two are no longer commentary BESIDE a_fidelity — they are the
+    # two halves it is the mean of. The `+` and `=` make that readable without
+    # a sentence explaining it.
+    for key, glyph, label, hint in (
+            ("hazards", "", "same hazards",
+             "do both name the same sources of harm"),
+            ("victims", "+", "same victims",
+             "the same people or things harmed")):
         v = dc.get(key)
         if v is None:
             continue
         rows.append(html.Div(
-            [html.Span(f"{v:.2f}  ", style={"fontWeight": "600",
+            [html.Span(f"{glyph:<2}", style={"color": "#94a3b8"}),
+             html.Span(f"{v:.2f}  ", style={"fontWeight": "600",
                                             "color": "#334155"}),
              html.Span(label),
              html.Span(f"  — {hint}", style={"color": "#94a3b8"})],
@@ -1684,14 +1780,25 @@ def _across_recommendations(s4: dict) -> list:
     ia = (s4.get("internal_alignment") or {})
     conf = (s4.get("conformance") or {})
     card_conf = (conf.get("by_graph") or {}).get("card") or {}
+    # F46. The score for the card rules was computed and never shown; the
+    # header carried a bare tally ("card rule breaks 7"), which cannot be
+    # compared between runs because it has no denominator on screen.
+    #
+    # It is NOT a pass fraction. It is 1 - severity/(severity + size): 1.00
+    # means nothing broken, and it falls as breaks get more severe. So it is
+    # labelled "clean", which says which way is good without a legend, and the
+    # tooltip carries the definition for anyone who wants it.
+    ea = (s4.get("explanation_alignment") or {})
     score_bits = f"  {rep.get('n_cards', 0)} cards"
-    if ia.get("score") is not None:
-        score_bits += f" · they hang together {ia['score']}"
     if card_conf:
-        score_bits += f" · card rule breaks {card_conf.get('count', 0)}"
+        score_bits += f" · {card_conf.get('count', 0)} rule breaks"
+    if ea.get("score") is not None:
+        score_bits += f" · {ea['score']:.2f} clean"
+    if ia.get("score") is not None:
+        score_bits += f" · {ia['score']:.2f} they hang together"
     rows: list[Any] = [html.Div(
         [html.Span("ACROSS ALL RECOMMENDATIONS", className="unc-tag"),
-         html.Span(score_bits,
+         html.Span(score_bits, title=_CLEAN_TIP,
                    style={"fontSize": "11px", "color": "#94a3b8"})])]
 
     def block(title, note, findings, empty_text):
@@ -1766,7 +1873,7 @@ def _card_verdict_rows(findings: list, mode: str, judged: dict | None):
     Three bands, kept visibly apart because they answer different questions and
     pathology has to tell them apart:
 
-      conformance   this surface broke the law              (charged)
+      conformance   this surface broke a rule                (charged)
       alignment     two surfaces disagree with each other   (charged)
       judge         is the explanation hollow               (ADVISORY, never scored)
 
@@ -2424,7 +2531,12 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
         urows: list[Any] = [html.Div([
             html.Span("MEASURED UNCERTAINTY · do the recommendations hold up "
                       "on re-ask?", className="unc-tag"),
-            html.Span(f"  score {score} · {unc.get('n_probes')} probes",
+            # F46: was "score 0.446", which does not say which way is good.
+            # This number RISES as the re-asks disagree with each other.
+            html.Span(f"  {score:.2f} unsure · {unc.get('n_probes')} probes"
+                      if isinstance(score, (int, float))
+                      else f"  {score} · {unc.get('n_probes')} probes",
+                      title=_UNSURE_TIP,
                       style={"fontSize": "11px", "color": scol,
                              "fontWeight": "700"}),
         ], style={"marginBottom": "3px"})]
@@ -2676,8 +2788,11 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
         rows_i = [html.Div([
             html.Span("INTERNAL ALIGNMENT (B) · does Graph B agree with "
                       "itself?", className="unc-tag"),
-            html.Span(f"  score {gbi.get('score')} · "
-                      f"{gbi.get('n_failures')} issue(s)",
+            # F46: "score 0.778" -> the same word the cards use, so a reader
+            # can tell it is the same kind of number pointing the same way.
+            html.Span(f"  {gbi.get('n_failures')} issue(s) · "
+                      f"{float(gbi.get('score', 0)):.2f} clean",
+                      title=_CLEAN_TIP,
                       style={"fontSize": "11px", "color": "#64748b"}),
         ], style={"marginBottom": "3px"})]
         for r in (gbi.get("breakdown") or []):
@@ -2717,8 +2832,14 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
         rows_b = [html.Div([
             html.Span("GRAPH B UNCERTAINTY · does the model reproduce its own "
                       "causal graph?", className="unc-tag"),
-            html.Span(f"  {n} probes", style={"fontSize": "11px",
-                                              "color": "#64748b"}),
+            # F46: the score itself was missing — the panel showed the probe
+            # count and three per-axis agreements, but not the number the
+            # yardstick gate and the pathology layer actually read.
+            html.Span(f"  {gbu['score']:.2f} unsure · {n} probes"
+                      if isinstance(gbu.get("score"), (int, float))
+                      else f"  {n} probes",
+                      title=_UNSURE_TIP,
+                      style={"fontSize": "11px", "color": "#64748b"}),
         ], style={"marginBottom": "3px"})]
 
         def _line(txt, col="#334155", pad=0, size="11.5px"):
@@ -2851,25 +2972,27 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
             ]),
             html.Div(verdict, style={"fontSize": "12px", "color": vcol,
                                      "fontWeight": "600", "margin": "2px 0 5px"}),
-        ] + _warn + _resolved_id_rows(al.get("resolved_ids") or {}) + [
+        ] + _warn + _resolved_id_rows(al.get("resolved_ids") or {},
+                                           al.get("resolved_by") or {}) + [
             # F43: NAME them. The panel showed only the plain-English gloss,
             # so nothing on screen connected to "a_fidelity < 0.4 fires
             # sycophancy" or to the `ab_alignment` row in trust — Sunny went
             # looking for both numbers and could not find them. The gloss
             # stays; the name is what lets a reader follow it anywhere else.
             html.Div([html.B(f"a_fidelity {af} "),
-                      "— of the links the advice leans on, how many the "
-                      "model's own graph backs ",
+                      "— of the causal claims the advice leans on, how many "
+                      "the model's own graph backs ",
                       html.Span("(low = asserted only to justify actions)",
                                 style={"color": "#94a3b8"})],
                      style={"fontSize": "11.5px"}),
             html.Div([html.B(f"b_coverage {bc} "),
-                      "— of the links the model believes, how many the advice "
+                      "— of the claims the model believes, how many the advice "
                       "acts on ",
                       html.Span("(low = dangers it sees but didn't act on)",
                                 style={"color": "#94a3b8"})],
                      style={"fontSize": "11.5px"}),
         ] + _ab_decomposition_rows(al.get("decomposition") or {}) + \
+            _effect_toggle_rows(al) + \
             _graph_judge_rows(s4.get("graph_judge") or {}) + [
             # F43: `overall agreement` removed — a third number derived from
             # a_fidelity and b_coverage, printed directly beneath both.
@@ -2900,11 +3023,16 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
     _conf = s4.get("conformance") or {}
     if _conf:
         out.append(html.Div(
-            f"conformance across both graphs and the cards: "
-            f"corrected {_conf.get('validity')} · "
-            f"{_conf.get('n_issues')} issue(s)  ·  Arm A raw (frozen, "
-            f"saturates): A={_conf.get('raw_a_validity')} "
+            # F46: one score covers BOTH graphs and the cards together — there
+            # is no per-graph conformance number, which is why the CONFORMANCE
+            # band under each graph shows counts and not a score. Saying so
+            # here stops a reader hunting for the missing one.
+            f"conformance, both graphs and the cards together (there is no "
+            f"per-graph number): {_conf.get('n_issues')} issue(s) · "
+            f"{float(_conf.get('validity', 0)):.2f} clean  ·  Arm A raw "
+            f"(frozen, saturates): A={_conf.get('raw_a_validity')} "
             f"B={_conf.get('raw_b_validity')} — kept for comparison",
+            title=_CLEAN_TIP,
             style={"fontSize": "10px", "color": "#94a3b8", "marginTop": "4px"}))
     out.append(html.Div(
         "A vs B compares the two graphs above. Everything that judges a graph "
@@ -3443,7 +3571,7 @@ def assess_component(d: dict[str, Any], unc_view: str = "both",
             rb_lines.append(f"{', '.join(extra_rules)} → for probe splits")
         cards.append(_jcard(
             "RULEBOOK", "#7c3aed",
-            "speaks the law: statement + why + worked example",
+            "states each rule: what it is, why, and an example",
             "advises — words only, quoted into reflection",
             rb_lines or ["not consulted"]))
         if mu is not None:

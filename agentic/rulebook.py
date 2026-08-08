@@ -420,7 +420,7 @@ RULES: dict[str, RuleChunk] = {
                  "normal state -> proximity.",
     ),
 
-    # ── R-family (F24): one recommendation, three surfaces, one law ─────
+    # ── R-family (F24): one recommendation, three surfaces, same rules ──
     #
     # The action is the thing being explained. The prose reason and the
     # structured quad are two INDEPENDENT explanations of it, held to the same

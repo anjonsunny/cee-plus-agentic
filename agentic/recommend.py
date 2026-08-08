@@ -1146,7 +1146,7 @@ def run_evals(record: Any, assessment: Any, recommendations: list[dict],
                                 set_report)
     emit = _emitter(on_event)
     # F24 — the card is checked FIRST, then its findings are routed into the
-    # two reports that already exist: legality against the law goes to
+    # two reports that already exist: broke-a-rule goes to
     # conformance, surface-against-surface goes to internal alignment. No third
     # score, so the trust weights are untouched. The standalone result is kept
     # for the per-card footers, which need the findings grouped by rank.

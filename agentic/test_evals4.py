@@ -758,7 +758,7 @@ def test_by_graph_keeps_a_clean_graph_visible_as_zero():
     assert c["by_graph"]["graph_b"]["count"] >= 1
 
 
-# ── F24: explanation alignment — action / reason / quad under one law ───
+# ── F24: explanation alignment — action / reason / quad, same rules ─────
 
 from agentic.evals4 import explanation_alignment, parse_reason
 
@@ -822,7 +822,7 @@ def test_an_explanation_that_covers_only_part_of_the_action():
 def test_the_prose_reason_now_obeys_the_quads_threat_rule():
     """Before F24 the quad's threat had to come from the threats line and the
     prose's did not — so the model wrote a free subject, hit the quad, and
-    swapped it. We scored the swap as its defect. Now one law."""
+    swapped it. We scored the swap as its defect. Now the same rules."""
     rec, asm = _rec_pair()
     r = {**_rec_ok(),
          "reason": "Because person_1 is standing it may_harm house_1."}
@@ -1276,14 +1276,16 @@ def _g(*edges):
 
 
 def test_same_hazards_wrong_victims_is_not_nothing_in_common():
-    """D_aerial verbatim. a_fidelity counts WHOLE edges, so this scores 0.00 —
-    identical to two graphs with nothing whatever in common. The model agreed
-    COMPLETELY about what the hazards were and pointed them at the wrong
-    people, and one number cannot say that."""
+    """D_aerial verbatim. F45: a_fidelity is now the mean of the two overlaps,
+    so this reads 0.50 — the model agreed COMPLETELY about what the hazards
+    were and pointed them at the wrong people. Under the old whole-edge law it
+    read 0.00, which is what two graphs with nothing in common also read."""
     from agentic.evals4 import ab_decomposition
     A = _g(("spill_1", "blocks_access_to", "fire_truck_1"))
     B = _g(("spill_1", "may_harm", "hazmat_worker_1"))
-    assert ab_alignment(A, B)["a_fidelity"] == 0.0
+    r = ab_alignment(A, B)
+    assert r["a_fidelity"] == 0.5                    # (1.00 + 0.00) / 2
+    assert r["a_fidelity_strict"] == 0.0             # the old number, kept
     dc = ab_decomposition(A, B)
     assert dc["hazards"] == 1.0          # perfect agreement on the source
     assert dc["victims"] == 0.0
@@ -1330,14 +1332,25 @@ def test_an_empty_graph_a_makes_no_claim():
     assert dc["reading"] == "the advice makes no causal claim"
 
 
-def test_a_fidelity_itself_is_untouched():
-    """Arm A comparability rests on it; moving it mid-calibration would break
-    every run to date. The decomposition sits BESIDE it (Sunny)."""
+def test_the_old_whole_edge_numbers_are_still_reachable():
+    """F45 moved a_fidelity off whole edges. Nothing was thrown away: the old
+    pair is returned as *_strict, so every run quoted before this change stays
+    reproducible, and the panel's toggle costs no recompute."""
     A = _g(("spill_1", "blocks_access_to", "fire_truck_1"))
     B = _g(("spill_1", "may_harm", "hazmat_worker_1"))
     r = ab_alignment(A, B)
-    assert r["a_fidelity"] == 0.0 and r["b_coverage"] == 0.0
-    assert r["decomposition"]["edges"] == r["a_fidelity"]
+    assert r["a_fidelity_strict"] == 0.0 and r["b_coverage_strict"] == 0.0
+    assert r["decomposition"]["edges"] == r["a_fidelity_strict"]
+    assert r["effect_counted"] is False
+
+
+def test_trust_still_reads_the_frozen_whole_edge_number():
+    """The `ab_alignment` trust contributor reads `structural`, which F45 did
+    NOT touch — it still comes from Arm A's frozen comparator. So the trust
+    weighting stays comparable with every run to date."""
+    A = _g(("spill_1", "blocks_access_to", "fire_truck_1"))
+    B = _g(("spill_1", "may_harm", "hazmat_worker_1"))
+    assert ab_alignment(A, B)["structural"] == 0.0
 
 
 def test_the_decomposition_is_recorded_on_the_alignment():
@@ -1444,3 +1457,105 @@ def test_one_matcher_answers_it_everywhere():
     for text in ("assess the chemical spillage", "contain the spill",
                  "look at spill_1"):
         assert "spill_1" in entities_named_in(text, rec), text
+
+
+# ── F45: the id matcher's three rungs, and the wiring blind spot ────────
+
+def _scene(*objs):
+    """(object_id, label, state) triples -> a record. `_obj` above derives the
+    label from the id, which cannot express `hazmat_worker_1` labelled
+    `hazmat_worker`, and that is the case under test."""
+    return PerceptionResult(
+        image_path="/x", image_size=[10, 10], entity_source="vlm",
+        detected_objects=[
+            DetectedObject(object_id=oid, label=lab, family="x", state=st,
+                           state_kind="hazard_bearing", bbox=[0, 0, 9, 9],
+                           box_source="dino_matched", box_confidence=0.9,
+                           anchor_bbox=[0, 0, 9, 9])
+            for oid, lab, st in objs])
+
+
+def test_rung_1_verbatim_state_word_with_a_number_on_it():
+    """D_aerial's original case: the scene recorded the state `chemical_spill`
+    and the model called the entity `chemical_spill_1`."""
+    from agentic.evals4 import resolve_invented_ids
+    g = _g(("chemical_spill_1", "may_harm", "hazmat_worker_1"))
+    out, alias = resolve_invented_ids(g, _scene(("spill_1", "spill", "chemical_spill"),
+                                                ("hazmat_worker_1", "hazmat_worker", "x")))
+    assert alias == {"chemical_spill_1": "spill_1"}
+    assert out["_resolved_by"]["chemical_spill_1"] == "verbatim"
+    assert out["edges"][0]["source"] == "spill_1"
+
+
+def test_rung_2_uses_the_vocabularys_own_synonym_map():
+    """The scene never says `chemical_spill` anywhere — but the closed
+    vocabulary already maps `chemical_spill -> spill`, and Stage 1 names
+    entities with that same map. The comparison had its own blinder rule."""
+    from agentic.evals4 import resolve_invented_ids
+    g = _g(("chemical_spill_1", "may_harm", "hazmat_worker_1"))
+    _, alias = resolve_invented_ids(g, _scene(("spill_1", "spill", "leaking"),
+                                              ("hazmat_worker_1", "hazmat_worker", "x")))
+    assert alias == {"chemical_spill_1": "spill_1"}
+
+
+def test_rung_3_head_noun_picks_the_right_one_of_a_numbered_pair():
+    """Sunny: "chemical worker and hazmat worker should match." Two workers
+    means the stem alone is ambiguous; the number the model itself attached
+    is what decides, because it is numbering the series we numbered."""
+    from agentic.evals4 import resolve_invented_ids
+    g = _g(("spill_1", "may_harm", "chemical_worker_2"),
+           ("spill_1", "may_harm", "chemical_worker_1"))
+    out, alias = resolve_invented_ids(
+        g, _scene(("spill_1", "spill", "leaking"),
+                  ("hazmat_worker_1", "hazmat_worker", "x"),
+                  ("hazmat_worker_2", "hazmat_worker", "x")))
+    assert alias == {"chemical_worker_1": "hazmat_worker_1",
+                     "chemical_worker_2": "hazmat_worker_2"}
+    assert out["_resolved_by"]["chemical_worker_1"] == "head noun, by number"
+
+
+def test_ambiguous_across_different_labels_stays_unresolved():
+    """A wrong merge is worse than a visible mismatch. Two DIFFERENT things
+    share a head noun, so nothing is decidable and nothing is merged."""
+    from agentic.evals4 import resolve_invented_ids
+    g = _g(("spill_1", "may_harm", "rescue_truck_1"))
+    _, alias = resolve_invented_ids(g, _scene(("spill_1", "spill", "leaking"),
+                                              ("fire_truck_1", "fire_truck", "x"),
+                                              ("tanker_truck_1", "tanker_truck", "x")))
+    assert alias == {}
+
+
+def test_an_exact_match_is_never_displaced_by_a_loose_one():
+    """`worker_1` is a real scene id here. The ladder must not reach rung 3 and
+    merge it into a hazmat worker."""
+    from agentic.evals4 import resolve_invented_ids
+    g = _g(("spill_1", "may_harm", "worker_1"))
+    _, alias = resolve_invented_ids(g, _scene(("spill_1", "spill", "leaking"),
+                                              ("worker_1", "worker", "x"),
+                                              ("hazmat_worker_1", "hazmat_worker", "x")))
+    assert alias == {}                    # worker_1 is known; nothing invented
+
+
+def test_synonyms_stop_one_claim_counting_as_two_disagreements():
+    """The whole point of F40/F45. Both graphs say the spill endangers the two
+    workers. Under different names that ONE agreement was scored as a
+    fabrication AND an omission at the same time."""
+    A = _g(("spill_1", "may_harm", "hazmat_worker_1"))
+    B = _g(("chemical_spill_1", "may_harm", "chemical_worker_1"))
+    rec = _scene(("spill_1", "spill", "chemical_spill"),
+                 ("hazmat_worker_1", "hazmat_worker", "x"))
+    assert ab_alignment(A, B, rec)["a_fidelity"] == 1.0
+    assert ab_alignment(A, B)["a_fidelity"] == 0.0        # without the record
+
+
+def test_crossed_wires_are_the_defaults_blind_spot_and_pairs_catches_it():
+    """STATED, not hidden. a_fidelity is a mean of two SETS, and sets do not
+    check wiring: same hazards, same victims, connected to each other the
+    other way round. The default reads 1.00 while the graphs agree on no
+    single claim — `pairs` is the number that catches it, and it is on the
+    panel under the split."""
+    A = _g(("spill_1", "may_harm", "worker_1"), ("fire_1", "may_harm", "truck_1"))
+    B = _g(("spill_1", "may_harm", "truck_1"), ("fire_1", "may_harm", "worker_1"))
+    r = ab_alignment(A, B)
+    assert r["a_fidelity"] == 1.0                  # the blind spot, in one line
+    assert r["decomposition"]["pairs"] == 0.0      # and what sees through it

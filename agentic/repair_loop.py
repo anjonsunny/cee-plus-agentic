@@ -252,7 +252,7 @@ def _caption_label_satisfied(wanted: str, entities: list[dict[str, Any]]) -> boo
 # a STATE, not an entity). Loop 1 manufactured a redundant fire_1, S6
 # then prosecuted the model for not listing it as a threat, and only the
 # model's STOOD kept the answer GT-correct (at the cost of U 0.114->0.275).
-# When two of our rules collide, the bug is in the lawbook, never the
+# When two of our rules collide, the bug is in OUR rules, never the
 # defendant.
 #
 # Fix, deliberately NARROW: a caption mention of a medium is satisfied by

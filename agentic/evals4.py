@@ -347,7 +347,7 @@ def internal_alignment(record: Any, assessment: Any,
     # F29: every finding is tagged with a SIGNAL and a LEVEL, the same two
     # fields the card findings carry.
     #
-    #   signal  "conformance"        judged against the law
+    #   signal  "conformance"        judged against the rules
     #           "internal_alignment" judged against another part
     #   level   "card"               belongs under one recommendation
     #           "set"                belongs to the SET — it is about the
@@ -524,7 +524,7 @@ def internal_alignment(record: Any, assessment: Any,
             "n_failures": len(fails), "score": score}
 
 
-# ── Explanation alignment: action / reason / quad under one law ─────────
+# ── Explanation alignment: action / reason / quad, one set of rules ─────
 #
 # F24 (Sunny, 2026-07-28). A recommendation card carries three surfaces:
 #
@@ -533,12 +533,12 @@ def internal_alignment(record: Any, assessment: Any,
 #   REASON      QUAD        <- two independent explanations of it
 #    (prose)  (structure)
 #        \______/
-#        one law
+#        same rules
 #
 # The action is the anchor. The reason and the quad each have to explain it
 # causally, ON THEIR OWN, and then agree with each other. They stay separately
 # generated — merging them would leave nothing to compare — but they are held
-# to the SAME constraints. Two witnesses under one law.
+# to the SAME constraints. Two witnesses, one set of rules.
 #
 # What we had before was one witness under law and one witness free: the quad's
 # threat had to come from the `threats:` line, the prose reason's did not. So
@@ -568,7 +568,7 @@ AT_RISK_ROLES = {"distress", "proximity"}
 # Rule → (signal, level). SIGNAL routes the finding into one of the two
 # reports the panel already has; LEVEL says where it renders.
 #
-#   signal "conformance"        one surface judged against the law
+#   signal "conformance"        one surface judged against the rules
 #   signal "internal_alignment" one surface judged against another
 #   level  "card"               belongs under that recommendation
 #   level  "set"                belongs in the summary — it is about the SET
@@ -1523,10 +1523,56 @@ def ab_alignment(graph_a: dict, graph_b: dict,
                  record: Any = None) -> dict[str, Any]:
     """Declared (Graph B) vs structured (Graph A) agreement — ONE structural
     definition (topological multiset on de-duplicated edges), plus the clean
-    precision/recall pair. a_fidelity = of the recommendations' causal edges,
+    precision/recall pair. a_fidelity = of the recommendations' causal claims,
     how many the model's independent graph backs up. b_coverage = of the
     independent graph, how many the recommendations reproduce. B is the
-    yardstick. a_only/b_only are resolved to CONCRETE id edges for display."""
+    yardstick. a_only/b_only are resolved to CONCRETE id edges for display.
+
+    WHAT COUNTS AS A MATCH (changed — Sunny, D_aerial round 2)
+    ==========================================================
+    Both numbers are now built from TWO overlaps, and the effect word is
+    ignored by default:
+
+        a_fidelity = mean(  same hazards ,  same victims  )
+
+    Before, a match meant the WHOLE edge — source, effect AND target. That
+    made D_aerial read 0.00, which says "the advice shares nothing with what
+    the model believes". What actually happened was:
+
+        same hazards   1.00     it agreed completely about what the danger was
+        same victims   0.00     it pointed that danger at the wrong people
+        a_fidelity     0.50     half right, and you can see which half
+
+    0.00 and 0.50 send a reader to different places. 0.00 says the advice is
+    unmoored; 0.50 with the split says the hazard reasoning is sound and the
+    victim reasoning is not — which is a specific, fixable defect.
+
+    The effect word is ignored because it is the least stable part of the
+    claim and the least decision-relevant here: `exposes`, `may_harm` and
+    `may_spread_to` were all emitted for the SAME tanker on the same scene.
+    Counting that as three disagreements measured vocabulary, not grounding.
+    Where the effect DOES change what a responder would do, the graph judge
+    asks about it directly (judge_graph.Q2) — that is the right instrument
+    for it, because it is a judgment and not a string comparison.
+
+    NOTHING IS THROWN AWAY. The whole-edge numbers are still computed and
+    returned as `a_fidelity_strict` / `b_coverage_strict`, and the panel has a
+    toggle: effect ignored (default) or effect counted. Every number from
+    every earlier run is still reproducible from the strict pair.
+
+    THE BLIND SPOT, STATED. A mean of two set overlaps does not check the
+    WIRING. Two graphs that name the same hazards and the same victims but
+    connect them to each other differently — A says the spill endangers the
+    truck and the fire endangers the worker, B says the reverse — score 1.00
+    while agreeing on no single claim. `pairs` (who threatens whom, effect
+    ignored) is the number that catches that, it is computed, and it is on
+    screen under the split. It is not folded into a_fidelity because folding
+    it in would re-introduce the 0.00 this change exists to remove.
+
+    TRUST IS UNAFFECTED. The `ab_alignment` contributor reads `structural`,
+    which still comes from Arm A's frozen comparator on whole edges. So the
+    trust weighting stays comparable with every run to date; only what a
+    reader is shown, and how it reads, has changed."""
     from main import compare_graphs_topological  # lazy
     ga, gb = graph_a or {}, graph_b or {}
     # F40: resolve invented ids BEFORE comparing, so one claim under two names
@@ -1545,13 +1591,33 @@ def ab_alignment(graph_a: dict, graph_b: dict,
     # undefined must not present as ideal.
     _a_total = cmp.get("a_total", 0)
     _b_total = cmp.get("b_total", 0)
-    _a_fid = (0.0 if (not _a_total and _b_total)
-              else round(cmp.get("a_fidelity_topo", 1.0), 3))
+    _silent = (not _a_total and _b_total)
+    _a_strict = 0.0 if _silent else round(cmp.get("a_fidelity_topo", 1.0), 3)
+    _b_strict = round(cmp.get("b_coverage_topo", 1.0), 3)
+
+    dc = ab_decomposition(ga, gb)
+
+    def _mean(*xs):
+        vals = [x for x in xs if x is not None]
+        return round(sum(vals) / len(vals), 3) if vals else None
+
+    # The default pair: effect ignored, built from the two overlaps that
+    # matter — same hazards, same victims. Falls back to the strict number
+    # when the graphs are too empty for the split to mean anything.
+    _a_roles = _mean(dc.get("hazards"), dc.get("victims"))
+    _b_roles = _mean(dc.get("b_hazards"), dc.get("b_victims"))
+    _a_fid = 0.0 if _silent else (_a_strict if _a_roles is None else _a_roles)
+    _b_cov = _b_strict if _b_roles is None else _b_roles
     return {
         "a_fidelity": _a_fid,
         "a_fidelity_note": ("no causal claim was made; fidelity undefined, "
-                            "scored 0" if (not _a_total and _b_total) else ""),
-        "b_coverage": round(cmp.get("b_coverage_topo", 1.0), 3),
+                            "scored 0" if _silent else ""),
+        "b_coverage": _b_cov,
+        # The whole-edge pair, kept so the panel's toggle costs no recompute
+        # and so every earlier run stays reproducible.
+        "a_fidelity_strict": _a_strict,
+        "b_coverage_strict": _b_strict,
+        "effect_counted": False,        # what a_fidelity/b_coverage above mean
         "structural": round(cmp.get("structural_topo", 1.0), 3),
         "matched": cmp.get("matched", 0),
         "a_total": cmp.get("a_total", 0),
@@ -1561,12 +1627,17 @@ def ab_alignment(graph_a: dict, graph_b: dict,
         "b_only": _id_edges_for_keys(gb, cmp.get("b_only_keys", [])),
         # F35 — the same comparison, broken into the parts of an edge, so a
         # 0.00 that means "wrong victims" can be told from a 0.00 that means
-        # "nothing in common". Recorded, never folded into a score.
-        "decomposition": ab_decomposition(ga, gb),
+        # "nothing in common". F45: `hazards` and `victims` are now the two
+        # halves a_fidelity is MADE of, not a commentary beside it.
+        "decomposition": dc,
         # names the model made up, mapped to what it meant. Shown once at the
         # top of the panel so a degraded comparison reads as unproven rather
         # than as disagreement.
         "resolved_ids": aliases,
+        # which rung of the ladder matched each one — verbatim, synonym, head
+        # noun. A loose merge must be visible as a loose merge.
+        "resolved_by": {**(ga.get("_resolved_by") or {}),
+                        **(gb.get("_resolved_by") or {})},
     }
 
 
@@ -1591,29 +1662,85 @@ def resolve_invented_ids(graph: dict, record: Any) -> tuple[dict, dict]:
     of noise on the panel and it is not a disagreement at all.
 
     Matching is deterministic and conservative: strip the trailing `_n`, then
-    accept only an UNAMBIGUOUS match against a scene entity's label or state.
-    Two candidates means no alias — a wrong merge is worse than a visible
-    mismatch.
+    try three rungs in order and take the FIRST that lands. Later rungs are
+    only reached when the earlier ones found nothing, so a loose match can
+    never displace an exact one.
+
+        rung 1  VERBATIM    the stem is a scene entity's label or state.
+                            `chemical_spill_1` -> `spill_1`, when the scene
+                            recorded that entity's state as `chemical_spill`.
+
+        rung 2  SYNONYM     the stem canonicalises to the same word the scene
+                            entity does, through the closed vocabulary's own
+                            synonym map (vocabulary.LABEL_SYNONYMS). That map
+                            already knows `chemical_spill -> spill`,
+                            `flames -> fire`, `floodwater -> water`. Stage 1
+                            uses it to name entities; the comparison had its
+                            own, blinder, rule. One map, used in both places.
+
+        rung 3  HEAD NOUN   the last word matches: `chemical_worker` against
+                            `hazmat_worker`. Sunny: "chemical worker and
+                            hazmat worker should match. And things like that."
+                            The modifier is the model's wording; the head noun
+                            is the thing.
+
+    AMBIGUITY. One candidate is an alias. Several candidates of DIFFERENT
+    labels means no alias — a wrong merge is worse than a visible mismatch.
+    Several candidates of the SAME label is the two-workers case, and there
+    the trailing number decides: `chemical_worker_2` is the model numbering
+    the same series we numbered, so it takes the 2nd by id. Refusing there
+    was the expensive option — it made ONE claim count as a fabrication and
+    an omission at once, which is the noise this function exists to remove.
 
     Returns (graph with ids resolved, {invented_id: real_id}). The original is
     never mutated: the raw graph keeps showing what the model actually said —
     no-erasure — and only the COMPARISON uses resolved ids.
     """
+    from agentic.vocabulary import canonicalize_label
+
     g = graph or {}
-    known = {str(getattr(o, "object_id", "")) for o in
-             (getattr(record, "detected_objects", None) or [])}
+    objs = [o for o in (getattr(record, "detected_objects", None) or [])]
+    known = {str(getattr(o, "object_id", "")) for o in objs}
     if not known:
         return g, {}
 
-    by_key: dict[str, set] = {}
-    for o in (getattr(record, "detected_objects", None) or []):
+    def _canon(w: str) -> str:
+        """'' when the word is not in the closed vocabulary.
+
+        canonicalize_label sends everything it does not recognise to `other`,
+        so using its output raw put every unrated word — every free-text state
+        — into ONE bucket, and rung 2 then found several unrelated candidates
+        under it. Only a real vocabulary hit is a synonym.
+        """
+        try:
+            canon, _note, in_vocab, _fam = canonicalize_label(w)
+            return canon if in_vocab and canon else ""
+        except Exception:
+            return ""
+
+    def _head(w: str) -> str:
+        return w.rsplit("_", 1)[-1] if "_" in w else w
+
+    # Three indexes, one per rung. Each maps a key -> the scene ids under it.
+    verbatim: dict[str, set] = {}
+    synonym: dict[str, set] = {}
+    head: dict[str, set] = {}
+    label_of: dict[str, str] = {}
+    for o in objs:
         oid = str(getattr(o, "object_id", ""))
+        label_of[oid] = str(getattr(o, "label", "") or "")
         for key in (str(getattr(o, "label", "") or ""),
                     str(getattr(o, "state", "") or "")):
-            if key:
-                by_key.setdefault(key.strip().lower(), set()).add(oid)
+            key = key.strip().lower()
+            if not key:
+                continue
+            verbatim.setdefault(key, set()).add(oid)
+            if _canon(key):
+                synonym.setdefault(_canon(key), set()).add(oid)
+            head.setdefault(_head(key), set()).add(oid)
 
     alias: dict[str, str] = {}
+    notes: dict[str, str] = {}
     seen_ids = {str(n.get("id") or "") for n in (g.get("nodes") or [])
                 if isinstance(n, dict)}
     for e in (g.get("edges") or []):
@@ -1621,9 +1748,23 @@ def resolve_invented_ids(graph: dict, record: Any) -> tuple[dict, dict]:
             seen_ids |= {str(e.get("source") or ""), str(e.get("target") or "")}
     for oid in sorted(i for i in seen_ids if i and i not in known):
         stem = re.sub(r"_\d+$", "", oid).strip().lower()
-        hits = by_key.get(stem) or set()
-        if len(hits) == 1:
-            alias[oid] = next(iter(hits))
+        idx = re.search(r"_(\d+)$", oid)
+        for rung, index, key in (("verbatim", verbatim, stem),
+                                 ("synonym", synonym, _canon(stem)),
+                                 ("head noun", head, _head(stem))):
+            hits = sorted(index.get(key) or set()) if key else []
+            if not hits:
+                continue
+            if len(hits) == 1:
+                alias[oid], notes[oid] = hits[0], rung
+                break
+            # Several candidates. Only the same-label series is decidable, and
+            # only by the number the model itself attached.
+            if len({label_of.get(h, "") for h in hits}) == 1 and idx:
+                n = int(idx.group(1))
+                if 1 <= n <= len(hits):
+                    alias[oid], notes[oid] = hits[n - 1], f"{rung}, by number"
+            break                       # a rung that matched at all is final
     if not alias:
         return g, {}
 
@@ -1639,6 +1780,9 @@ def resolve_invented_ids(graph: dict, record: Any) -> tuple[dict, dict]:
     }
     for k, v in g.items():
         out.setdefault(k, v)
+    # Which rung matched, so a merge is never silent. This rides on the
+    # COMPARISON copy only — the raw graph the panel prints is untouched.
+    out["_resolved_by"] = notes
     return out, alias
 
 

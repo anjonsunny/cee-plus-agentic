@@ -4,12 +4,12 @@
 
 | Cat | Failure mode | Findings | Count |
 |---|---|---|---|
-| A | LANGUAGE GAP — schema can't hear the model's honest English | F8, F11, F12, F10(paved) | 4 |
+| A | LANGUAGE GAP — schema can't hear the model's honest English | F8, F11, F12, F10(paved), F45 | 5 |
 | B | INDUCED ERROR — model was right until our machinery pressured it | F1, F2, F5, F10, F25, F27 | 6 |
-| C | LAWBOOK COLLISION — our rules fighting each other | F3, F9, F24 | 3 |
+| C | OUR RULES COLLIDE — our own rules fighting each other | F3, F9, F24 | 3 |
 | D | JUDGE NOISE / BIAS — ill-posed questions, severity-minimizing | F4(open), F5, F11, F26, F28 | 5 |
 | E | GENUINE MODEL ERROR — unstable second looks; flat self-confidence; reflection jitter | F7(parts), jitter | ~2 |
-| F | METRIC DEFECT — scoring that hides/distorts the real signal | F15, F24, F25, F29 | 4 |
+| F | METRIC DEFECT — scoring that hides/distorts the real signal | F15, F24, F25, F29, F45 | 5 |
 
 **Standing observation (through F12, 4 of 6 scenes):** only ~2 of ~15
 defects were the subject model failing unprompted. The dominant modes
@@ -239,7 +239,7 @@ One layer of the apparatus (the caption matcher) contradicted the
 convention another layer teaches (attached fire is a STATE), a third
 layer (S6) prosecuted the artifact, and only the subject's earned
 stubbornness (F1's capitulation guard) kept the answer clean. When two
-of our rules collide, the bug is in the lawbook, never the defendant.
+of our rules collide, the bug is in OUR rules, never the model.
 
 **Fix:** fluid-convention-aware P5 — a caption's mention of an attached
 medium is satisfied by an entity carrying the state: "fire"/"flames"/
@@ -248,7 +248,7 @@ entity. Kept deliberately strict everywhere else: free-burning phrasings
 ("brush fire", "wildfire") still demand a fire entity; smoke/dust/gas
 are always diffuse and always owed; spill is still owed beside a leaking
 producer (producer-and-medium rule). Rulebook P5 text updated to match
-(one law, two engines).
+(same rules, two engines).
 
 **Residual risk, accepted:** a caption saying just "fire" over a scene
 with BOTH a burning structure AND a separate free fire will not ticket
@@ -621,7 +621,7 @@ told it is that same sentence with its slots filled. 22 rules, tagged
 and routed into the two reports that already existed — no third score,
 so the trust weights are untouched:
 
-- **conformance (16)** — one surface against the law: the action, the
+- **conformance (16)** — one surface against the rules: the action, the
   prose reason, remaining_risk, rank.
 - **internal alignment (7)** — surface against surface, at the level of
   ROLES not ids: `subject_mismatch`, `object_mismatch`, and does each
@@ -939,4 +939,118 @@ it in words. It is not a violation; it is what the intervention gate (S6) needs
 in order to know which recommendations it can test at all.
 
 **Flowchart:** no pipeline change — one aggregation plus display. The CARD
+CHECK box edit owed from F24 still stands.
+
+---
+
+## F45 — a_fidelity called perfect agreement "nothing in common", and the
+## comparison could not hear the model's own synonyms
+
+**Categories: F (metric defect) + A (language gap).** Round-2 D_aerial.
+
+**What Sunny saw.** The run was good. The A-vs-B panel said:
+
+```
+a_fidelity  0.00        b_coverage  0.00
+```
+
+0.00 means "the advice shares nothing with what the model independently
+believes". That is not what happened. What happened was:
+
+```
+Graph A (from the recommendation quads)   Graph B (asked independently)
+  spill_1 -blocks_access_to-> fire_truck_1  spill_1 -may_harm-> hazmat_worker_1
+  spill_1 -blocks_access_to-> ambulance_1   spill_1 -may_harm-> hazmat_worker_2
+  spill_1 -blocks_access_to-> police_car_1  tanker_truck_1 -may_spread_to-> spill_1
+```
+
+The model agreed COMPLETELY about what the danger was — the spill, both times,
+`hazards 1.00`. It disagreed about who the spill endangers: the advice
+protected three vehicles, its own beliefs named the two people standing in it.
+That is a precise, serious, fixable defect. `0.00` is the same number two
+graphs with nothing whatever in common would produce, so the panel destroyed
+the distinction it existed to draw.
+
+**Two separate causes.**
+
+*Cause 1 — the match was too strict (F).* A match meant the WHOLE edge:
+source, effect AND target. So the effect word had a veto. And the effect word
+is the least stable part of the claim: `exposes`, `may_harm` and
+`may_spread_to` all came out of the same model, for the same tanker, on the
+same scene. Counting those as three disagreements measured VOCABULARY, not
+grounding. On D_aerial `blocks_access_to` vs `may_harm` alone was enough to
+zero a comparison that agreed perfectly on the hazard.
+
+*Cause 2 — the ids were compared as strings (A).* Graph B has repeatedly
+written `chemical_spill_1` for the entity the scene calls `spill_1`, and
+`chemical_worker_1` for `hazmat_worker_1`. The closed vocabulary ALREADY knows
+`chemical_spill -> spill` — Stage 1 uses that very map to name entities. The
+comparison had its own, blinder rule, so the same word arrived canonicalised
+on one side and raw on the other, and one agreement was scored as a
+fabrication AND an omission at the same time. This is the F8/F11/F12 language
+gap again, in a new place: our machinery could not hear the model's own
+synonym.
+
+**Fix, part 1 — a_fidelity is built from two overlaps, effect ignored.**
+
+```
+a_fidelity = mean( same hazards , same victims )
+
+  same hazards   1.00     it agreed about what the danger was
++ same victims   0.00     it pointed that danger at the wrong people
+= a_fidelity     0.50     half right, and you can see WHICH half
+```
+
+D_aerial round 2 went from `0.00 / 0.00` to `0.625 / 0.666`. Nothing was
+thrown away: the whole-edge pair is still computed and returned as
+`a_fidelity_strict` / `b_coverage_strict`, and the panel has a toggle (default
+IGNORED, one click to counted), so every number quoted from every earlier run
+stays reproducible. Where the effect word genuinely changes what a responder
+would DO, the graph judge's second question asks about it directly — that is
+the right instrument, because it is a judgment and not a string comparison.
+
+**The blind spot, stated rather than hidden.** A mean of two SETS does not
+check the WIRING. Two graphs naming the same hazards and the same victims but
+connecting them to each other differently score 1.00 while agreeing on no
+single claim. `pairs` (who threatens whom, effect still ignored) is the number
+that catches it; it is computed, it is inside the toggle, and when the wires
+ARE crossed the panel says so in a warning. It is deliberately NOT folded into
+a_fidelity, because folding it in re-introduces the 0.00 this change removes.
+
+**Fix, part 2 — the id matcher is a three-rung ladder.** First rung that lands
+wins, so a loose match can never displace an exact one:
+
+```
+1  verbatim    the stem IS a scene entity's label or state
+               chemical_spill_1 -> spill_1   (state was `chemical_spill`)
+2  synonym     both canonicalise to the same vocabulary word, through
+               vocabulary.LABEL_SYNONYMS — the map Stage 1 already uses
+3  head noun   the last word matches: chemical_worker <-> hazmat_worker
+```
+
+Ambiguity rules: one candidate is an alias; several candidates of DIFFERENT
+labels is no alias, because a wrong merge is worse than a visible mismatch;
+several candidates of the SAME label is the two-workers case, and there the
+number the model itself attached decides — `chemical_worker_2` is numbering the
+series we numbered. Refusing there was the expensive option, since it made one
+claim count as a fabrication and an omission at once. Which rung fired is
+recorded and printed, so `(head noun, by number)` reads as the weaker claim it
+is and a loose merge is never silent.
+
+**A bug found while building it.** `canonicalize_label` sends everything it
+does not recognise to `other`. Using its output raw put every unrated word —
+every free-text state — into ONE bucket, and rung 2 then found several
+unrelated candidates under it and merged nothing while blocking rung 3. Rung 2
+now requires a real vocabulary hit. Caught by a test, not by a run.
+
+**TRUST IS UNCHANGED, deliberately.** The `ab_alignment` trust contributor
+reads `structural`, which still comes from Arm A's frozen comparator on whole
+edges. So the trust weighting stays comparable with every run to date; only
+what a reader is shown, and how it reads, has changed. Pinned by a test.
+
+**Status.** 652 tests pass. Old runs replay with their stored numbers, because
+the UI is a pure function of the event stream — the new numbers appear on the
+next live run of each scene.
+
+**Flowchart:** no pipeline change — a metric definition plus display. The CARD
 CHECK box edit owed from F24 still stands.

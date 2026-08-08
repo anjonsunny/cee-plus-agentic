@@ -89,7 +89,10 @@
       "Bash(PYTHONPATH=. /Users/sunny/miniconda3/envs/clip_dash/bin/python -m agentic.judge_set --graphs)",
       "Bash(/Users/sunny/miniconda3/envs/clip_dash/bin/pytest agentic/test_ui.py::test_the_graph_judge_is_labelled_advisory -q -p no:cacheprovider)",
       "Bash(/Users/sunny/miniconda3/envs/clip_dash/bin/pytest agentic/test_ui.py::test_stage4_conformance_and_alignment_panels -q -p no:cacheprovider)",
-      "Bash(grep -vE \"^\\\\s*$\")"
+      "Bash(grep -vE \"^\\\\s*$\")",
+      "Bash(python -)",
+      "mcp__visualize__read_me",
+      "mcp__visualize__show_widget"
     ]
   }
 }
