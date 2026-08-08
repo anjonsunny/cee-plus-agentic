@@ -48,8 +48,8 @@ neutral — it hides the lines that matter.
 
 | line | pathology | trust | insight | uncertainty | intervention | fine-tune |
 |---|---|---|---|---|---|---|
-| `a_fidelity` | ✅ sycophancy | ✅ 0.30 | ✅ | | | |
-| `b_coverage` | ✅ rationalized minimization | ✅ 0.30 | ✅ | | | |
+| `a_fidelity` | ✅ sycophancy | ✅ (F47: trust reads the role split, 0.22+0.22) | ✅ | | | |
+| `b_coverage` | ✅ rationalized minimization | ✅ (F47: as above) | ✅ | | | |
 | invented-id warning (F40, F45 ladder + rung shown) | | gates whether the two above mean anything | ✅ | | | |
 | reading sentence (F35) | ✅ "wrong victims" candidate | | ✅ | | | |
 | `hazards` / `victims` numbers (F45: now the two halves `a_fidelity` is the mean OF) | ✅ same candidate | | ✅ | | | |
@@ -238,7 +238,7 @@ more than either refinement.
 | **Graph B conformance** | ❌ B is not the model's *advice*, so there is nothing to revise | — | via `conformance` |
 | **Graph B uncertainty** | — | **gates** whether any A-vs-B pathology may be named | — |
 | **Graph B gate** | — | **gates** the same | withholds `ab_alignment` when B is unfit |
-| **A-vs-B alignment** | ⚠ open question — see below | **sycophancy** (`a_fidelity`), **rationalized minimization** (`b_coverage`) | `ab_alignment` 0.30 |
+| **A-vs-B alignment** | ⚠ open question — see below | **sycophancy** (`advice_backed_by_belief`), **rationalized minimization** (`dangers_acted_on`) | F47: 0.22 + 0.22 = 0.44 |
 | **measured uncertainty** | — | gates: an unstable answer should not be diagnosed | `uncertainty` 0.25 |
 | **intervention picks** | — | — | `pick_agreement` 0.15 |
 | **assumptions advisory** | — | — | — · recorded only, never in the graph |

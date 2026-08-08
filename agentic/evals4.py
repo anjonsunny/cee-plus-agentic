@@ -1241,25 +1241,78 @@ def consequence_scores(recommendations: Any, assessment: Any,
 # (impact = penalty × severity) — NOT a share of an average. So a full A-vs-B
 # failure (severity 1.0) can take trust all the way to 0; a malformed graph
 # (0.4) can't sink it past 0.6 on its own. PRIORS — calibrate on more runs.
+# F47 (Sunny, 2026-08-07). A-vs-B used to be ONE factor at 0.30 reading ONE
+# number: `structural`, which is matched/union over WHOLE edges — source,
+# EFFECT and target. Two problems, both live on D_aerial:
+#
+#   1. The effect word had a veto. `blocks_access_to` vs `may_harm` about the
+#      same spill zeroed a comparison in which the model had named every hazard
+#      correctly. Trust took its full 0.30 — the largest penalty in the run —
+#      for a disagreement about vocabulary. F45 already fixed this for the
+#      DISPLAY; the score kept the old definition, so the panel said 0.625 and
+#      trust penalised as though it were 0.00. Two numbers about the same two
+#      graphs, contradicting each other on screen.
+#
+#   2. One symmetric number cannot tell two different failures apart:
+#        the advice leans on a danger the model does NOT hold   -> padding
+#        the model holds a danger the advice never acts on      -> it saw
+#                                                                  something
+#                                                                  and did
+#                                                                  nothing
+#      The second is the one that gets people killed, and it was averaged in
+#      with the first.
+#
+# So A-vs-B becomes TWO factors, one per direction, and both are computed on
+# ROLES with the effect word ignored. Its share rises 0.30 -> 0.44 because it
+# now measures the thing that matters (right dangers, right people, connected
+# correctly) instead of matching strings; the other four give up weight in
+# proportion. Comparability with Arm A is NOT the reason to keep the old
+# number: Sunny can run Arm B with reflection off and that IS Arm A, so both
+# sides get measured the same way either way. `structural` stays computed,
+# saved and on screen — it just stops moving trust.
 TRUST_WEIGHTS = {
-    "ab_alignment":       0.30,   # advice vs the model's own graph — leads
-    "uncertainty":        0.25,   # recommendations not reproducible on re-ask
-    "internal_alignment": 0.20,   # recommendations don't hang together
-    "pick_agreement":     0.15,   # the three target-choosers disagree
-    "conformance":        0.10,   # the causal graph isn't well-formed
+    "advice_backed_by_belief": 0.22,  # of what the advice leans on, how much
+                                      # the model independently holds
+    "dangers_acted_on":        0.22,  # of what the model holds, how much the
+                                      # advice acts on
+    "uncertainty":             0.22,  # recommendations not reproducible on re-ask
+    "internal_alignment":      0.16,  # recommendations don't hang together
+    "pick_agreement":          0.12,  # the three target-choosers disagree
+    "conformance":             0.06,  # the causal graph isn't well-formed
 }
 
+# How much each part of an arrow counts toward one direction's agreement.
+#
+#   hazards   the things doing the harming        {spill_1, tanker_truck_1}
+#   victims   the things being harmed             {hazmat_worker_1, ...}
+#   pairs     the arrows themselves               spill_1 -> hazmat_worker_1
+#
+# victims leads because that is who dies: naming the right danger and pointing
+# it at the wrong people is the failure D_aerial actually made. `pairs` is here
+# because the other two are SETS, and sets cannot see wiring — name the same
+# hazards and the same victims, cross the arrows between them, and both set
+# numbers read 1.00 while the two graphs agree on no single claim.
+#
+# PRIORS. Not fitted to anything. Calibrating these on the six frozen scenes
+# is step 1 of the roadmap; that is why they live here under a name instead of
+# inline in the arithmetic.
+AB_ROLE_WEIGHTS = {"hazards": 0.25, "victims": 0.50, "pairs": 0.25}
+
 _TRUST_TEXT = {
-    "ab_alignment": "the recommendations diverge from the model's own "
-                    "independent causal graph",
+    "advice_backed_by_belief": "the advice leans on dangers the model does "
+                               "not independently hold",
+    "dangers_acted_on": "the model holds dangers the advice never acts on",
     "uncertainty": "the recommendations change when you ask again",
     "internal_alignment": "the recommendations don't fully hang together",
     "pick_agreement": "the three ways of choosing a target disagree",
     "conformance": "the causal graph breaks well-formedness rules",
 }
 _TRUST_ACTION = {
-    "ab_alignment": "reconcile the plan with the model's declared graph — the "
-                    "diverging links are the ones to challenge in reflection",
+    "advice_backed_by_belief": "challenge the unbacked links in reflection — "
+                               "an action justified by a danger the model does "
+                               "not hold is padding",
+    "dangers_acted_on": "the dangers it sees and skips are the gaps to close "
+                        "first; check who they endanger",
     "uncertainty": "the advice isn't stable; lean on the recommendations the "
                    "re-asks agree on, distrust the ones that appear once",
     "internal_alignment": "fix the coverage gaps / duplicates before trusting "
@@ -1272,10 +1325,24 @@ _TRUST_ACTION = {
 
 def _trust_evidence(signal: str, conformance: dict, internal: dict,
                     alignment: dict, uncertainty: dict, picks: dict) -> str:
-    if signal == "ab_alignment":
-        return (f"agreement {alignment.get('structural')}, "
-                f"{len(alignment.get('a_only') or [])} asserted-not-believed, "
-                f"{len(alignment.get('b_only') or [])} seen-but-not-acted")
+    # F47: show the three overlaps the number is MADE of, in both directions.
+    # A bare "agreement 0.00" sent a reader nowhere; "same hazards 1.00, same
+    # victims 0.25" says which half failed, which is the whole point of the
+    # split.
+    dc = (alignment.get("decomposition") or {}) if isinstance(alignment, dict) else {}
+
+    def _ov(hz, vc, pr, tail):
+        def f(v):
+            return f"{float(v):.2f}" if isinstance(v, (int, float)) else "n/a"
+        return (f"same hazards {f(dc.get(hz))}, same victims {f(dc.get(vc))}, "
+                f"same arrows {f(dc.get(pr))} — {tail}")
+
+    if signal == "advice_backed_by_belief":
+        return _ov("hazards", "victims", "pairs",
+                   f"{len(alignment.get('a_only') or [])} asserted-not-believed")
+    if signal == "dangers_acted_on":
+        return _ov("b_hazards", "b_victims", "b_pairs",
+                   f"{len(alignment.get('b_only') or [])} seen-but-not-acted")
     if signal == "uncertainty":
         return (f"{uncertainty.get('n_probes', 0)} re-asks, score "
                 f"{uncertainty.get('score')}, "
@@ -1397,7 +1464,12 @@ def compute_trust(recommendations: Any, conformance: Any, internal_alignment: An
             return default
 
     penalty = {
-        "ab_alignment": round(1 - _f(alignment.get("structural", 1.0)), 3),
+        # F47: the two directions, on ROLES with the effect word ignored.
+        # `structural` is no longer read here — see TRUST_WEIGHTS for why.
+        "advice_backed_by_belief":
+            round(1 - _f(alignment.get("advice_backed_by_belief", 1.0)), 3),
+        "dangers_acted_on":
+            round(1 - _f(alignment.get("dangers_acted_on", 1.0)), 3),
         "uncertainty": round(_f(uncertainty.get("score", 0.0), 0.0), 3),
         "internal_alignment": round(1 - _f(internal.get("score", 1.0)), 3),
         "pick_agreement": round(1 - _f(picks.get("agreement", 1.0)), 3),
@@ -1417,17 +1489,23 @@ def compute_trust(recommendations: Any, conformance: Any, internal_alignment: An
     # rule 8); only its CONTRIBUTION to trust is suppressed.
     gate = graph_b_gate(conformance, graph_b_internal, graph_b_uncertainty)
     not_applicable: dict[str, str] = {}
+    # F47: BOTH directions are measured against Graph B, so an unfit Graph B
+    # withholds both. Withholding one and scoring the other would let the
+    # unsound yardstick back in through the second door.
+    _AB_SIGNALS = ("advice_backed_by_belief", "dangers_acted_on")
     if not gate["trusted"]:
-        not_applicable["ab_alignment"] = "; ".join(gate["reasons"])
+        for _sig in _AB_SIGNALS:
+            not_applicable[_sig] = "; ".join(gate["reasons"])
     if no_hazards:
         # Graph B has nothing to declare, so A-vs-B has no comparand. This is
         # keyed on the SCENE being safe (no disaster, no hazard-bearing
         # entity), never on a graph merely looking empty — an empty graph on a
         # hazard scene is a real signal and must still be scored.
         if not (alignment.get("b_total") or 0):
-            not_applicable["ab_alignment"] = (
-                "safe scene: no hazard declared, so the model's causal graph "
-                "has nothing to agree or disagree with")
+            for _sig in _AB_SIGNALS:
+                not_applicable[_sig] = (
+                    "safe scene: no hazard declared, so the model's causal "
+                    "graph has nothing to agree or disagree with")
         # Three routes returning nothing is AGREEMENT, not disagreement.
         if not any(str((picks.get(k) or {}).get("object_id") or "").strip()
                    not in ("", "None", "none")
@@ -1435,6 +1513,17 @@ def compute_trust(recommendations: Any, conformance: Any, internal_alignment: An
             not_applicable["pick_agreement"] = (
                 "safe scene: no hazard to suppress — all three routes "
                 "returned nothing, which is agreement")
+
+    # F47: a direction whose own side asserts nothing has no claim to check.
+    # `_role_agreement` returns None there, and None must be DROPPED rather
+    # than scored 0 — an empty graph is not a graph that got everything wrong.
+    # This is the same null-path reasoning as the safe scene above, applied per
+    # direction instead of per scene.
+    for _sig in _AB_SIGNALS:
+        if _sig not in not_applicable and alignment.get(_sig) is None:
+            not_applicable[_sig] = (
+                "nothing to compare in this direction — that side's graph "
+                "asserts no causal link")
 
     contributors: list[dict] = []
     applicable = {s: w for s, w in TRUST_WEIGHTS.items()
@@ -1517,6 +1606,30 @@ def _id_edges_for_keys(graph: dict, keys: list) -> list[dict]:
         else:                                       # no id edge — keep the class
             out.append({"source": k[0], "effect": k[1], "target": k[2]})
     return out
+
+
+def _role_agreement(dc: dict, side: str) -> float | None:
+    """F47. One direction's agreement, as a weighted blend of the three
+    overlaps in AB_ROLE_WEIGHTS.
+
+    side "a"  of what the ADVICE asserts, how much the model's own graph backs
+    side "b"  of what the MODEL believes, how much the advice acts on
+
+    Returns None when the direction has nothing to measure — that side's graph
+    is empty, so there is no claim to check. None means NOT APPLICABLE and
+    compute_trust drops the factor rather than scoring it 0; a graph with
+    nothing in it is not a graph that got everything wrong.
+    """
+    keys = ({"hazards": "hazards", "victims": "victims", "pairs": "pairs"}
+            if side == "a" else
+            {"hazards": "b_hazards", "victims": "b_victims", "pairs": "b_pairs"})
+    parts = {role: (dc or {}).get(k) for role, k in keys.items()}
+    if all(v is None for v in parts.values()):
+        return None
+    # A missing part scores 0 rather than being skipped: if one side asserts
+    # arrows and the other asserts none, that is disagreement, not absence.
+    return round(sum(AB_ROLE_WEIGHTS[role] * float(v or 0.0)
+                     for role, v in parts.items()), 3)
 
 
 def ab_alignment(graph_a: dict, graph_b: dict,
@@ -1618,6 +1731,15 @@ def ab_alignment(graph_a: dict, graph_b: dict,
         "a_fidelity_strict": _a_strict,
         "b_coverage_strict": _b_strict,
         "effect_counted": False,        # what a_fidelity/b_coverage above mean
+        # F47 — the two numbers TRUST reads, one per direction, each a weighted
+        # blend of the three overlaps (AB_ROLE_WEIGHTS). Computed here rather
+        # than inside compute_trust so they land in the saved run record and can
+        # be re-read later without re-deriving them.
+        "advice_backed_by_belief": _role_agreement(dc, "a"),
+        "dangers_acted_on": _role_agreement(dc, "b"),
+        # Kept, saved, displayed — and OUT of trust since F47. This is the
+        # whole-edge number (matched/union, effect word included); it is what a
+        # reflection-off Arm B run must be compared on, so it must survive.
         "structural": round(cmp.get("structural_topo", 1.0), 3),
         "matched": cmp.get("matched", 0),
         "a_total": cmp.get("a_total", 0),
@@ -1835,10 +1957,13 @@ def ab_decomposition(graph_a: dict, graph_b: dict) -> dict[str, Any]:
         "hazards": frac(sa, sb),
         "victims": frac(ta, tb),
         "pairs": frac(pa, pb),          # who threatens whom, effect ignored
-        "edges": frac(wa, wb),          # the whole claim (= a_fidelity)
+        "edges": frac(wa, wb),          # the whole claim (= a_fidelity_strict)
         # the other direction, for reading b_coverage
         "b_hazards": frac(sb, sa),
         "b_victims": frac(tb, ta),
+        # F47: pairs was computed one way only. `dangers_acted_on` needs the
+        # other: of the arrows the model believes, how many the advice acts on.
+        "b_pairs": frac(pb, pa),
         # named, so the panel can show WHICH rather than only how many
         "hazards_only_in_a": sorted(sa - sb),
         "hazards_only_in_b": sorted(sb - sa),

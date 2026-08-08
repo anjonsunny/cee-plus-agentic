@@ -2413,7 +2413,9 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                 html.Div([_contrib_row(c) for c in minor]),
             ], style={"marginTop": "2px"}))
         # what HOLDS trust up — the checks that passed clean (balance the card)
-        _TRUST_POS = {"ab_alignment": "matches its own graph",
+        _TRUST_POS = {"advice_backed_by_belief": "every danger it acts on is "
+                                                 "one it holds",
+                      "dangers_acted_on": "acts on every danger it sees",
                       "uncertainty": "stable on re-ask",
                       "internal_alignment": "hangs together",
                       "pick_agreement": "targets agree",
@@ -2471,7 +2473,9 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                 _SIG = {"internal_alignment": "its parts don't line up",
                         "conformance": "a rule break",
                         "uncertainty": "unstable on re-ask",
-                        "ab_alignment": "not backed by its own graph",
+                        "advice_backed_by_belief": "acts on a danger it "
+                                                   "doesn't hold",
+                        "dangers_acted_on": "sees a danger and skips it",
                         "pick_agreement": "targets disagree"}
                 sig = str(w.get("signal", ""))
                 row.append(html.Span(
@@ -2479,7 +2483,8 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                     style={"fontSize": "10.5px", "color": "#94a3b8"}))
             trows.append(html.Div(row, style={"padding": "1px 0"}))
         trows.append(html.Div(
-            "trust = weighted average of the checks (A-vs-B weighted highest). "
+            "trust = weighted average of the checks (the two A-vs-B "
+            "directions weighted highest, 0.22 each). "
             "two axes: TRUST = can we rely on the advice (reliability); "
             "CONSEQUENCE = how bad for victims if the hazard isn't dealt with "
             "(life-safety). Neither is groundedness. Objective (no model, no "

@@ -92,7 +92,10 @@
       "Bash(grep -vE \"^\\\\s*$\")",
       "Bash(python -)",
       "mcp__visualize__read_me",
-      "mcp__visualize__show_widget"
+      "mcp__visualize__show_widget",
+      "Bash(grep -v \"^\\\\s*$\")",
+      "Bash(/Users/sunny/miniconda3/envs/clip_dash/bin/pytest agentic/test_graph_s4.py -q -p no:cacheprovider)",
+      "Bash(cd \"/Users/sunny/Documents/CEE+ *)"
     ]
   }
 }
