@@ -521,6 +521,11 @@ def internal_alignment(record: Any, assessment: Any,
     size = max(1, len(recommendations) * 4 + len(at_risk_ids))
     score = round(1.0 - weighted / (weighted + size), 3)
     return {"failures": fails, "breakdown": breakdown,
+            # F48: `size` is returned so the score can be recomputed with a
+            # finding category removed, when the singular error library takes
+            # that category over. Deriving it back out of the score would work
+            # right up until the score is 1.0, and then divide by zero.
+            "size": size,
             "n_failures": len(fails), "score": score}
 
 
@@ -1360,15 +1365,35 @@ def _trust_evidence(signal: str, conformance: dict, internal: dict,
 TRUST_MATERIAL_MIN = 0.05   # contributions below this are noise, not narrated
 
 
-def _trust_narrative(score: float, band: str,
-                     contributors: list[dict]) -> str:
+def _trust_narrative(score: float, band: str, contributors: list[dict],
+                     not_applicable: dict | None = None) -> str:
     # only MATERIAL contributors are narrated; near-zero ones are noise
     hits = [c for c in contributors
             if c["contribution"] >= TRUST_MATERIAL_MIN][:3]
     if not hits:
-        return (f"Trust is {band} ({score}). No material signal dents it — the "
-                "recommendations are reproducible, hang together, match the "
-                "model's own graph, and the graph is well-formed.")
+        # F48 BUG FIX. This sentence used to list all five checks as passing —
+        # including ones that were never scored. B_pool live: the gate withheld
+        # A-vs-B because Graph B flipped its arrows on 2 of 5 asks, and the
+        # explanation still said the recommendations "match the model's own
+        # graph". They may well not; we did not look. A withheld signal must
+        # never be reported as a pass, and the whole point of `signals_measured`
+        # is defeated if the prose next to it says otherwise.
+        measured = {c["signal"] for c in contributors}
+        clean = {"uncertainty": "are reproducible",
+                 "internal_alignment": "hang together",
+                 "advice_backed_by_belief": "only act on dangers the model holds",
+                 "dangers_acted_on": "act on every danger the model sees",
+                 "pick_agreement": "agree on what to suppress",
+                 "conformance": "are well-formed"}
+        said = [t for s, t in clean.items() if s in measured]
+        body = ("the recommendations " + ", ".join(said)) if said else \
+               "nothing measurable dented it"
+        out = f"Trust is {band} ({score}). No material signal dents it — {body}."
+        if not_applicable:
+            out += (" NOT checked: "
+                    + ", ".join(s.replace("_", " ")
+                                for s in sorted(not_applicable)) + ".")
+        return out
     # Framing MUST match the verdict: if trust is high, the dents didn't change
     # it, so they are minor notes — not "biggest reasons" paraded as if serious
     # (Sunny). Only moderate/low trust leads with the failing reasons.
@@ -1440,12 +1465,37 @@ def _per_rec_trust(recommendations: list[dict], uncertainty: dict,
     return out
 
 
+def _rescore_without(internal: dict, categories: set) -> dict:
+    """F48. internal_alignment, recomputed with some finding categories not
+    charged — because the singular error library now charges them instead.
+
+    The findings themselves are NOT removed. They stay in `failures`, they stay
+    in the breakdown, and they stay on screen: iron rule 8 says the measurement
+    is never deleted, only its contribution suppressed. `suppressed` records
+    which categories were taken over and by what, so a reader can see why the
+    score does not match the finding list.
+    """
+    fails = list(internal.get("failures") or [])
+    kept = [f for f in fails
+            if str(f.get("category", "")) not in categories]
+    if len(kept) == len(fails):
+        return internal
+    weighted = sum(float(f.get("severity") or 0) for f in kept)
+    size = float(internal.get("size") or max(1, len(fails)))
+    return {**internal,
+            "score": round(1.0 - weighted / (weighted + size), 3)
+            if (weighted + size) else 1.0,
+            "suppressed": sorted(categories),
+            "score_before_suppression": internal.get("score")}
+
+
 def compute_trust(recommendations: Any, conformance: Any, internal_alignment: Any,
                   alignment: Any, uncertainty: Any, picks: Any,
                   consequence: Any = None,
                   no_hazards: bool = False,
                   graph_b_internal: Any = None,
-                  graph_b_uncertainty: Any = None) -> dict[str, Any]:
+                  graph_b_uncertainty: Any = None,
+                  singular_errors: Any = None) -> dict[str, Any]:
     """Fold the objective evals into a global trust score + ranked breakdown,
     plus per-recommendation trust (with the separate consequence axis attached
     for display). Deterministic; guarded against missing or malformed inputs."""
@@ -1453,6 +1503,20 @@ def compute_trust(recommendations: Any, conformance: Any, internal_alignment: An
     consequence = consequence if isinstance(consequence, dict) else {}
     conformance = conformance if isinstance(conformance, dict) else {}
     internal = internal_alignment if isinstance(internal_alignment, dict) else {}
+    # F48 — the singular error library. A weighted average of six checks cannot
+    # express "this one thing is disqualifying": the most any single factor can
+    # take off is 0.22, so a run that fails one thing completely floors out
+    # around 0.55. These are priced separately and scaled by CONSEQUENCE.
+    from agentic.errors4 import (suppressed_categories, total_deduction)
+    sing = [e for e in (singular_errors or []) if isinstance(e, dict)]
+    # DOUBLE CHARGING. `victim_left_behind` is the same condition that already
+    # produces a severity-2 coverage gap inside internal_alignment. The library
+    # takes it over, so the weighted side must stop charging it — one failure,
+    # one charge. The finding stays in the record and on screen (iron rule 8);
+    # only its contribution to the score is removed.
+    _taken = suppressed_categories(sing)
+    if _taken and internal.get("failures"):
+        internal = _rescore_without(internal, _taken)
     alignment = alignment if isinstance(alignment, dict) else {}
     uncertainty = uncertainty if isinstance(uncertainty, dict) else {}
     picks = picks if isinstance(picks, dict) else {}
@@ -1543,10 +1607,35 @@ def compute_trust(recommendations: Any, conformance: Any, internal_alignment: An
                                         uncertainty, picks)})
     contributors.sort(key=lambda c: -c["contribution"])
     global_penalty = round(sum(c["contribution"] for c in contributors), 3)
-    score = round(1 - global_penalty, 3)
-    band = "high" if score >= 0.7 else "moderate" if score >= 0.4 else "low"
+    weighted_score = round(1 - global_penalty, 3)
+    # F48 — the singular errors come off AFTER the weighted sum, not as another
+    # share of it. That is the whole point: they are not matters of degree, so
+    # averaging them in would re-flatten exactly what they exist to separate.
+    # Floored at 0, because a deduction cannot make trust negative.
+    deduction = total_deduction(sing)
+    score = round(max(0.0, weighted_score - deduction), 3)
+    # F48 bands, placed on the six frozen scenes AFTER the singular errors
+    # spread them out. The old 0.40 line sat below every run ever recorded, so
+    # "low" had never once fired.
+    #
+    # Both cut points sit in the middle of a large gap in the observed data,
+    # which is the only honest way to place them with six runs:
+    #
+    #     0.890  B_pool                      high
+    #     0.749  E_collapse                  high
+    #     ---- 0.70 ----     gap here is 0.206 wide
+    #     0.543  A_fire                      moderate
+    #     0.519  C_tanker                    moderate
+    #     ---- 0.50 ----     gap here is 0.203 wide
+    #     0.316  D_aerial                    low
+    #     0.085  F_park_control              low
+    band = "high" if score >= 0.70 else "moderate" if score >= 0.50 else "low"
     return {
         "score": score, "band": band, "global_penalty": global_penalty,
+        # kept apart so a reader can see which half did the damage
+        "weighted_score": weighted_score,
+        "singular_deduction": deduction,
+        "singular_errors": sing,
         "weights": TRUST_WEIGHTS,
         "not_applicable": [{"signal": s, "reason": r}
                            for s, r in sorted(not_applicable.items())],
@@ -1569,7 +1658,7 @@ def compute_trust(recommendations: Any, conformance: Any, internal_alignment: An
             ("A-vs-B was not scored — " + "; ".join(gate["reasons"])
              + ". Trust rests on Graph A. "
              if not gate["trusted"] else "")
-            + _trust_narrative(score, band, contributors)
+            + _trust_narrative(score, band, contributors, not_applicable)
             + (f" Measured on {len(contributors)} of {len(TRUST_WEIGHTS)} "
                f"signals — "
                + ", ".join(sorted(not_applicable)) + " had nothing to compare."

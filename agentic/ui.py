@@ -1619,6 +1619,66 @@ def _graph_judge_rows(gj: dict) -> list:
     return rows
 
 
+def _trust_explanation_rows(trust: dict, alignment: dict) -> list:
+    """F48. Three lines instead of a paragraph, and entity ids in line 2.
+
+    The old explanation ran to four or five clauses, took the same shape on
+    every scene, and never named a single entity — "2 seen-but-not-acted"
+    where it could say "hazmat_worker_1, hazmat_worker_2". A reader deciding
+    whether to act on emergency advice cannot do anything with a count.
+
+    Falls back to the stored paragraph for runs recorded before F48, so old
+    event streams still replay with something to read.
+    """
+    from agentic.errors4 import explain_trust
+    try:
+        lines = explain_trust(trust, alignment)
+    except Exception:
+        lines = []
+    if not any(lines):
+        return [html.Div(trust.get("explanation", ""),
+                         style={"fontSize": "12px", "color": "#334155",
+                                "margin": "2px 0 6px"})] if trust.get(
+            "explanation") else []
+    styles = [{"fontSize": "12.5px", "color": "#334155", "fontWeight": "600"},
+              {"fontSize": "11.5px", "color": "#b45309"},
+              {"fontSize": "11px", "color": "#64748b"}]
+    return [html.Div(t, style={**st, "margin": "1px 0"})
+            for t, st in zip(lines, styles) if t] + \
+           [html.Div(style={"marginBottom": "5px"})]
+
+
+def _singular_error_rows(trust: dict) -> list:
+    """F48. The named errors, priced by consequence, shown as their own block.
+
+    These do NOT come out of the weighted average — they are subtracted after
+    it — so they need their own place on screen or the arithmetic looks wrong:
+    a reader adding up the six contributors would not reach the score.
+    """
+    errs = [e for e in (trust.get("singular_errors") or []) if isinstance(e, dict)]
+    if not errs:
+        return []
+    rows = [html.Div([
+        html.Span("SERIOUS SINGLE ERRORS", className="unc-tag"),
+        html.Span(f"  −{trust.get('singular_deduction', 0):.2f} off "
+                  f"{trust.get('weighted_score', 0):.2f}",
+                  title="priced by consequence: the same error costs more when "
+                        "it happens to a person than to a vehicle. Subtracted "
+                        "AFTER the weighted checks, not averaged in.",
+                  style={"fontSize": "11px", "color": "#b91c1c",
+                         "fontWeight": "700"})],
+        style={"marginTop": "4px"})]
+    for e in errs:
+        rows.append(html.Div([
+            html.Span(f"−{e.get('deduction', 0):.2f}  ",
+                      style={"fontWeight": "700", "color": "#b91c1c"}),
+            html.Span(str(e.get("detail", ""))),
+            html.Span(f"  ({e.get('ceiling')} × {e.get('consequence')} "
+                      f"consequence)", style={"color": "#94a3b8"}),
+        ], style={"fontSize": "11.5px", "padding": "1px 0 1px 8px"}))
+    return rows
+
+
 def _effect_toggle_rows(al: dict) -> list:
     """F45. The effect switch, and the wiring check the default cannot see.
 
@@ -2351,10 +2411,8 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                           style={"fontSize": "13px", "fontWeight": "800",
                                  "color": bcol}),
             ], style={"marginBottom": "3px"}),
-            html.Div(trust.get("explanation", ""),
-                     style={"fontSize": "12px", "color": "#334155",
-                            "margin": "2px 0 6px"}),
-        ]
+        ] + _trust_explanation_rows(trust, s4.get("alignment") or {}) \
+          + _singular_error_rows(trust)
         # what this means → what to do (reliability of the advice, NOT the
         # emergency's urgency, and NOT groundedness)
         _WHATDO = {

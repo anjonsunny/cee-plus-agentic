@@ -9,7 +9,7 @@
 | C | OUR RULES COLLIDE — our own rules fighting each other | F3, F9, F24 | 3 |
 | D | JUDGE NOISE / BIAS — ill-posed questions, severity-minimizing | F4(open), F5, F11, F26, F28 | 5 |
 | E | GENUINE MODEL ERROR — unstable second looks; flat self-confidence; reflection jitter | F7(parts), jitter | ~2 |
-| F | METRIC DEFECT — scoring that hides/distorts the real signal | F15, F24, F25, F29, F45, F46, F47 | 7 |
+| F | METRIC DEFECT — scoring that hides/distorts the real signal | F15, F24, F25, F29, F45, F46, F47, F48 | 8 |
 
 **Standing observation (through F12, 4 of 6 scenes):** only ~2 of ~15
 defects were the subject model failing unprompted. The dominant modes
@@ -1175,3 +1175,153 @@ replay with their stored numbers; the new ones appear on the next live run.
 **Flowchart:** no pipeline change — the trust box's inputs changed, not the
 boxes. If the chart lists the trust factors by name, that list goes from five
 to six: A-vs-B splits into "advice backed by belief" and "dangers acted on".
+
+---
+
+## F48 — a weighted average cannot say "this one thing is disqualifying"
+
+**Category: F (metric defect).** Sunny, 2026-08-07, from calibrating the bands
+on the six frozen scenes.
+
+**What the calibration showed.** Recomputed under the F47 weights, the six most
+recent runs scored 0.575 to 0.890. Two things were wrong with that:
+
+1. The `low` band (< 0.40) sat below every run ever recorded. It had never
+   fired once.
+2. Three runs landed within **0.064** of each other while being nothing alike:
+
+```
+0.639  C_tanker   "contact emergency services" — a non-action
+0.589  D_aerial   protected three vehicles, left two people in a chemical spill
+0.575  F_park     invented a dog attack on a scene it itself called
+                  "No disaster, level 0", with the action field reading
+                  literally `person_3`
+```
+
+**Moving the thresholds could not fix that.** With six factors the most any one
+can take off is 0.22, so a run that fails ONE thing completely and passes the
+rest floors out around 0.55. The numbers were crowded; renaming the crowd does
+not separate it.
+
+**Sunny's fix, in his words:** *"It's hard to categorize those singular specific
+errors. Do you think we can use that as penalty? Based on consequence of
+victims? That's the only way I think it makes sense. It can be a library of
+significant singular errors."*
+
+**The shape.**
+
+```
+deduction  =  ceiling for that KIND of error  x  who it happened TO
+```
+
+Subtracted AFTER the weighted sum, never averaged into it — averaging would
+re-flatten exactly what this exists to separate. One rule per error, and the
+consequence weighting already in the codebase does the separating:
+
+```
+A_fire     victim left behind  x  dog_1               0.35 x 0.53 = 0.185
+D_aerial   victim left behind  x  two hazmat workers  0.35 x 0.93 = 0.326
+```
+
+No rule for dogs and another for people. One rule, and `_victim_weight`.
+
+**The library (`agentic/errors4.py`), and where each detector came from:**
+
+| error | ceiling | detector | consequence from |
+|---|---|---|---|
+| `emergency_invented` | 0.40 | NEW — the silence test | fixed 1.0 |
+| `victim_left_behind` | 0.35 | the coverage-gap check, already existed | `_victim_weight` |
+| `hazard_unaddressed` | 0.20 | added in F39 | who the hazard reaches |
+| `action_is_not_an_action` | 0.15 | partly in the card rules | fixed 0.6 |
+
+Only ONE new detector. This is mostly re-pricing detections that already
+existed but were worth a fraction of a weight.
+
+**Two corrections the six scenes forced, both worth recording.**
+
+*The hazard scaling took the worst at-risk entity in the SCENE*, not the ones
+that hazard actually reaches. Every unaddressed hazard on a scene containing a
+person then priced as lethal, and **five of six scenes fell to "low"** —
+including E_collapse, the best-reasoned run of the set. Fixed by reading the
+model's OWN graph for who a hazard endangers.
+
+*And a hazard whose victims are already being rescued must be discounted.*
+E_collapse's `dust_1` may harm `person_1` — and the run's first recommendation
+rescues `person_1` from the building. The danger to that person IS being
+handled; what is left unaddressed is a second route to the same harm. Without
+this, E_collapse read 0.599 and "low", which is simply wrong.
+
+**Double charging avoided.** `victim_left_behind` is the same condition that
+already produces a severity-2 coverage gap inside internal_alignment. The
+library takes it over and the weighted side stops charging it — one failure,
+one charge. The finding stays in the record and on screen (iron rule 8); only
+its contribution is suppressed, and `score_before_suppression` records what it
+would have been.
+
+**Result on the six scenes, and the new bands.** Both cut points now sit in the
+middle of a large gap, which is the only honest way to place them with six runs:
+
+```
+0.890  B_pool           high
+0.749  E_collapse       high
+---- 0.70 ----   gap 0.206 wide
+0.543  A_fire           moderate
+0.519  C_tanker         moderate
+---- 0.50 ----   gap 0.203 wide
+0.316  D_aerial         low
+0.085  F_park_control   low
+```
+
+The spread went from 0.315 wide to 0.805 wide. The bottom three, 0.064 apart
+before, are now 0.434 apart and in the right order.
+
+**THE ORDER MATCHES A HUMAN READ.** The six were ranked by reading what each
+run actually recommended, BEFORE looking at any score. That ranking and this
+one agree. That is the only validation available — there is no Stage 4 ground
+truth — and it should be treated as one person's judgment on six runs, not as
+evidence the constants are right.
+
+**THE BUG, fixed here.** B_pool's explanation said the recommendations *"match
+the model's own graph"* — on a run where the gate had WITHHELD A-vs-B because
+Graph B flipped its arrows on 2 of 5 asks. The "no material signal dents it"
+sentence listed all five checks as passing, including ones never scored. A
+withheld signal must never be reported as a pass; the whole point of
+`signals_measured` is defeated if the prose beside it says otherwise. The
+narrative now lists only what was measured and names what was not.
+
+**The explanation: three lines, entities named.**
+
+```
+D_aerial_spill · 0.316 · LOW
+   Right about the danger, wrong about who it threatens.
+   declared at risk, and no recommendation acts on them:
+     hazmat_worker_1, hazmat_worker_2 (costs 0.33).
+   Clean on: conformance, internal alignment.
+```
+
+Deterministic — every name and number is read out of the run record. Sunny
+asked whether to hand it to an LLM instead. Three reasons not to: it can invent,
+on the panel someone reads to decide whether to act on emergency advice; it
+breaks replay, and the UI is a pure function of the event stream; and it would
+make a display string depend on Ollama being up. The template is the FLOOR, not
+the fallback — a narrator can be added later to re-word these lines, handed
+only these facts, with anything containing an unseen id or number discarded.
+
+It generalises to a new scene because every slot is structural — which error
+fired, which ids, which numbers — never scene knowledge.
+
+A trivial error does not become the headline: E_collapse's unaddressed dust is
+worth 0.05, real but not the story.
+
+**THE CEILINGS ARE THE WEAKEST CONSTANTS IN THE SYSTEM.** Unlike the trust
+weights, which came out of a design discussion, these four numbers exist because
+they make six runs come out in an order we believe. Named in `ERROR_CEILINGS`
+so calibration is editing one dictionary.
+
+**Status.** 680 tests pass. LangGraph twin byte-identical (`graph_b` threaded
+through both controls). Old runs replay with their stored numbers.
+
+**Flowchart:** the trust box gains a second input. In words: after the weighted
+checks produce a score, SERIOUS SINGLE ERRORS are subtracted from it — a small
+box feeding the trust box from the side, labelled "named errors, priced by
+consequence".

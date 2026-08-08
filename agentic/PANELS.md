@@ -35,6 +35,8 @@ hides the findings that matter.
 | ~~effect-wording rules~~ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | ~~duplicate lone-hazard rule~~ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | ~~passing gate line~~ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **serious single errors** (F48) | ✅ named, per error | ✅ subtracted after the weighted sum | ✅ names the entities | | ✅ | ✅ verifiable |
+| three-line trust explanation (F48) | | | ✅ the main insight surface | | | |
 
 The three struck-through rows were silenced in F39. On C_tanker they were the
 ENTIRE conformance display, while `spill_1` — a declared hazard no

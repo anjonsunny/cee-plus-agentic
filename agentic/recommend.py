@@ -1258,6 +1258,7 @@ def run_graph_judge(record: Any, assessment: Any, graph_a: dict, graph_b: dict,
 def run_trust(recommendations: list[dict], conformance: dict,
               internal_alignment: dict, alignment: dict, uncertainty: dict,
               picks: dict, *, record: Any = None, assessment: Any = None,
+              graph_b: Any = None,
               graph_b_internal: Any = None, graph_b_uncertainty: Any = None,
               on_event: Any = None) -> dict:
     """Step 6 (Phase 1b, deterministic). Fold the objective evals + measured
@@ -1273,11 +1274,20 @@ def run_trust(recommendations: list[dict], conformance: dict,
     no_hazards = (str(getattr(assessment, "disaster_scenario", "")) == "No"
                   and not any(o.state_kind == "hazard_bearing"
                               for o in record.detected_objects))
+    # F48 — the singular error library, detected before trust so trust can
+    # price it. Deterministic; no model, no judge, no ground truth.
+    from agentic.errors4 import singular_errors
+    sing = singular_errors(record, assessment, recommendations, graph_b)
+    for _e in sing:
+        emit("singular_error", id=_e["id"], detail=_e["detail"],
+             entities=_e["entities"], consequence=_e["consequence"],
+             deduction=_e["deduction"])
     trust = compute_trust(recommendations, conformance, internal_alignment,
                           alignment, uncertainty, picks, consequence=cons,
                           no_hazards=no_hazards,
                           graph_b_internal=graph_b_internal,
-                          graph_b_uncertainty=graph_b_uncertainty)
+                          graph_b_uncertainty=graph_b_uncertainty,
+                          singular_errors=sing)
     emit("trust_ready", score=trust["score"], band=trust["band"],
          top_contributor=(trust["contributors"][0]["signal"]
                           if trust["contributors"] else None))
@@ -1371,6 +1381,7 @@ def run_stage4(record: Any, assessment: Any, image_path: str = "",
                       evals["internal_alignment"], evals["alignment"],
                       unc["uncertainty"], picks, record=record,
                       assessment=assessment,
+                      graph_b=graph_b,
                       graph_b_internal=evals.get("graph_b_internal"),
                       graph_b_uncertainty=gbu, on_event=on_event)
 

@@ -95,7 +95,9 @@
       "mcp__visualize__show_widget",
       "Bash(grep -v \"^\\\\s*$\")",
       "Bash(/Users/sunny/miniconda3/envs/clip_dash/bin/pytest agentic/test_graph_s4.py -q -p no:cacheprovider)",
-      "Bash(cd \"/Users/sunny/Documents/CEE+ *)"
+      "Bash(cd \"/Users/sunny/Documents/CEE+ *)",
+      "Bash(sed -i '' 's/from agentic.evals4 import \\(_victim_weight, _entity_weight_category,/from main import _entity_weight_category\\\\nfrom agentic.evals4 import \\(_victim_weight,/' /private/tmp/claude-501/-Users-sunny-Documents-CEE--Agentic/d3c41b5c-d093-4600-bd1b-4f5084cace72/scratchpad/proto.py)",
+      "Bash(/Users/sunny/miniconda3/envs/clip_dash/bin/python /private/tmp/claude-501/-Users-sunny-Documents-CEE--Agentic/d3c41b5c-d093-4600-bd1b-4f5084cace72/scratchpad/proto.py)"
     ]
   }
 }

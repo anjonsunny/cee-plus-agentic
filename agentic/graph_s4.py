@@ -140,6 +140,7 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
                       state["internal_alignment"], state["alignment"],
                       state.get("uncertainty", {}), state["picks"],
                       record=state["record"], assessment=state["assessment"],
+                      graph_b=state.get("graph_b"),
                       graph_b_internal=state.get("graph_b_internal"),
                       graph_b_uncertainty=state.get("graph_b_uncertainty"),
                       on_event=on_event)
