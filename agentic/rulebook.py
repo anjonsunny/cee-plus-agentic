@@ -148,6 +148,30 @@ RULES: dict[str, RuleChunk] = {
                  "with its state and bbox. If you truly cannot see it in "
                  "the image, leave your list unchanged.",
     ),
+    "state_is_a_label": RuleChunk(
+        rule_id="P3b",
+        rule="The state slot takes a CONDITION, never a noun. A word that is "
+             "already a legal label names what the entity IS; the state names "
+             "what condition it is in right now.",
+        rationale="The two slots ask different questions and one vocabulary "
+                  "answers both, so a noun in the state slot is legal-looking "
+                  "and meaningless. The generic vocabulary reminder does not "
+                  "help here: the model did not reach for an unknown word, it "
+                  "answered 'what is it?' twice. Naming that confusion is "
+                  "cheaper and more precise than listing thirty legal words "
+                  "again — and it says nothing about which condition is true, "
+                  "which stays the model's judgement.",
+        example="A noun repeated in the state slot -> flagged as a slot "
+                "confusion, not as an unknown word. A genuine condition the "
+                "vocabulary lacks -> the ordinary out-of-vocab rule.",
+        template="Entity {index} ('{raw_label}'): '{state}' is WHAT THIS "
+                 "ENTITY IS, not what condition it is in — you have already "
+                 "said that in the label. The state slot asks for its "
+                 "physical condition right now. The legal words, grouped by "
+                 "kind, are {state_words}.\n"
+                 "Pick the ONE that matches what you can see of THIS "
+                 "entity's condition.",
+    ),
     "caption_state_contradiction": RuleChunk(
         rule_id="P7",
         rule="A condition word the caption uses must be accounted for in the "
@@ -394,6 +418,107 @@ RULES: dict[str, RuleChunk] = {
                  "contradicts its declared state '{state}'. State alone "
                  "decides the kind (G4): at-risk state -> distress, "
                  "normal state -> proximity.",
+    ),
+
+    # ── R-family (F24): one recommendation, three surfaces, one law ─────
+    #
+    # The action is the thing being explained. The prose reason and the
+    # structured quad are two INDEPENDENT explanations of it, held to the same
+    # constraints and then made to answer for each other. These chunks are the
+    # text half of that law — code detects, the rulebook teaches — and become
+    # the tickets Stage 4 reflection quotes back.
+    "action_names_no_object_id": RuleChunk(
+        rule_id="R1",
+        rule="An action names the entities it operates on by their object_id, "
+             "never by a prose description of them.",
+        rationale="A description cannot be checked against anything. Two "
+                  "readers can disagree about which entity 'the area' meant, "
+                  "and so can the quad — which is exactly the disagreement "
+                  "the quad exists to rule out. An id makes the action "
+                  "answerable.",
+        example="WRONG: 'Secure the fallen vehicle.' RIGHT: 'Secure "
+                "<that vehicle's object_id>.' Same action, now checkable.",
+        template="Recommendation {rank}: your action reads '{action}'. It "
+                 "names no object_id, so nothing ties it to the danger you "
+                 "declared. Rewrite it naming the object_ids it operates on, "
+                 "exactly as they appear in the scene list. Do not change "
+                 "which action you are recommending.",
+    ),
+    "quad_explains_a_different_action": RuleChunk(
+        rule_id="R2",
+        rule="The action comes first; the reason and the quad are written to "
+             "explain it. So each explanation must account for what the "
+             "action actually operates on — the threat it addresses, or "
+             "someone that threat harms.",
+        rationale="This is the declared-vs-operative split, and the direction "
+                  "of it matters: an explanation that covers none of what the "
+                  "action touches has not been written for that action. A "
+                  "responder can name the serious hazard and then do "
+                  "something about a lesser one, and the write-up still reads "
+                  "correct. Making each explanation answer for the action is "
+                  "what turns that from persuasive into visible.",
+        example="WRONG: the action stabilises one object while the quad "
+                "declares an entirely different hazard that never touches it. "
+                "RIGHT: the explanation names the danger that the action is "
+                "actually responding to.",
+        template="Recommendation {rank}: your action operates on {acted_on}. "
+                 "Your quad declares {threat} and names {covered} — none of "
+                 "which is what the action touches, so the quad is explaining "
+                 "a different recommendation. Rewrite the quad to explain "
+                 "THIS action, or say that the action was the wrong one.",
+    ),
+    "reason_threat_not_declared": RuleChunk(
+        rule_id="R3",
+        rule="The prose reason obeys the SAME rules as the quad: its subject "
+             "must be a declared threat, its state a declared state, its verb "
+             "an effect from the list, and at-risk roles are never states.",
+        rationale="Holding the structure to a law and letting the prose run "
+                  "free guarantees they diverge, and then we cannot tell a "
+                  "real disagreement from one the rules forced. Under ONE law "
+                  "a surviving mismatch is the model's, and it means "
+                  "something.",
+        example="WRONG: prose blames an entity that is not on the threats "
+                "line, so the quad has to substitute a different one. RIGHT: "
+                "the prose names a declared threat, and the quad is that same "
+                "sentence with its slots filled.",
+        template="Recommendation {rank}: your reason says '{reason}'. It "
+                 "blames {reason_threat}, which is not on the threats line "
+                 "for this scene. Either name a declared threat, or say that "
+                 "your quad's threat was the one you meant.",
+    ),
+    "subject_mismatch": RuleChunk(
+        rule_id="R4",
+        rule="The reason and the quad are the same claim in two forms. The "
+             "reason's subject IS the quad's threat; the entities the reason "
+             "says are harmed ARE the quad's affected_objects.",
+        rationale="Sharing the same object_ids is not agreeing. The same two "
+                  "entities can appear in both with cause and effect swapped, "
+                  "and an id-overlap check passes it. Comparing the ROLES is "
+                  "what catches a reversed direction — the error CEE+ exists "
+                  "to find.",
+        example="WRONG: the prose has A harming B while the quad has B "
+                "harming A — identical ids, opposite claim. RIGHT: both name "
+                "the same source, the same effect, the same harmed entities.",
+        template="Recommendation {rank}: your reason blames "
+                 "{reason_threat} while your quad blames {quad_threat}. Those "
+                 "are two different causal claims about one action. Decide "
+                 "which one you mean and make both say it.",
+    ),
+    "remaining_risk_role_word": RuleChunk(
+        rule_id="R5",
+        rule="remaining_risk is an (object_id, state) pair. 'distress' and "
+             "'proximity' are at_risk_as ROLES, not states — the same ban the "
+             "quad already carries.",
+        rationale="One vocabulary law across every slot that takes a state. A "
+                  "role word here says how an entity is exposed, not what "
+                  "condition it is in, so the pair names no residual hazard "
+                  "and the field silently stops meaning anything.",
+        example="WRONG: a pair whose second half is an exposure role. RIGHT: "
+                "a pair whose second half is that entity's declared state.",
+        template="Recommendation {rank}: your remaining_risk is "
+                 "'{remaining_risk}'. '{role}' is how an entity is exposed, "
+                 "not a condition it is in. Give the entity's declared state "
+                 "instead, or name a different residual risk.",
     ),
 }
 

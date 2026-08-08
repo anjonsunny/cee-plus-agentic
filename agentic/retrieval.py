@@ -94,10 +94,15 @@ def set_retrieval(mode: str | None) -> None:
 
 
 def retrieval_mode() -> str:
-    """rulebook (default) | rag | both — UI override, else AGENTIC_RETRIEVAL."""
+    """rulebook | rag | both (default) — UI override, else AGENTIC_RETRIEVAL.
+
+    'both' is the default from 2026-07-28 (Sunny): exact lookup answers, RAG
+    runs in shadow beside it, and the two are compared on every retrieval.
+    A seam only measured when someone remembers to switch it on is a seam
+    nobody measures."""
     if _MODE_OVERRIDE:
         return _MODE_OVERRIDE
-    return os.getenv("AGENTIC_RETRIEVAL", "rulebook").strip().lower()
+    return os.getenv("AGENTIC_RETRIEVAL", "both").strip().lower()
 
 
 def query_for(kind: str) -> str:

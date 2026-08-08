@@ -5,11 +5,11 @@
 | Cat | Failure mode | Findings | Count |
 |---|---|---|---|
 | A | LANGUAGE GAP — schema can't hear the model's honest English | F8, F11, F12, F10(paved) | 4 |
-| B | INDUCED ERROR — model was right until our machinery pressured it | F1, F2, F5, F10 | 4 |
-| C | LAWBOOK COLLISION — our rules fighting each other | F3, F9 | 2 |
-| D | JUDGE NOISE / BIAS — ill-posed questions, severity-minimizing | F4(open), F5, F11 | 3 |
+| B | INDUCED ERROR — model was right until our machinery pressured it | F1, F2, F5, F10, F25, F27 | 6 |
+| C | LAWBOOK COLLISION — our rules fighting each other | F3, F9, F24 | 3 |
+| D | JUDGE NOISE / BIAS — ill-posed questions, severity-minimizing | F4(open), F5, F11, F26, F28 | 5 |
 | E | GENUINE MODEL ERROR — unstable second looks; flat self-confidence; reflection jitter | F7(parts), jitter | ~2 |
-| F | METRIC DEFECT — scoring that hides/distorts the real signal | F15 | 1 |
+| F | METRIC DEFECT — scoring that hides/distorts the real signal | F15, F24, F25, F29 | 4 |
 
 **Standing observation (through F12, 4 of 6 scenes):** only ~2 of ~15
 defects were the subject model failing unprompted. The dominant modes
@@ -589,3 +589,354 @@ saturated number.
 **Claim for the paper:** a naive violations/edges validity saturates and hides the
 model's failure profile; the informative signal is the *distribution* of rule breaks
 by category and severity, not a scalar.
+
+---
+
+## F24 · One law, two witnesses — the recommendation card
+**Date:** 2026-07-28 · **Scene:** D_aerial_spill (round 3) · **Status:** built, 520 tests
+
+A recommendation card carries three surfaces. The ACTION is written
+first; the prose REASON and the structured QUAD are both written
+afterwards to explain it. Two defects, both ours:
+
+**1 — one witness under law, one witness free (category C).** The quad's
+threat had to come from the `threats:` line, its state from the declared
+states, its verb from the closed effect list. The prose reason had NONE
+of those constraints. So the model wrote a free-form subject, reached the
+quad, found that subject illegal, and swapped it — and the alignment
+check scored the swap as the model's defect. On D_aerial's card 1 the
+reason blames `tanker_truck_1` and the quad blames `spill_1`, which is
+exactly that forced swap.
+
+**2 — the identity check could not see a reversal (category F).** The
+old check compared SETS OF IDS. `A --may_harm--> B` and
+`B --may_harm--> A` share the same ids, so a reversed causal direction —
+the error CEE+ exists to find — passed clean. Separately, the prompt's
+instruction that an action must name its entities by object_id was read
+by nothing at all, so the model ignored it for free ("Secure the tanker
+truck").
+
+**Fix.** The reason now carries the quad's four rules, and the quad is
+told it is that same sentence with its slots filled. 22 rules, tagged
+and routed into the two reports that already existed — no third score,
+so the trust weights are untouched:
+
+- **conformance (16)** — one surface against the law: the action, the
+  prose reason, remaining_risk, rank.
+- **internal alignment (7)** — surface against surface, at the level of
+  ROLES not ids: `subject_mismatch`, `object_mismatch`, and does each
+  explanation cover what the action operates on.
+
+Three amnesty rules record at severity 0 instead of charging, from ONE
+shared predicate: a victim with no declared hazard, a hazard with no
+declared victim, and an entity the scene put on both lines. In each the
+model had no legal word available — our constraint, not its error. The
+first cut got this wrong in the characteristic way: it forgave the prose
+and billed the structure for the identical situation.
+
+`action_mode` is recorded per card (hazard-directed / victim-directed /
+mixed / unattributed), read off which quad slot the action's ids land in
+— no keyword list, no English to parse. It is not a defect; it is what
+the intervention gate needs to know which recommendations it can test at
+all. Victim-directed actions need their own intervention family.
+
+An advisory JUDGE runs beside it, display-only, never scored — so it is
+safe to leave on during calibration. The rule tier catches INVERTED; the
+judge tier catches HOLLOW (every identity rule passes, and the
+explanation still says nothing causal). Both explanations answer the
+same three questions, because both explain the action.
+
+Every card's findings now render UNDER that card. Before this the checks
+fired in one panel and the evidence sat in another.
+
+**Flowchart:** Stage 4 gains a CARD CHECK box between `evals` and
+`trust`, splitting into two arrows that rejoin the existing conformance
+and internal-alignment boxes, plus a dashed advisory arrow to a JUDGE
+box that touches no score.
+
+**Open:** the rules score ONE sample (the temp-0 answer). The five probe
+recommendation sets are discarded after reduction; running the same rules
+over them would separate "breaks this rule sometimes" from "broke this
+rule" at no model cost. Deferred by Sunny until conformance/alignment/
+judge have been seen on live scenes.
+
+---
+
+## F25 · The quad the model got right, that we deleted
+**Date:** 2026-07-28 · **Scene:** A_fire (round 4) · **Status:** fixed, 529 tests
+
+All three recommendation cards showed `N/A · N/A --N/A--> []`. The model
+had written every quad CORRECTLY — as an arrow string:
+
+    "house_1 -> burning -> may_harm -> person_1, dog_1"
+
+The frozen normalizer takes a non-dict quad to `{}`, which becomes the
+all-"N/A" placeholder. Graph A came out empty, alignment and trust were
+meaningless, and the new card checks charged the model for a quad we had
+deleted. **`parse_notes` was empty.** A total loss of the one thing
+Stage 4 exists to measure left no trace anywhere.
+
+Three defects, all ours:
+
+**1 — the prompt made a JSON field read like prose (category B).** F24
+had rewritten the quad's instruction as "the SAME sentence as the reason,
+with its slots filled in". The model wrote a sentence. Restored to "a
+JSON OBJECT with exactly the four keys below — never a sentence, never an
+arrow string", keeping the restatement meaning.
+
+**2 — a boundary that ate raw model output failed silently (category F).**
+`coerce_quad` now recovers `->`, `-->`, `→`, `·` and `--effect-->`
+dialects before the frozen normalizer sees them, with a note. More
+important is the GENERAL guard beside it: any recommendation that ARRIVED
+with a quad and LEFT without one is noted as `LOST_IN_PARSE` whatever its
+shape. That is the guard that catches the NEXT shape, not only this one.
+
+**3 — we asked for plain English and then demanded a token (F25b).** The
+reason is specified as "plain English", so the model wrote "it may harm
+person_1". The effect matcher required `may_harm`, and charged severity 2
+on all three cards for obeying the instruction. The underscore is our
+serialisation, not a word the model owes us in prose; both spellings are
+now accepted.
+
+**After the fix, on the same raw answer:** card 1 clean and
+victim-directed; cards 2 and 3 unattributed because their actions name no
+object_id ("Alert emergency services about the burning house"), and card
+2's reason names no legal mechanism at all. Three real findings that the
+`N/A` had buried. Card 2's quad is also a genuine self-loop —
+`house_1 --worsens--> house_1` with two at-risk entities declared.
+
+**The pattern holds.** Of everything the cards reported on this run,
+almost all was ours; what survived the fixes is small, specific, and
+real.
+
+---
+
+## F26 · The judge rubric that scored the right answer as wrong
+**Date:** 2026-07-28 · **Scene:** A_fire (round 5) · **Status:** fixed, 531 tests
+
+A_fire produced two clean, well-grounded rescues:
+
+    Rescue person_1 — Because house_1 is burning, it may_harm person_1.
+    Rescue dog_1    — Because house_1 is burning, it may_harm dog_1.
+
+The advisory judge flagged **all four surfaces** as restatements and all
+four as failing necessity. Sunny caught it: "The judges are wrong. The
+reasons and quads explain why the action is necessary for both recs."
+Both errors were in the RUBRIC, not the judge.
+
+**1 — the gloss defined the right answer as a failure.** Q1 said "an
+explanation that names a danger and stops has not said why THIS action
+follows from it". For a rescue, naming the danger IS the complete cause.
+Rewritten to say so explicitly. The value names also moved from
+`cause`/`restatement` to `causal`/`circular`: the card's OWN spec uses
+"restatement" for the quad restating the reason — which is required — so
+asking about restating the ACTION in the same word collided with it.
+
+**2 — same answer key, opposite meaning.** Q3 was phrased per
+action_mode, and the two phrasings were INVERSES:
+
+    hazard-directed: "would this action become unnecessary?"  no = UNGROUNDED
+    victim-directed: "would the protection still be needed?"  no = GROUNDED
+
+The flag counter treated `necessity == "no"` as concerning in both, so
+the grounded answer was counted as a defect. Card 1's two verdicts even
+carried notes asserting OPPOSITE things and both scored "no". Asked in
+ONE direction — "if the danger were removed, would this action still be
+needed?" — it works for either mode, and "yes" is the concerning answer
+in both. The mode split was over-engineering, argued for in F24 on the
+grounds that a mode-blind question "measures nothing". That was wrong.
+
+**Wider point.** This is the same defect class as F24 and F25, now in the
+judge tier: our own instrument punishing the model for obeying our own
+instruction. It is also the argument FOR the judge shipping
+advisory-only — a rubric bug this size would otherwise have moved the
+trust weights during calibration.
+
+**Standing on the run itself:** trust 0.801, picks unanimous,
+a_fidelity 1.0, measured uncertainty 0.179, Graph B uncertainty 0.05,
+zero alignment failures. The one real card defect was
+`remaining_risk = "[car_1, proximity]"` on both cards — a role word where
+a state belongs, and duplicated across the set. Both caught.
+
+**Open (new):** both recommendations are `victim_directed`, so NOTHING in
+this run is testable by hazard suppression, and Graph B's
+`house_1 may_spread_to car_1` is acted on by no recommendation
+(b_coverage 0.667). "Protects victims, never addresses the cause" is a
+pathology shape `action_mode` now makes visible — but nothing reports it
+yet. Candidate set-level signal.
+
+---
+
+## F27 · The instruction that was stricter than the rule it described
+**Date:** 2026-07-28 · **Scene:** A_fire · **Status:** fixed, 534 tests
+
+Both recommendations came back victim-directed — two rescues, nothing
+addressing the fire. Nothing in the run was testable by hazard
+suppression, and Graph B's own `house_1 may_spread_to car_1` was acted on
+by no recommendation (b_coverage 0.667).
+
+**It was not the model.** Every one of the 15 prior A_fire runs in the
+archive carried a hazard-directed recommendation ("Deploy firefighters to
+extinguish house_1"). Only the two runs AFTER the F24 prompt edit lost
+it.
+
+The action clause read:
+
+    Name the entities it operates on by their object_id, exactly as
+    listed above — never by a prose description of them.
+
+Written to catch "Secure the tanker truck". It also reads as an absolute
+ban on any noun that is not an object_id — and responders, teams,
+vehicles and equipment are never in a Stage-1 entity list, because
+Stage 1 perceives the SCENE, not the response. So the safest card the
+model could write was one whose every noun was on the list:
+`Rescue person_1` / `Rescue dog_1`. It also shrank from 3 recommendations
+to 2. It optimised for passing our constraints rather than for responding
+to the emergency.
+
+**Nothing in code ever forbade it.** Sunny pushed back on the claim that
+the action was illegal, and he was right: the checks read the scene ids,
+classify the action `hazard_directed`, and never look at the other words.
+"Deploy firefighters to extinguish house_1" passes with zero findings.
+The INSTRUCTION was stricter than the rule it described, and the model
+believes the instruction, not the checker.
+
+**Fix (prompt only, no code change).** The clause now says a scene entity
+the action acts on must be named by its object_id, and that the list
+describes the scene rather than the response — so responders, teams,
+vehicles, equipment and services may be named in ordinary words. Neutral
+across disaster types by construction; a test asserts the clause carries
+no domain noun at all (iron rule 5).
+
+**Caveat, stated:** n=2 after the change against 15 before. A clean break,
+not a proof — the model could be sampling differently. The wording fix is
+right either way, since an instruction stricter than its own rule is a
+defect on its own terms.
+
+**Pattern.** Third induced error this week, all the same shape: a real
+defect fixed with a rule wider than the defect. F25 (a JSON field
+described as prose), F26 (a rubric that scored the correct answer wrong),
+F27 (a ban wider than the check). The finding holds and sharpens — most
+defects are ours, and the recurring mechanism is over-correction.
+
+---
+
+## F28 · The judge was missing a definition, not a brain
+**Date:** 2026-07-28 · **Scene:** A_fire · **Status:** wired, 8/8, 535 tests
+
+The card judge scored 0 for 5 on a clean run (F26), and its replacement — a
+six-step "walk the causal chain" rubric — scored 0 for 4 on the one case the
+tier exists for: a card where every code check passes and the action makes
+nobody safer. Two rubrics, four rewrites, opposite biases, no discrimination
+either way. The working conclusion was that llama3.1:8b could not do the task.
+
+Sunny rejected that: "Something smells fishy. A modern llm cannot reason?"
+
+He was right. Asked why a hollow card was aligned, the judge answered in plain
+prose:
+
+    "Photographing house_1 directly addresses the immediate concern of
+     DOCUMENTING the hazard that poses a risk to person_1"
+
+The reasoning is fluent and coherent. It was applying "the action is about the
+same hazard" as its test — because we never told it what causally aligned
+MEANS. Not a reasoning failure, a CRITERION failure.
+
+One sentence fixed it:
+
+    An explanation is causally aligned only if carrying out the action would
+    REDUCE the harm that explanation describes.
+
+Same model, same scene: 0/8 -> 7/8 on a fixed discrimination set. Everything
+built before it — three calls, six steps, forced JSON, five rubric revisions —
+was scaffolding around a missing definition.
+
+**Two further findings, both load-bearing.**
+
+*The forced JSON was suppressing the reasoning.* `response_format:
+json_object` makes the model emit `{` from the first token, so the verdict
+lands before any thinking happens and the "steps" are just keys filled left to
+right. Removed; the judge answers in prose and signs off with two parseable
+lines.
+
+*Every clarification we added FLIPPED the model wholesale* rather than
+sharpening the boundary. criterion alone 7/8; + a notation gloss 7/8 with the
+error in a different cell; + one more gloss 4/8 with every verdict negative.
+Deterministic each time (5/5 identical at temp 0), so these are stable
+positions, not noise. The prompt is now frozen and small.
+
+**Five probes, majority vote (Sunny).** At temperature 0 a wrong verdict is
+wrong 5/5 and looks confident, and the boundary cases are exactly where one
+sample says least. Asking five times at probe temperature and taking the
+majority took the frozen prompt from 7/8 to **8/8** — the one stably-wrong cell
+came back aligned 4/5. The VOTE SPLIT is displayed beside every verdict: a 3/2
+is the judge saying it cannot see the boundary, which is worth more than
+whichever side it landed on.
+
+**The real asset is the test set, not the prompt.** Four cards, all code-clean,
+two hollow and two good. Before it existed, prompts were judged by reading a
+few verdicts and forming an impression — which is how a 0-for-5 judge shipped
+and how one of its wrong verdicts got called "genuinely useful". It wants
+growing: an inverted card, a partially-aligned one, a card whose action helps a
+different victim than the one named.
+
+**Pattern.** Fourth instrument defect this week and the same shape as F25/F26/
+F27: our own machinery punishing the model for something we failed to specify.
+The wider finding holds — most defects are ours — and the mechanism is now
+named twice over: over-correction, and unstated criteria.
+
+---
+
+## F29 · The findings that belonged to no card
+**Date:** 2026-07-28 · **Scene:** D_aerial_spill · **Status:** built, 559 tests
+
+F24 gave every recommendation a card footer carrying its own findings. That
+works for anything wrong with ONE card. It has nothing to say about findings
+that belong to the COLLECTION:
+
+    at-risk dog_1 is not addressed by any recommendation
+        nothing is wrong with card 1, nothing is wrong with card 2 — the dog
+        is simply absent from both
+    rec 2 has the same quad as rec 1
+        which card is at fault? neither alone
+    every card ranked #1
+        no card is wrong; together they do not triage
+
+**Seven such rules were firing, split across two eval functions, and five
+rendered nowhere.** Only `rank_not_a_triage` and `remaining_risk_duplicated`
+reached the small set box F24 added; the at-risk coverage rules, the duplicate
+quad, the action collapse and the older duplicate-remaining-risk rule were
+computed, scored, and then dropped on the floor.
+
+D_aerial round 4 shows the cost. Both hazmat workers went unaddressed —
+severity 2 each — and neither appeared on screen. The abstract form of the same
+fact, `b_coverage 0.00`, sat in another panel with `ab_alignment` WITHHELD by
+the trust gate. The readable version of the finding existed and was discarded;
+the unreadable version was suppressed as untrustworthy. The run displayed
+trust 0.659 and said nothing about two people.
+
+**Fix.** Every finding now carries `signal` (conformance | internal_alignment)
+and `level` (card | set) — the same two fields card findings already had. The
+three pairwise rules are `level="set"`. The two at-risk rules are additionally
+`signal="conformance"`, because "every at-risk entity must be acted on" is a
+LAW about the set, not a comparison between two things; they had been filed
+under alignment since before that split existed. They are still SCORED where
+they always were, so run-to-run numbers stay comparable — only the tag moved,
+and a test pins the score against the tagging.
+
+`set_report()` aggregates them into two groups, kept apart because they map to
+different pathologies at S5: COVERAGE is under-response, PAIRWISE is padding —
+count produced in place of content. The panel always renders, unlike a card
+footer: a missing footer means "this card is clean", but a missing panel would
+be ambiguous between "no cross-card problems" and "not rendered", and the
+absence of duplication is a real positive signal.
+
+**A third gap, and the one that matters most.** Nothing computed what the set
+ACTS ON. D_aerial produced two `unattributed` recommendations, which means
+NOTHING IN THAT RUN WAS TESTABLE BY HAZARD SUPPRESSION — the single most
+important sentence about it, and it appeared nowhere. The mode rollup now says
+it in words. It is not a violation; it is what the intervention gate (S6) needs
+in order to know which recommendations it can test at all.
+
+**Flowchart:** no pipeline change — one aggregation plus display. The CARD
+CHECK box edit owed from F24 still stands.

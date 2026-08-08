@@ -66,7 +66,30 @@
       "Bash(python3 -c \"import fpdf; print\\('fpdf ok'\\)\")",
       "Bash(pip3 --version)",
       "Bash(pip3 install *)",
-      "Bash(python3 -c \"import fpdf; print\\('fpdf2 ready, version', fpdf.__version__\\)\")"
+      "Bash(python3 -c \"import fpdf; print\\('fpdf2 ready, version', fpdf.__version__\\)\")",
+      "Bash(/Users/sunny/miniconda3/envs/clip_dash/bin/pytest agentic/ -q -p no:cacheprovider)",
+      "Bash(PYTHONPATH=. /Users/sunny/miniconda3/envs/clip_dash/bin/python -c ' *)",
+      "Bash(curl -s -m 3 http://localhost:11434/api/tags)",
+      "Bash(lsof -nP -iTCP:11434)",
+      "Bash(curl -s -m 5 http://localhost:11434/api/tags)",
+      "Bash(curl -s -m 5 http://127.0.0.1:11434/api/tags)",
+      "Bash(awk 'NR>3525 && NR<3545 && /^def /{print NR\": \"$0}' agentic/ui.py)",
+      "Bash(PYTHONPATH=. /Users/sunny/miniconda3/envs/clip_dash/bin/python -c \"import agentic.evals4; print\\('imports OK'\\)\")",
+      "Bash(/Users/sunny/miniconda3/envs/clip_dash/bin/python -c ' *)",
+      "Bash(/Users/sunny/miniconda3/envs/clip_dash/bin/python -)",
+      "Bash(PYTHONPATH=. /Users/sunny/miniconda3/envs/clip_dash/bin/python -)",
+      "Bash(grep -oE '\"[a-z_]{6,40}\"' agentic/evals4.py)",
+      "Bash(PYTHONPATH=. /Users/sunny/miniconda3/envs/clip_dash/bin/python -c \"import agentic.ui\")",
+      "Bash(/Users/sunny/miniconda3/envs/clip_dash/bin/pytest agentic/test_ui.py -q -p no:cacheprovider)",
+      "Bash(/Users/sunny/miniconda3/envs/clip_dash/bin/pytest agentic/test_ui.py::test_the_semantic_block_completes_the_panel -q -p no:cacheprovider)",
+      "Bash(/Users/sunny/miniconda3/envs/clip_dash/bin/pytest agentic/test_ui.py::test_stage4_panel_renders_from_event agentic/test_ui.py::test_a_card_with_no_findings_grows_no_footer -q -p no:cacheprovider)",
+      "Bash(cp agentic/ui.py /tmp/ui_b2.py)",
+      "Bash(PYTHONPATH=. /Users/sunny/miniconda3/envs/clip_dash/bin/python -c \"import agentic.ui; print\\('ok'\\)\")",
+      "Bash(PYTHONPATH=. /Users/sunny/miniconda3/envs/clip_dash/bin/python -c \"import agentic.judge_set; print\\('ok'\\)\")",
+      "Bash(PYTHONPATH=. /Users/sunny/miniconda3/envs/clip_dash/bin/python -m agentic.judge_set --graphs)",
+      "Bash(/Users/sunny/miniconda3/envs/clip_dash/bin/pytest agentic/test_ui.py::test_the_graph_judge_is_labelled_advisory -q -p no:cacheprovider)",
+      "Bash(/Users/sunny/miniconda3/envs/clip_dash/bin/pytest agentic/test_ui.py::test_stage4_conformance_and_alignment_panels -q -p no:cacheprovider)",
+      "Bash(grep -vE \"^\\\\s*$\")"
     ]
   }
 }

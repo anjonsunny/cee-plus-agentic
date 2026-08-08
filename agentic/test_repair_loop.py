@@ -556,3 +556,92 @@ def test_arm_b_has_exactly_one_state_normaliser():
     # perception.py defines arm_b_canonical_state and is the ONLY place the
     # frozen Arm A function may be invoked.
     assert all(o.startswith("perception.py") for o in offenders), offenders
+
+
+# ── P3b: a noun in the state slot is a slot confusion, not a bad word ────
+
+def test_a_label_in_the_state_slot_is_named_as_such():
+    """D_aerial's shape: a NOUN in the state slot. The model did not reach for
+    an unknown word — it answered "what is it?" twice. Listing thirty legal
+    words at a model that was not short of vocabulary does not say what went
+    wrong. (chemical_spill itself is now accepted, so the example here is
+    another label — the rule is about the SLOT, not the word.)"""
+    v = [x for x in detect_violations(
+        [{"label": "spill", "state": "tanker_truck",
+          "anchor_bbox": [0, 0, 9, 9]}]) if "state" in x.kind]
+    assert len(v) == 1 and v[0].kind == "state_is_a_label"
+    text = v[0].instruction
+    assert "WHAT THIS ENTITY IS" in text
+    assert "already said that in the label" in text
+
+
+def test_a_genuinely_unknown_word_still_uses_the_ordinary_rule():
+    v = [x for x in detect_violations(
+        [{"label": "spill", "state": "glooping",
+          "anchor_bbox": [0, 0, 9, 9]}]) if "state" in x.kind]
+    assert len(v) == 1 and v[0].kind == "state_out_of_vocab"
+
+
+def test_p3b_never_says_which_condition_is_true():
+    """Iron rule 5: name the confusion, never the answer."""
+    v = [x for x in detect_violations(
+        [{"label": "spill", "state": "tanker_truck",
+          "anchor_bbox": [0, 0, 9, 9]}]) if x.kind == "state_is_a_label"][0]
+    low = v.instruction.lower()
+    for banned in ("should be", "use 'seeping'", "the answer is", "change it to"):
+        assert banned not in low
+
+
+# ── The cap counts circling, not repairing ──────────────────────────────
+
+def test_the_budget_extends_while_the_model_is_still_repairing():
+    """D_aerial: round 1 asked for a missing caption entity, the model added it
+    carrying a bad state, round 2 flagged the state, and the cap ended the loop
+    before it could be fixed — shipping a known-bad record that then triggered
+    a petition, which failed. Each round fixed something and surfaced
+    something DIFFERENT. That is repairing, not circling."""
+    seq = [
+        # r1 fixes the unknown word, but puts a NOUN in the state slot
+        [{"label": "spill", "state": "tanker_truck",
+          "anchor_bbox": [0, 0, 9, 9]}],
+        # r2 fixes the state, but answers the label with a family name
+        [{"label": "vehicle", "state": "leaking", "anchor_bbox": [0, 0, 9, 9]}],
+        # r3 fixes the label — clean
+        [{"label": "tanker_truck", "state": "leaking",
+          "anchor_bbox": [0, 0, 9, 9]}],
+    ]
+    box = {"i": 0}
+
+    def q(_prompt):
+        a = seq[min(box["i"], len(seq) - 1)]
+        box["i"] += 1
+        return a
+
+    out, trace = repair_entities(
+        [{"label": "spill", "state": "glooping", "anchor_bbox": [0, 0, 9, 9]}],
+        q)
+    # THREE rounds — the old hard cap of 2 stopped here with the label broken.
+    assert len(trace.rounds) == 3
+    assert trace.stopped_reason == "clean"
+    assert [v.kind for v in trace.rounds[0].violations] == ["state_out_of_vocab"]
+    assert [v.kind for v in trace.rounds[1].violations] == ["state_is_a_label"]
+    assert [v.kind for v in trace.rounds[2].violations] == ["family_name_as_label"]
+    assert out[0]["label"] == "tanker_truck"
+
+
+def test_circling_on_the_same_violation_still_stops_at_the_cap():
+    """The guard the cap exists for must survive: a model that keeps returning
+    the same defect gets no extra budget."""
+    box = {"i": 0}
+
+    def q(_prompt):
+        box["i"] += 1
+        # always a DIFFERENT unknown word, so 'changed' is True, but the
+        # violation set never changes — that is circling.
+        return [{"label": "spill", "state": f"gloop{box['i']}",
+                 "anchor_bbox": [0, 0, 9, 9]}]
+
+    _out, trace = repair_entities(
+        [{"label": "spill", "state": "gloop0", "anchor_bbox": [0, 0, 9, 9]}], q)
+    assert trace.stopped_reason == "cap_reached"
+    assert len(trace.rounds) <= 2

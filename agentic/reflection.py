@@ -64,6 +64,29 @@ class ReflectionRound(BaseModel):
     instruction: str                 # the full composed reflection prompt
     changed: bool = False
     violations_after: list[dict[str, Any]] = Field(default_factory=list)
+    # F34 — the DECISION LAYER before and after this round. Until now a round
+    # stored what it ASKED (triggers, instruction) and whether anything moved
+    # (changed), but never WHAT moved. So across 67 recorded traces there was
+    # no way to ask the two questions that matter:
+    #
+    #   did reflection ADD a hazard, or REMOVE one?
+    #   was that hazard a serious one, or dust?
+    #
+    # Reconstructing it meant regex-scraping the previous answer back out of
+    # the instruction prompt — fragile, and impossible once the prompt wording
+    # changes. These four fields are already in memory when the round runs;
+    # they were simply never written down. Costs nothing, and every run from
+    # here is analysable.
+    scenario_before: Optional[str] = None
+    scenario_after: Optional[str] = None
+    level_before: Optional[int] = None
+    level_after: Optional[int] = None
+    # [{object_id, label, state}] — the label and state ride along so a
+    # consequence lookup does not need the perception record months later.
+    threats_before: list[dict[str, Any]] = Field(default_factory=list)
+    threats_after: list[dict[str, Any]] = Field(default_factory=list)
+    at_risk_before: list[dict[str, Any]] = Field(default_factory=list)
+    at_risk_after: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ReflectionTrace(BaseModel):
@@ -266,6 +289,31 @@ def run_reflection(record: Any, assessment: Any,
 
     trace = ReflectionTrace(u_before=getattr(mu, "score", None))
     notes_accum: list[str] = []
+
+    # label/state per object_id, so a round's snapshot carries what a
+    # consequence lookup needs without re-opening the perception record.
+    _meta = {str(getattr(o, "object_id", "")): {
+                 "label": str(getattr(o, "label", "") or ""),
+                 "state": str(getattr(o, "state", "") or "")}
+             for o in (getattr(record, "detected_objects", None) or [])}
+
+    def _snapshot(a: Any) -> dict[str, Any]:
+        """The decision layer of an assessment, flattened for the record."""
+        def _entities(attr: str) -> list[dict[str, Any]]:
+            out = []
+            for e in (getattr(a, attr, None) or []):
+                oid = str(getattr(e, "object_id", "") or "")
+                row = {"object_id": oid, **_meta.get(oid, {})}
+                kind = getattr(e, "kind", None)
+                if kind:
+                    row["kind"] = str(kind)
+                out.append(row)
+            return out
+        lvl = getattr(a, "disaster_level", None)
+        return {"scenario": str(getattr(a, "disaster_scenario", "") or ""),
+                "level": lvl if isinstance(lvl, int) else None,
+                "threats": _entities("threats"),
+                "at_risk": _entities("at_risk")}
     for rnd in range(1, cap + 1):
         # Round 1 carries everything: violations + probe evidence + weak
         # reasons. Later rounds run on VIOLATIONS ONLY — probe triggers
@@ -288,19 +336,29 @@ def run_reflection(record: Any, assessment: Any,
         except Exception as exc:        # a dead model must not kill the run
             _emit("reflect_error", round=rnd, error=str(exc))
             trace.stopped_reason = "model_error"
+            _b = _snapshot(assessment)
             trace.rounds.append(ReflectionRound(
                 round_number=rnd, triggers=triggers,
                 instruction=instruction, changed=False,
-                violations_after=violations))
+                violations_after=violations,
+                scenario_before=_b["scenario"], scenario_after=_b["scenario"],
+                level_before=_b["level"], level_after=_b["level"],
+                threats_before=_b["threats"], threats_after=_b["threats"],
+                at_risk_before=_b["at_risk"], at_risk_after=_b["at_risk"]))
             break
         new_assessment, notes = parse_assessment(raw)
         notes_accum += [f"reflect_r{rnd}:{n}" for n in notes]
         new_violations = enforce_kinds(new_assessment, record)
         new_violations += internal_check(new_assessment, record)
         changed = new_assessment.model_dump() != assessment.model_dump()
+        _b, _a = _snapshot(assessment), _snapshot(new_assessment)
         trace.rounds.append(ReflectionRound(
             round_number=rnd, triggers=triggers, instruction=instruction,
-            changed=changed, violations_after=new_violations))
+            changed=changed, violations_after=new_violations,
+            scenario_before=_b["scenario"], scenario_after=_a["scenario"],
+            level_before=_b["level"], level_after=_a["level"],
+            threats_before=_b["threats"], threats_after=_a["threats"],
+            at_risk_before=_b["at_risk"], at_risk_after=_a["at_risk"]))
         _emit("reflect_round_done", round=rnd, changed=changed,
               violations_after=len(new_violations),
               violations_after_kinds=[v["kind"] for v in new_violations])

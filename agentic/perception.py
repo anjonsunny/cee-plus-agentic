@@ -71,11 +71,29 @@ EXTRA_NORMAL_STATES = {"swimming", "walking", "running", "parked",
 # its own. See ARM_B_STATE_OVERRIDES for the half that declines Arm A's fold.
 EXTRA_AT_RISK_STATES = {"struggling"}
 
+# Arm B hazard-bearing states. "chemical_spill" added 2026-07-28 (Sunny):
+# strictly it is a NOUN, and the state slot asks for a condition — but the
+# model reaches for it repeatedly, it unambiguously means "there is a
+# hazardous spill here", and the cost of refusing it was out of all proportion
+# to the error. One rejected word made the entity kind=unknown, so it could
+# not be a threat, so Stage 2 checks fired, so a petition ran and failed, and
+# an entire run became uninterpretable. Perception does not have to be perfect
+# for the reasoning to be worth measuring; a vocabulary miss should not gate
+# the thing we are actually studying.
+#
+# Deliberately NOT advertised in the state-word reminder: accepted when
+# offered, never taught. P3b still fires for other nouns in the state slot.
+EXTRA_HAZARD_BEARING_STATES = {"chemical_spill"}
+
 # Where Arm B DECLINES an Arm A synonym fold. Arm A is frozen and stays
 # untouched (iron rule 1); this is the Arm B layer on top, the same pattern
 # evals4 uses for the corrected trust read. Each entry is a mapping we
 # deliberately do not inherit, with the reason.
 ARM_B_STATE_OVERRIDES = {
+    # Retired in Arm B. Arm A keeps it and stays authoritative there; here it
+    # folds into the fallback we derive instead, so a model that emits it is
+    # not penalised and the record never carries the word.
+    "engulfing": "hazardous_in_context",
     # Arm A: struggling -> trapped. A swimmer in difficulty is in distress,
     # not confined; folding the two makes a caption's "struggling" read as a
     # claim about confinement it never made.
@@ -157,7 +175,7 @@ def arm_b_canonical_state(state: str) -> str:
 
 def state_kind(state: str) -> str:
     s = arm_b_canonical_state(state)
-    if s in HAZARD_BEARING_STATES:
+    if s in HAZARD_BEARING_STATES or s in EXTRA_HAZARD_BEARING_STATES:
         return "hazard_bearing"
     if s in AT_RISK_STATES or s in EXTRA_AT_RISK_STATES:
         return "at_risk"
@@ -278,19 +296,26 @@ def merge_duplicate_lifeforms(
 #
 # "No one says 'water engulfing a kid'. It's just a kid drowning in the
 # pool." In natural language the hazard lives inside the victim's VERB;
-# the schema wants it as a STATE on the water. Asking the model to say
-# `pool: engulfing` is asking it to speak outside its training
-# distribution — qwen answered `pool: normal` twice (F7), correctly,
-# about English. So the medium's hazard role is DERIVED IN CODE, never
-# demanded in the prompt. Precedent: enforce_kinds() — the declared state
-# decides, the model's claim is measured, not obeyed (main.py:1001).
+# the schema wants it as a STATE on the water. So the medium's hazard role
+# is DERIVED IN CODE, never demanded in the prompt. Precedent:
+# enforce_kinds() — the declared state decides, the model's claim is
+# measured, not obeyed (main.py:1001).
+#
+# ENGULFING IS RETIRED IN ARM B (Sunny, 2026-07-28). Arm A prescribes it for
+# a medium physically containing an at-risk entity and it stays in Arm A's
+# frozen vocabulary — but nothing in Arm B emits it and Arm B folds it away
+# if the model does. It reads as a claim nobody makes about a swimming pool,
+# and a word the reader has to translate is a word that hides the finding.
+# The derived state is now `hazardous_in_context`, Arm A's own designated
+# fallback for "harmful only because of its relationship to an at-risk
+# target" — which is exactly what a pool with a drowning child is.
 #
 # The rule stays deliberately tiny (one distress verb, water bodies only)
 # until the six-scene calibration says otherwise.
 
 MEDIUM_BOUND_HAZARDS: dict[str, tuple[str, tuple[str, ...]]] = {
     # victim state -> (derived medium state, labels that can host it)
-    "drowning": ("engulfing", ("pool", "water")),
+    "drowning": ("hazardous_in_context", ("pool", "water")),
 }
 
 
@@ -368,7 +393,7 @@ CRITICAL LABEL RULES:
   entity. A house on fire is one entity: label "house", state "burning". Do
   NOT add a separate fire entity for it. Emit a hazard-media entity only for
   diffuse media: smoke ("smoke", state "billowing"), floodwater or pool
-  water containing a victim ("water", state "rising"/"engulfing"), leaked
+  water containing a victim ("water", state "rising"), leaked
   liquid ("spill", state "leaking"/"seeping"), dust ("dust", state
   "billowing"), gas, and FREE-BURNING fire not attached to one object (a
   grass or brush fire: label "fire", state "spreading"). When both readings
@@ -387,7 +412,7 @@ For each entity give:
 - label: one specific noun from the allowed labels
 - state: a single lowercase word for its current condition (examples:
   burning, burnt, collapsed, collapsing, fallen, crushed, flooded, leaking,
-  spreading, billowing, rising, seeping, engulfing / injured, bleeding,
+  spreading, billowing, rising, seeping / injured, bleeding,
   fleeing, trapped, cowering, drowning, suffocating, unconscious / intact,
   standing, upright, dry, sealed, stationary, resting, healthy, stable,
   swimming, walking, running)

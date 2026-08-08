@@ -14,7 +14,7 @@ def test_every_rule_chunk_is_whole():
     assert set(RULES) == {"family_name_as_label", "label_out_of_vocab",
                           "state_out_of_vocab", "missing_anchor_bbox",
                           "caption_entity_missing", "duplicate_entity",
-                          "caption_state_contradiction",
+                          "caption_state_contradiction", "state_is_a_label",
                           # S-family: merged-stage assessment rules
                           "scenario_level_incoherent",
                           "missed_disaster_incoherence",
@@ -28,10 +28,18 @@ def test_every_rule_chunk_is_whole():
                           "geometry_adjacency",
                           "proximity_without_hazard",
                           "geometry_is_a_hint",
-                          "at_risk_kind_mismatch"}
+                          "at_risk_kind_mismatch",
+                          # R-family: one recommendation card, three surfaces
+                          # (action / prose reason / structured quad) held to
+                          # ONE law, then made to answer for each other.
+                          "action_names_no_object_id",
+                          "quad_explains_a_different_action",
+                          "reason_threat_not_declared",
+                          "subject_mismatch",
+                          "remaining_risk_role_word"}
     for kind, chunk in RULES.items():
         assert chunk.rule and chunk.rationale and chunk.example and chunk.template, kind
-        assert chunk.rule_id[0] in "PSG"
+        assert chunk.rule_id[0] in "PSGR"
 
 
 def test_retrieve_exact_lookup():

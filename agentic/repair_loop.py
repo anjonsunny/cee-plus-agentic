@@ -66,6 +66,15 @@ from agentic.vocabulary import (  # noqa: E402
 
 # The loop never runs more than this many repair calls per scene.
 MAX_REPAIR_ROUNDS = 2
+# ...unless it is making PROGRESS. A round that fixes something and surfaces
+# something new is repairing, not circling, and the cap exists to stop
+# circling. D_aerial 2026-07-28: round 1 asked for a missing caption entity,
+# the model added it carrying a bad state, round 2 flagged that state, and the
+# cap ended the loop before the model could fix what round 1 had caused. The
+# defect it shipped then triggered a petition, which failed. So: allow extra
+# rounds while the violation SET keeps changing, under a hard ceiling that
+# still makes non-termination impossible.
+MAX_REPAIR_ROUNDS_PROGRESSING = 4
 
 # States the repair prompt may remind the model of. This is vocabulary
 # DISCIPLINE (which words are legal), not perception guidance (which word
@@ -85,7 +94,7 @@ _STATE_WORD_REMINDER = (
     "suffocating, unconscious\n"
     "  hazard-bearing: burning, burnt, collapsed, collapsing, fallen, "
     "crushed, flooded, leaking, spreading, billowing, rising, seeping, "
-    "engulfing"
+    "hazardous_in_context"
 )
 
 
@@ -342,6 +351,22 @@ def detect_violations(
         # list the legal words; we NEVER suggest which one is true for
         # this entity - that would be coaching perception.
         if state_kind(resolve_state(canon, e.get("state", ""))) == "unknown":
+            # P3b: the offending word is itself a legal LABEL. The model did
+            # not reach for an unknown word — it answered "what is it?" twice.
+            # That is diagnosable, so name the confusion instead of listing
+            # thirty legal words at a model that was not short of vocabulary.
+            _st = str(e.get("state", "")).strip().lower()
+            _lc, _ln, _l_in, _l_fam = canonicalize_label(_st)
+            if _st and _l_in and not _l_fam and _lc != OTHER_LABEL:
+                violations.append(Violation(
+                    entity_index=i, raw_label=raw_label,
+                    kind="state_is_a_label",
+                    instruction=rulebook.instruction_for(
+                        "state_is_a_label", index=i, raw_label=raw_label,
+                        state=e.get("state", ""),
+                        state_words=_STATE_WORD_REMINDER),
+                ))
+                continue
             violations.append(Violation(
                 entity_index=i, raw_label=raw_label,
                 kind="state_out_of_vocab",
@@ -531,7 +556,10 @@ def repair_entities(
         emit("repair_stopped", reason="clean", rounds=0, remaining=[])
         return current, trace
 
-    for round_number in range(1, max_rounds + 1):
+    seen_sets: list[frozenset] = []
+    round_number = 0
+    while round_number < max_rounds:
+        round_number += 1
         emit("repair_round_started", round=round_number,
              open_violations=len(violations))
         prompt = build_repair_prompt(current, violations)
@@ -574,6 +602,21 @@ def repair_entities(
             emit("repair_stopped", reason="no_change", rounds=round_number,
                  remaining=[v.model_dump() for v in remaining])
             return current, trace
+
+        # PROGRESS, not circling: the violation set changed, so the model is
+        # repairing — extend the budget rather than stopping mid-repair with a
+        # known-bad record. A repeat of any set already seen is circling, and
+        # the ordinary cap applies.
+        sig = frozenset((v.kind, v.entity_index) for v in remaining)
+        prev = frozenset((v.kind, v.entity_index) for v in violations)
+        if (sig != prev and sig not in seen_sets
+                and round_number >= max_rounds
+                and max_rounds < MAX_REPAIR_ROUNDS_PROGRESSING):
+            max_rounds = min(max_rounds + 1, MAX_REPAIR_ROUNDS_PROGRESSING)
+            emit("repair_budget_extended", round=round_number,
+                 reason="violation set changed — repairing, not circling",
+                 now=[v.kind for v in remaining], cap=max_rounds)
+        seen_sets.append(prev)
         violations = remaining
 
     trace.stopped_reason = "cap_reached"

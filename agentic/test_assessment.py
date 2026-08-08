@@ -474,7 +474,7 @@ def test_granular_uncertainty_pinpoints_flickering_entity():
 def test_s2_no_verdict_with_danger_states_fires():
     """The push_06 / B_pool-capitulation catch, now in code."""
     rec = record([_obj("child_1", "child", "drowning", "at_risk"),
-                  _obj("pool_1", "pool", "engulfing", "hazard_bearing")])
+                  _obj("pool_1", "pool", "hazardous_in_context", "hazard_bearing")])
     a, _ = parse_assessment({"disaster_scenario": "No", "disaster_level": 0})
     kinds = [v["kind"] for v in internal_check(a, rec)]
     assert "missed_disaster_incoherence" in kinds
@@ -578,7 +578,7 @@ def test_assessment_derives_pool_hazard_before_judging():
                 "disaster_level": 7, "confidence": 0.9,
                 "reasoning": "child_1 is drowning in pool_1",
                 "threats": [{"object_id": "pool_1",
-                             "reason": "the pool is engulfing child_1"}],
+                             "reason": "the pool endangers child_1"}],
                 "at_risk": [{"object_id": "child_1", "kind": "distress",
                              "reason": "state is drowning"}]}
 
@@ -589,13 +589,13 @@ def test_assessment_derives_pool_hazard_before_judging():
                          reflect=False)
     derived = [e for e in events if e["type"] == "hazard_derived"]
     assert derived == [{"type": "hazard_derived", "medium": "pool_1",
-                        "was": "normal", "now": "engulfing",
+                        "was": "normal", "now": "hazardous_in_context",
                         "victim": "child_1", "victim_state": "drowning"}]
     # The record the whole stage reads was updated in place...
     pool = rec.detected_objects[1]
-    assert pool.state == "engulfing" and pool.state_kind == "hazard_bearing"
+    assert pool.state == "hazardous_in_context" and pool.state_kind == "hazard_bearing"
     # ...the prompt saw the derived state, not the model's 'normal'...
-    assert "engulfing" in seen_prompt["p"]
+    assert "hazardous_in_context" in seen_prompt["p"]
     # ...the context event counts the pool as a hazard...
     ctx = next(e for e in events if e["type"] == "assess_context")
     assert "pool_1" in ctx["hazard_ids"]

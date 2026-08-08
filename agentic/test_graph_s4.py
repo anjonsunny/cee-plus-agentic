@@ -46,7 +46,9 @@ def test_equivalence_straight_line():
     assert [e["type"] for e in ev_lg] == [
         "stage_started", "recommendations_ready", "graph_a_built",
         "graph_b_built", "targets_picked", "conformance_ready",
-        "internal_alignment_ready", "alignment_ready", "trust_ready",
+        "internal_alignment_ready", "alignment_ready",
+        "graph_b_internal_ready", "explanation_alignment_ready",
+        "set_report_ready", "trust_ready",
         "stage_done"]
 
 
@@ -110,11 +112,13 @@ def test_equivalence_on_malformed_recommend():
 # ── control flag / dispatcher / override ────────────────────────────────
 
 def test_control_flag_default(monkeypatch):
+    """LangGraph is the default from 2026-07-28 — the control we ship should
+    be the one every run exercises."""
     set_control(None)
     monkeypatch.delenv("AGENTIC_CONTROL", raising=False)
-    assert control_flag() == "python"
-    monkeypatch.setenv("AGENTIC_CONTROL", "LangGraph")
-    assert control_flag() == "langgraph"             # case-folded
+    assert control_flag() == "langgraph"
+    monkeypatch.setenv("AGENTIC_CONTROL", "Python")
+    assert control_flag() == "python"                # case-folded, opt out
 
 
 def test_dispatcher_routes_by_flag(monkeypatch):
@@ -140,3 +144,34 @@ def test_ui_override_beats_env(monkeypatch):
     assert control_flag() == "langgraph"
     set_control(None)
     assert control_flag() == "python"
+
+
+def test_the_card_judge_keeps_the_twin_byte_identical():
+    """F24. The judge is a node in the LangGraph control and a call in the
+    Python one, in the SAME place — so turning it on must not split the two
+    event streams or the two results."""
+    import json
+    verdict = json.dumps({"cause_or_restatement": "cause", "cause_note": "n",
+                          "relevance": "relevant", "relevance_note": "n",
+                          "necessity": "yes", "necessity_note": "n",
+                          "equivalence": "same_claim", "equivalence_note": "n",
+                          "compound": "single", "compound_note": "n"})
+    ev_py, ev_lg = [], []
+    r_py = run_stage4(_record(), _asm(), "/x/E.jpg", query_fn=_script(),
+                      judge_fn=lambda p: verdict, on_event=ev_py.append)
+    r_lg = run_s4_graph(_record(), _asm(), "/x/E.jpg", query_fn=_script(),
+                        judge_fn=lambda p: verdict, on_event=ev_lg.append)
+    assert [e["type"] for e in ev_py] == [e["type"] for e in ev_lg]
+    assert "card_judge_ready" in [e["type"] for e in ev_py]
+    assert r_py.card_judge == r_lg.card_judge and r_py.card_judge
+    assert r_py.model_dump() == r_lg.model_dump()
+
+
+def test_the_judge_is_off_unless_asked_for():
+    """The hermetic spine and the equivalence tests must stay model-free, so
+    the judge is never called implicitly."""
+    ev: list = []
+    r = run_stage4(_record(), _asm(), "/x/E.jpg", query_fn=_script(),
+                   on_event=ev.append)
+    assert r.card_judge == {}
+    assert "card_judge_ready" not in [e["type"] for e in ev]

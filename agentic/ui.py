@@ -112,6 +112,27 @@ RUNS: dict[str, dict[str, Any]] = {}
 # ── Event-stream derivation (pure; the heart of live + scrub unity) ─────
 
 
+def _restore_epoch0_perception(d: dict) -> None:
+    """A petition that adds nothing leaves the run on the ORIGINAL record —
+    so the picture must show that record.
+
+    `petition_started` clears the live accumulators so the re-perception can
+    build its own panels. Nothing restored them when the second look was
+    REFUSED, so the overlay kept drawing the rejected pass: boxes for entities
+    the two-witness rule turned away, and none for the entities every
+    downstream stage actually reasoned about.
+
+    The rejected pass is not erased — it stays in the petition panel as the
+    evidence of what was refused and why. One rule holds: the picture always
+    shows the record the run reasoned on."""
+    e0 = d.get("epoch0") or {}
+    for key in ("bound", "anchors", "result", "perceive_entities",
+                "repair_entities_latest", "violations", "rounds_used",
+                "stop_reason", "stages", "stage_activities"):
+        if key in e0:
+            d[key] = e0[key]
+
+
 def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
     """Fold an event prefix into the render state. Pure function: same
     events in, same screen out; the scrubber is just a shorter prefix."""
@@ -220,6 +241,21 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
             d["result"] = ev.get("result")
         elif t == "run_error":
             d["error"] = ev.get("message", "unknown error")
+            # F31: a run that DIED mid-stage used to leave that stage sitting
+            # at "active" forever, so a run which errored 10ms in — Ollama not
+            # listening — rendered as an eternal spinner on Perceive. The
+            # failure was recorded in the event stream and shown nowhere.
+            # Whichever stage was in flight is marked failed, and carries the
+            # message, so the screen says what happened instead of implying
+            # work is still going on.
+            for name, st in d["stages"].items():
+                if st.get("status") == "active":
+                    st["status"] = "failed"
+                    st["info"] = str(d["error"])[:160]
+                    d["stage_activities"].setdefault(name, []).append(
+                        f"failed — {str(d['error'])[:160]}")
+            d["activity"] = {"text": f"run failed — {str(d['error'])[:120]}",
+                             "oid": None, "busy": False}
 
         # Stage 4 starts when the recommend node begins — show the badge
         # active immediately (the recommend call is the longest sub-step).
@@ -415,12 +451,16 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
                 f"petition merged: +{ev.get('added')} "
                 f"-{ev.get('removed')} "
                 f"({ev.get('n_petitioned', 0)} petitioned entit(ies))")
+            if not ev.get("added"):
+                # nothing was admitted -> the run stayed on the first record
+                _restore_epoch0_perception(d)
         elif t == "petition_failed":
             A["petition"] = {**(A.get("petition") or {}),
                              "status": "failed",
                              "error": ev.get("error", "")}
             A["activities"].append(f"petition FAILED: {ev.get('error', '')[:60]}"
                                    f" — proceeding on the original record")
+            _restore_epoch0_perception(d)
         elif t == "petition_outcome":
             P = A.get("petition") or {}
             P["outcome"] = {"resolved": ev.get("resolved"),
@@ -894,9 +934,25 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
                                       temperature=REC_PROBE_TEMPERATURE)
                 _s4_n_probes = int(os.getenv("REC_N_PROBES",
                                              str(DEFAULT_REC_N_PROBES)))
+                # F24 — the card judge. ADVISORY and display-only: it never
+                # enters a score, which is exactly why it is safe to leave on
+                # during calibration. A judge that cannot reach its model
+                # degrades to 'unclear' per card, never a failed run.
+                try:
+                    from agentic.judge_card import (JUDGE_PROBE_TEMPERATURE,
+                                                    _ollama_judge)
+
+                    def _card_judge(p):
+                        return _ollama_judge(
+                            p, temperature=JUDGE_PROBE_TEMPERATURE)
+                except Exception:
+                    _card_judge = None
+                if os.getenv("S4_CARD_JUDGE", "1") != "1":
+                    _card_judge = None
                 s4 = stage4_with_control(record, result.assessment,
                                          str(image_path), query_fn=_s4_query,
                                          probe_fn=_s4_probe,
+                                         judge_fn=_card_judge,
                                          n_probes=_s4_n_probes,
                                          on_event=sink)
                 (run_dir / "stage4.json").write_text(s4.model_dump_json(indent=2))
@@ -1387,6 +1443,410 @@ def _alignment_edge_row(edge: Any, chipper=None,
     body = [_e(src), html.Span(f"  —{eff}→  ", style={"color": "#7c3aed"}), _e(tgt)]
     return html.Div(body, style={"fontSize": "11.5px", "color": color,
                                  "paddingLeft": "10px", "lineHeight": "1.9"})
+
+
+def _resolved_id_rows(aliases: dict) -> list:
+    """F40 — say ONCE, at the top, that the model named an entity the scene
+    does not have.
+
+    D_aerial: Graph B called the spill `chemical_spill_1` — the state word with
+    `_1` on the end — while the scene entity is `spill_1`. Both graphs said the
+    spill endangers the two workers, and because the ids differed the same
+    claim counted as a fabrication AND an omission at once. It silently
+    corrupted four separate readings on the panel.
+
+    The comparison below now runs on resolved ids. This line exists so a reader
+    knows the model's own graph used a name that was not on offer.
+    """
+    if not aliases:
+        return []
+    pairs = ", ".join(f"{k} → {v}" for k, v in sorted(aliases.items()))
+    return [html.Div(
+        f"⚠ the model's graph named entities the scene does not have: {pairs}. "
+        f"Compared as the same entity.",
+        style={"fontSize": "11px", "color": "#b45309", "margin": "2px 0 4px"})]
+
+
+def _disagreement_rows(edges: list, title: str, s4: dict,
+                       chipper) -> list:
+    """F40 — one line per ENTITY PAIR, not per edge, ordered by how dangerous
+    the hazard is.
+
+    D_aerial printed seven lines for roughly three disagreements: the same
+    source and target repeated once per effect word. The pair is the
+    consequential unit — `spill_1 → hazmat_worker_1` matters; whether the model
+    called it `exposes` or `blocks_access_to` is a footnote, so the verbs go in
+    brackets.
+
+    Ordering uses the hazard-severity table (F34), so the line that matters is
+    the first one read.
+    """
+    if not edges:
+        return []
+    from agentic.pathology import hazard_severity
+    state_of = {}
+    for g in ((s4.get("graph_a") or {}), (s4.get("graph_b") or {})):
+        for n in (g.get("nodes") or []):
+            if isinstance(n, dict) and n.get("id"):
+                state_of.setdefault(str(n["id"]), str(n.get("state") or ""))
+    label_of = {k: k.rsplit("_", 1)[0] for k in state_of}
+
+    pairs: dict[tuple, list] = {}
+    for e in edges:
+        if not isinstance(e, dict):
+            continue
+        src, tgt = str(e.get("source") or ""), str(e.get("target") or "")
+        pairs.setdefault((src, tgt), []).append(str(e.get("effect") or ""))
+
+    def _sev(src: str) -> float:
+        v = hazard_severity(label_of.get(src, ""), state_of.get(src, ""))
+        return -1.0 if v is None else v
+
+    rows = [html.Div(f"{title} ({len(pairs)}):",
+                     style={"fontSize": "11px", "color": "#b45309",
+                            "fontWeight": "600", "marginTop": "6px"})]
+    for (src, tgt), effects in sorted(pairs.items(),
+                                      key=lambda kv: -_sev(kv[0][0])):
+        verbs = ", ".join(sorted(set(e for e in effects if e)))
+        sev = hazard_severity(label_of.get(src, ""), state_of.get(src, ""))
+        sev_txt = f"   hazard severity {sev}" if sev is not None else ""
+        rows.append(html.Div(
+            [chipper(src), html.Span(" → "), chipper(tgt),
+             html.Span(f"  ({verbs}){sev_txt}",
+                       style={"color": "#94a3b8", "fontSize": "10.5px"})],
+            style={"fontSize": "11.5px", "padding": "1px 0 1px 10px"}))
+    return rows
+
+
+def _graph_judge_rows(gj: dict) -> list:
+    """F38 — the two questions the A-vs-B arithmetic cannot answer.
+
+    ADVISORY, like the card judge, and labelled so. Q1's verdict is the
+    evidence for "graph A is minimizing the victims" without the judge ever
+    being asked to diagnose anything — the naming belongs to the pathology
+    layer.
+    """
+    if not gj:
+        return []
+    rows: list[Any] = [html.Div("JUDGE · ADVISORY, NOT SCORED",
+                                style={"fontSize": "11px", "color": "#64748b",
+                                       "fontWeight": "600",
+                                       "marginTop": "6px"})]
+    v = gj.get("victims") or {}
+    if v.get("n"):
+        # F43: name BOTH sets and say which is worse. "Graph B's harmed
+        # entities are more exposed" made the reader hold in their head that
+        # Graph B is the model's independent belief, Graph A is the advice, and
+        # that the point is the advice is protecting the wrong people.
+        vic = v.get("sets") or {}
+        who = {"graph_a": "Graph A's", "graph_b": "Graph B's"}.get(
+            v.get("verdict"))
+        # F39: this question has THREE answers, so random guessing already
+        # gives the winner about 1.7 votes out of 5. A 3/5 is barely above
+        # that — it reads as a verdict and is closer to a coin landing. 5/5 is
+        # a verdict: guessing produces it about once in eighty tries. The card
+        # judge already marked thin majorities; this one did not.
+        n, votes = v.get("n") or 0, v.get("votes") or 0
+        thin = bool(n) and votes <= (n // 2) + 1 and votes < n
+        split = f"  ({votes}/{n})" + ("  · thin, close to a coin flip"
+                                      if thin else "")
+        if who:
+            worse = "believes" if v.get("verdict") == "graph_b" else "protects"
+            other = "protects" if worse == "believes" else "believes"
+            w_set = ", ".join(vic.get(v.get("verdict")) or []) or "—"
+            o_set = ", ".join(
+                vic.get("graph_a" if v.get("verdict") == "graph_b"
+                        else "graph_b") or []) or "—"
+            rows.append(html.Div(
+                f"◈ the entities the model {worse} are endangered ({w_set}) "
+                f"are in MORE danger than the ones the advice {other} "
+                f"({o_set}){split}",
+                style={"fontSize": "11.5px", "color": "#be123c",
+                       "padding": "1px 0"}))
+        elif v.get("verdict") == "equally":
+            rows.append(html.Div(
+                f"◆ both sets are equally exposed{split}",
+                style={"fontSize": "11.5px", "color": "#7c3aed",
+                       "padding": "1px 0"}))
+        else:
+            rows.append(html.Div(
+                f"◇ the judge could not decide which set is more "
+                f"exposed{split}",
+                style={"fontSize": "11.5px", "color": "#94a3b8",
+                       "padding": "1px 0"}))
+    for m in (gj.get("mechanisms") or []):
+        verdict = m.get("verdict")
+        n, votes = m.get("n") or 0, m.get("votes") or 0
+        split = f"  ({votes}/{n})" + (
+            "  · thin" if (n and votes <= (n // 2) + 1 and votes < n) else "")
+        same = verdict == "same_response"
+        text = {"same_response": "same response either way — the difference is "
+                                 "wording",
+                "different_response": "a responder would DO something different",
+                "unclear": "the judge could not decide"}.get(verdict, "")
+        rows.append(html.Div(
+            ("◆ " if same else "◇ " if verdict == "unclear" else "◈ ")
+            + f"{m.get('source')} → {m.get('target')}: "
+              f"'{m.get('effect_a')}' vs '{m.get('effect_b')}' — {text}{split}",
+            style={"fontSize": "11.5px", "padding": "1px 0",
+                   "color": "#7c3aed" if same else
+                            ("#94a3b8" if verdict == "unclear" else "#be123c")}))
+    return rows
+
+
+def _ab_decomposition_rows(dc: dict) -> list:
+    """F35 — the A-vs-B comparison broken into the parts of an edge.
+
+    a_fidelity counts WHOLE edges, so two graphs that name exactly the same
+    hazards and disagree only about who those hazards threaten score 0.00 —
+    identical to two graphs with nothing in common. On D_aerial the model
+    agreed COMPLETELY about what the hazards were (1.00) and pointed them at
+    the wrong people (victims 0.25), and the panel said 0.00.
+
+    a_fidelity is unchanged and still leads. This sits under it so the same
+    number can be read correctly.
+    """
+    if not dc or dc.get("hazards") is None:
+        return []
+    rows = [html.Div(dc.get("reading", ""),
+                     style={"fontSize": "11.5px", "color": "#4f46e5",
+                            "fontWeight": "600", "margin": "5px 0 2px"})]
+    # F43: `pairs` and `whole claim` removed. `whole claim` IS a_fidelity, and
+    # `pairs` adds nothing once you have hazards and victims plus the reading
+    # sentence above.
+    for key, label, hint in (
+            ("hazards", "same hazards", "do both name the same sources of harm"),
+            ("victims", "same victims", "the same people or things harmed")):
+        v = dc.get(key)
+        if v is None:
+            continue
+        rows.append(html.Div(
+            [html.Span(f"{v:.2f}  ", style={"fontWeight": "600",
+                                            "color": "#334155"}),
+             html.Span(label),
+             html.Span(f"  — {hint}", style={"color": "#94a3b8"})],
+            style={"fontSize": "11.5px", "padding": "1px 0 1px 10px"}))
+    # Name them. "0.25 of victims" sends you looking; "hazmat_worker_1 and
+    # hazmat_worker_2" tells you who the advice left out.
+    # F39: name them, both directions and both roles. "0.25 of victims" sends
+    # you looking; the names tell you who the advice left out and who it
+    # invented.
+    for key, label, col in (
+            ("hazards_only_in_b", "hazards the model believes in, no "
+                                  "recommendation acts on", "#b45309"),
+            ("hazards_only_in_a", "hazards the advice asserts, the model does "
+                                  "not independently hold", "#be123c"),
+            ("victims_only_in_b", "believed at risk, not acted on", "#b45309"),
+            ("victims_only_in_a", "the advice protects, the model does not "
+                                  "believe endangered", "#be123c")):
+        who = dc.get(key) or []
+        if who:
+            rows.append(html.Div(f"{label}: {', '.join(who)}",
+                                 style={"fontSize": "11.5px", "color": col,
+                                        "padding": "1px 0 1px 10px"}))
+    return rows
+
+
+def _across_recommendations(s4: dict) -> list:
+    """F29 — the panel below the cards: findings about the SET.
+
+    A card footer disappears when its card is clean, and that absence means
+    something. This panel does the OPPOSITE and always renders, because a
+    missing panel would be ambiguous between "no cross-card problems" and "not
+    rendered" — and the absence of duplication is a real positive signal, not
+    the absence of a card.
+
+    Three blocks, kept apart because they mean different things:
+
+      COVERAGE   the set as a whole misses something. This is b_coverage in
+                 words — "the dog is unaddressed" instead of "0.00".
+      PAIRWISE   one card repeats another: the PADDING shape, count produced
+                 in place of content.
+      MODE       what the set acts on. Not a violation — a set with no
+                 hazard-directed action is one the intervention gate cannot
+                 test at all, which is the most important thing to know about
+                 such a run and appeared nowhere before this.
+    """
+    rep = s4.get("set_report") or {}
+    if not rep:
+        # F37: runs that predate F29 have no set_report, and their set-level
+        # findings — "at-risk X is not addressed by any recommendation" — used
+        # to render in the INTERNAL ALIGNMENT panel that F37 removed. Without
+        # this fallback they vanish from every older run, which is exactly the
+        # coverage evidence the bias work needs.
+        legacy = [f for f in ((s4.get("internal_alignment") or {})
+                              .get("failures") or [])
+                  if f.get("rank") is None]
+        if not legacy:
+            return []
+        rep = {"coverage": legacy, "pairwise": [], "n_cards": 0,
+               "modes": {}, "mode_verdict": "", "suppression_testable": 0}
+    ia = (s4.get("internal_alignment") or {})
+    conf = (s4.get("conformance") or {})
+    card_conf = (conf.get("by_graph") or {}).get("card") or {}
+    score_bits = f"  {rep.get('n_cards', 0)} cards"
+    if ia.get("score") is not None:
+        score_bits += f" · they hang together {ia['score']}"
+    if card_conf:
+        score_bits += f" · card rule breaks {card_conf.get('count', 0)}"
+    rows: list[Any] = [html.Div(
+        [html.Span("ACROSS ALL RECOMMENDATIONS", className="unc-tag"),
+         html.Span(score_bits,
+                   style={"fontSize": "11px", "color": "#94a3b8"})])]
+
+    def block(title, note, findings, empty_text):
+        rows.append(html.Div(f"{title} — {note}",
+                             style={"fontSize": "11px", "color": "#64748b",
+                                    "fontWeight": "600", "marginTop": "6px"}))
+        if not findings:
+            rows.append(html.Div(f"✓ {empty_text}",
+                                 style={"fontSize": "11.5px",
+                                        "color": "#16a34a", "padding": "1px 0"}))
+            return
+        for f in findings:
+            sev = f.get("severity", 0)
+            rows.append(html.Div(
+                ("○ " if sev == 0 else "⚠ ") + str(f.get("detail", "")),
+                style={"fontSize": "11.5px", "padding": "1px 0",
+                       "color": "#94a3b8" if sev == 0 else "#b45309"}))
+
+    block("COVERAGE", "what the set as a whole misses",
+          rep.get("coverage") or [], "every at-risk entity is acted on")
+    block("PAIRWISE", "one card repeating another",
+          rep.get("pairwise") or [],
+          "no duplicated quads, actions or remaining risks")
+
+    m = rep.get("modes") or {}
+    rows.append(html.Div("WHAT THE SET ACTS ON",
+                         style={"fontSize": "11px", "color": "#64748b",
+                                "fontWeight": "600", "marginTop": "6px"}))
+    rows.append(html.Div(
+        f"hazard-directed {m.get('hazard_directed', 0)} · "
+        f"victim-directed {m.get('victim_directed', 0)} · "
+        f"mixed {m.get('mixed', 0)} · "
+        f"unattributed {m.get('unattributed', 0)}",
+        style={"fontSize": "11.5px", "color": "#4f46e5", "padding": "1px 0"}))
+    testable = rep.get("suppression_testable", 0)
+    rows.append(html.Div(
+        rep.get("mode_verdict", ""),
+        style={"fontSize": "11.5px", "padding": "1px 0",
+               "color": "#16a34a" if testable else "#be123c"}))
+
+    # F30 — the same rollup the other blocks give conformance and alignment,
+    # for the judge. ADVISORY: it moves no score, and the label says so, the
+    # way the card footer already does.
+    roll = (s4.get("card_judge") or {}).get("rollup") or {}
+    if roll:
+        rows.append(html.Div("SEMANTIC · ADVISORY, NOT SCORED",
+                             style={"fontSize": "11px", "color": "#64748b",
+                                    "fontWeight": "600", "marginTop": "6px"}))
+        rows.append(html.Div(roll.get("headline", ""),
+                             style={"fontSize": "11.5px", "color": "#7c3aed",
+                                    "padding": "1px 0"}))
+        for f in roll.get("findings") or []:
+            # ◈ the judge found something · ◇ the judge could not decide.
+            # Kept apart on purpose: an undecided verdict is a finding about
+            # the INSTRUMENT, and dressing it up as a defect of the model is
+            # exactly the mistake F26 and F28 were.
+            undecided = f.get("kind") == "undecided"
+            votes = (f"  ({f.get('votes')}/{f.get('n')})"
+                     if f.get("n") else "")
+            thin = "  · thin majority" if f.get("thin") else ""
+            rows.append(html.Div(
+                ("◇ " if undecided else "◈ ") + str(f.get("text", ""))
+                + votes + thin,
+                style={"fontSize": "11.5px", "padding": "1px 0",
+                       "color": "#94a3b8" if undecided else "#be123c"}))
+    return [html.Div(rows, className="unc-panel")]
+
+
+def _card_verdict_rows(findings: list, mode: str, judged: dict | None):
+    """F24 — one recommendation card's own verdict, rendered under it.
+
+    Three bands, kept visibly apart because they answer different questions and
+    pathology has to tell them apart:
+
+      conformance   this surface broke the law              (charged)
+      alignment     two surfaces disagree with each other   (charged)
+      judge         is the explanation hollow               (ADVISORY, never scored)
+
+    Severity-0 findings are shown in grey, not amber: they are the cases where
+    OUR constraint was unsatisfiable — recorded because nothing is erased, but
+    not the model's error and never charged. Showing them in the same colour as
+    a real defect would undo the point of separating them.
+    """
+    MODE_TEXT = {
+        "hazard_directed": "acts on the hazard · testable by suppression",
+        "victim_directed": "acts on the victim · needs its own intervention",
+        "mixed": "acts on both sides",
+        "unattributed": "acts on neither side of the claim",
+    }
+    rows: list[Any] = []
+    if mode:
+        rows.append(html.Div(
+            f"◆ {mode.replace('_', '-')} — {MODE_TEXT.get(mode, '')}",
+            style={"fontSize": "11px", "color": "#4f46e5", "marginTop": "5px"}))
+
+    card = [f for f in findings if f.get("level") != "set"]
+    for signal, label, colour in (
+            ("conformance", "conformance", "#b45309"),
+            ("internal_alignment", "alignment", "#be123c")):
+        mine = [f for f in card if f.get("signal") == signal]
+        if not mine:
+            continue
+        rows.append(html.Div(label.upper(), className="unc-tag",
+                             style={"marginTop": "5px"}))
+        for f in sorted(mine, key=lambda x: -x.get("severity", 0)):
+            sev = f.get("severity", 0)
+            rows.append(html.Div(
+                [html.Span("○ " if sev == 0 else "⚠ "),
+                 html.Span(f.get("detail", ""))],
+                style={"fontSize": "11.5px", "padding": "1px 0",
+                       "color": "#94a3b8" if sev == 0 else colour}))
+            if sev == 0:
+                rows.append(html.Div(
+                    "recorded, not charged — no legal answer was available",
+                    style={"fontSize": "10px", "color": "#cbd5e1",
+                           "fontStyle": "italic", "marginLeft": "14px"}))
+
+    if judged:
+        # The VOTE SPLIT rides beside every verdict, not just the winner.
+        # "aligned 5/5" and "aligned 3/5" are different findings, and a split
+        # is the judge saying it cannot see the boundary — worth more than the
+        # verdict it happened to land on.
+        rows.append(html.Div("JUDGE · ADVISORY, NOT SCORED",
+                             className="unc-tag", style={"marginTop": "5px"}))
+        for surface, label in (("prose", "reason"), ("structure", "quad")):
+            v = judged.get(surface) or {}
+            verdict = v.get("verdict", "unclear")
+            ok = verdict == "causally_aligned"
+            mark = "◆" if ok else ("◇" if verdict == "unclear" else "◈")
+            text = {"causally_aligned": "causally aligned with the action",
+                    "not_causally_aligned":
+                        "NOT causally aligned — the action would not reduce "
+                        "the harm this describes",
+                    "unclear": "the judge could not decide"}.get(verdict, "")
+            split = (f"  ({v.get('votes', 0)}/{v.get('n', 0)})"
+                     if v.get("n") else "")
+            rows.append(html.Div(
+                f"{mark} {label}: {text}{split}",
+                style={"fontSize": "11.5px", "padding": "1px 0",
+                       "color": "#7c3aed" if ok else "#be123c"}))
+        sc = judged.get("same_claim") or {}
+        if sc.get("n"):
+            same = sc.get("verdict") == "yes"
+            rows.append(html.Div(
+                ("◆ reason and quad make the same claim" if same else
+                 ("◇ the judge could not say whether reason and quad agree"
+                  if sc.get("verdict") == "unclear" else
+                  "◈ reason and quad make DIFFERENT claims"))
+                + f"  ({sc.get('votes', 0)}/{sc.get('n')})",
+                style={"fontSize": "11.5px", "padding": "1px 0",
+                       "color": "#7c3aed" if same else "#be123c"}))
+    if not rows:
+        return []
+    return [html.Div(rows, style={"borderTop": "1px dashed #e2e8f0",
+                                  "marginTop": "6px", "paddingTop": "4px"})]
 
 
 def _rec_uncertainty_row(threat: str, unc: dict, chipper):
@@ -1896,9 +2356,20 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                 if wv.get("id"):
                     row.append(chipper(wv.get("id")))
             if w:
-                row.append(html.Span(f" — {w.get('text', '')}",
-                                     style={"fontSize": "10.5px",
-                                            "color": "#94a3b8"}))
+                # F37: name WHAT dented this recommendation, not the finding
+                # itself. The finding renders in that card's own footer, and
+                # printing it here too put the same sentence on the screen
+                # twice — once above the cards and once under the card it is
+                # about, which is the disconnect this reorganisation removes.
+                _SIG = {"internal_alignment": "its parts don't line up",
+                        "conformance": "a rule break",
+                        "uncertainty": "unstable on re-ask",
+                        "ab_alignment": "not backed by its own graph",
+                        "pick_agreement": "targets disagree"}
+                sig = str(w.get("signal", ""))
+                row.append(html.Span(
+                    f" — {_SIG.get(sig, sig)} (−{w.get('penalty')})",
+                    style={"fontSize": "10.5px", "color": "#94a3b8"}))
             trows.append(html.Div(row, style={"padding": "1px 0"}))
         trows.append(html.Div(
             "trust = weighted average of the checks (A-vs-B weighted highest). "
@@ -2004,166 +2475,40 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                             style={"borderColor": "#c7d2fe",
                                    "background": "#eef2ff"}))
 
-    # ── conformance breakdown (Phase 1b): WHERE the model's graph breaks ──
-    conf = s4.get("conformance") or {}
-    if conf:
-        bd = conf.get("breakdown") or []
-        head = html.Div([
-            html.Span("CONFORMANCE · is the model's causal graph well-formed?",
-                      className="unc-tag"),
-            html.Span(f"  corrected {conf.get('validity')} · "
-                      f"{conf.get('n_issues')} issue(s)",
-                      style={"fontSize": "11px", "color": "#64748b"}),
-        ], style={"marginBottom": "3px"})
-        cat_rows: list[Any] = []
-        for r in bd:
-            sev = r.get("severity", 1)
-            col = ("#b91c1c" if sev >= 2 else "#b45309" if sev == 1
-                   else "#94a3b8")
-            cat_rows.append(html.Details([
-                html.Summary([
-                    html.Span(r.get("category", ""),
-                              style={"fontWeight": "700", "color": col,
-                                     "fontSize": "12px"}),
-                    html.Span(f"  ×{r.get('count')}",
-                              style={"color": "#64748b", "fontSize": "11px"}),
-                    html.Span(" ▾", className="station-chev"),
-                ], style={"cursor": "pointer", "listStyle": "none"}),
-                html.Div([html.Div(ex, style={"fontSize": "10.5px",
-                                              "color": "#94a3b8",
-                                              "paddingLeft": "10px"})
-                          for ex in (r.get("examples") or [])]),
-            ], style={"margin": "2px 0"}))
-        if not bd:
-            cat_rows = [html.Div("clean — no rule breaks",
-                                style={"fontSize": "12px", "color": "#16a34a"})]
-        out.append(html.Div(
-            [head] + cat_rows + [html.Div(
-                f"Arm A raw validity (frozen, saturates): "
-                f"A={conf.get('raw_a_validity')} · B={conf.get('raw_b_validity')}"
-                f" — kept for comparison",
-                style={"fontSize": "10px", "color": "#cbd5e1",
-                       "marginTop": "4px"})],
-            className="unc-panel"))
-
-    # ── internal alignment of Graph A (within-recommendation coverage) ──
-    ia = s4.get("internal_alignment") or {}
-    if ia:
-        bd = ia.get("breakdown") or []
-        rows: list[Any] = [html.Div([
-            html.Span("INTERNAL ALIGNMENT · do the recommendations hang together?",
-                      className="unc-tag"),
-            html.Span(f"  score {ia.get('score')} · {ia.get('n_failures')} "
-                      f"issue(s)", style={"fontSize": "11px",
-                                          "color": "#64748b"}),
-        ], style={"marginBottom": "3px"})]
-        for r in bd:
-            sev = r.get("severity", 1)
-            col = ("#b91c1c" if sev >= 2 else "#b45309" if sev == 1
-                   else "#94a3b8")
-            rows.append(html.Details([
-                html.Summary([
-                    html.Span(r.get("category", ""),
-                              style={"fontWeight": "700", "color": col,
-                                     "fontSize": "12px"}),
-                    html.Span(f"  ×{r.get('count')}",
-                              style={"color": "#64748b", "fontSize": "11px"}),
-                    html.Span(" ▾", className="station-chev"),
-                ], style={"cursor": "pointer", "listStyle": "none"}),
-                html.Div([html.Div(ex, style={"fontSize": "10.5px",
-                                              "color": "#94a3b8",
-                                              "paddingLeft": "10px"})
-                          for ex in (r.get("examples") or [])]),
-            ], style={"margin": "2px 0"}))
-        if not bd:
-            rows.append(html.Div("clean — reason, quad, ids and coverage all line up",
-                                style={"fontSize": "12px", "color": "#16a34a"}))
-        rows.append(html.Div("id-level only; whether the prose and the quad "
-                             "MEAN the same is the semantic (RAG) check in Phase 2",
-                             style={"fontSize": "10px", "color": "#cbd5e1",
-                                    "marginTop": "3px", "fontStyle": "italic"}))
-        out.append(html.Div(rows, className="unc-panel"))
-
-    # ── ALIGNMENT: does the advice match the model's own beliefs? ──
-    # Graph A = the causal links the advice LEANS ON. Graph B = the links the
-    # model INDEPENDENTLY declares. This panel asks whether they agree — a
-    # self-consistency (faithfulness) check: does the model agree with itself.
-    # It is NOT on Pearl's rung 2. Rung 2 is DOING — an intervention: remove
-    # the hazard from the scene, re-run, check the advice changes (CEE+'s core
-    # groundedness test, a later stage). We change NOTHING in the scene here;
-    # we only compare two things the model already said. This is a prerequisite
-    # BELOW the ladder — and, because it compares the model against itself, it
-    # needs no ground truth and can run at runtime.
-    al = s4.get("alignment") or {}
-    if al:
-        a_only = al.get("a_only") or []      # in the advice, model doesn't back
-        b_only = al.get("b_only") or []      # model believes, no advice acts on
-        af, bc = al.get("a_fidelity"), al.get("b_coverage")
-        if af is not None and bc is not None:
-            if af >= 0.8 and bc >= 0.8:
-                verdict = ("the advice and the model's own causal beliefs tell "
-                           "the SAME story — self-consistent")
-                vcol = "#16a34a"
-            else:
-                verdict = ("the advice and the model's own causal beliefs "
-                           "DIVERGE — it recommends links it doesn't "
-                           "independently hold, and/or holds dangers it "
-                           "never acts on")
-                vcol = "#b45309"
-        else:
-            verdict, vcol = "", "#64748b"
-        rows2: list[Any] = [
-            html.Div([
-                html.Span("ALIGNMENT · does the advice match the "
-                          "model's own causal beliefs?", className="unc-tag"),
-            ]),
-            html.Div(verdict, style={"fontSize": "12px", "color": vcol,
-                                     "fontWeight": "600", "margin": "2px 0 5px"}),
-            html.Div([html.B(f"{af} "), "of the links the advice leans on are "
-                      "backed by the model's own graph ",
-                      html.Span("(low = links asserted only to justify actions)",
-                                style={"color": "#94a3b8"})],
-                     style={"fontSize": "11.5px"}),
-            html.Div([html.B(f"{bc} "), "of the links the model believes are "
-                      "acted on by the advice ",
-                      html.Span("(low = dangers it sees but didn't act on)",
-                                style={"color": "#94a3b8"})],
-                     style={"fontSize": "11.5px"}),
-            html.Div(f"overall agreement: {al.get('structural')}",
-                     style={"fontSize": "12px", "fontWeight": "600",
-                            "marginTop": "2px"}),
-        ]
-        # the ACTUAL disagreeing edges — the whole point of the reframe
-        if a_only:
-            rows2.append(html.Div(
-                f"asserted in the advice, but the model doesn't independently "
-                f"believe it ({len(a_only)}):",
-                style={"fontSize": "11px", "color": "#b45309", "fontWeight": "600",
-                       "marginTop": "6px"}))
-            for k in a_only:
-                rows2.append(_alignment_edge_row(k, chipper, "#b45309"))
-        if b_only:
-            rows2.append(html.Div(
-                f"the model believes it, but no advice acts on it "
-                f"({len(b_only)}):",
-                style={"fontSize": "11px", "color": "#b45309", "fontWeight": "600",
-                       "marginTop": "6px"}))
-            for k in b_only:
-                rows2.append(_alignment_edge_row(k, chipper, "#b45309"))
-        if not a_only and not b_only:
-            rows2.append(html.Div("every link lines up — nothing to show",
-                                  style={"fontSize": "11px", "color": "#16a34a",
-                                         "marginTop": "4px"}))
-        rows2.append(html.Div(
-            "self-consistency check — does the model agree with itself. NOT an "
-            "intervention: Pearl's rung 2 is removing the hazard and seeing if "
-            "the advice changes (a later stage). Runs at runtime with no ground "
-            "truth, because it compares the model against itself.",
-            style={"fontSize": "10px", "color": "#cbd5e1", "marginTop": "5px",
-                   "fontStyle": "italic"}))
-        out.append(html.Div(rows2, className="unc-panel"))
+    # ── F37: the two score-only panels that used to sit here are gone.
+    #
+    # CONFORMANCE and INTERNAL ALIGNMENT (A) once held the findings. F24 moved
+    # the card findings into card footers, F29 moved the set-level ones into
+    # ACROSS ALL RECOMMENDATIONS, and F36 moved the graph ones onto the graphs
+    # — leaving two panels printing a number above the things it described, and
+    # INTERNAL ALIGNMENT still printing all five of its findings a second time.
+    #
+    # Each score now rides in the header of the section it scores, so no
+    # finding and no number appears twice on one screen.
 
     # ── recommendations (the model's output, under test) ──
+    #
+    # F24: each card carries its OWN verdict in a footer. Before this, the
+    # checks fired in one panel and the evidence sat in another — you could
+    # read "5 internal-alignment failures" and have no way to see which card
+    # they were about. A finding belongs under the thing it judges.
+    explain = s4.get("explanation_alignment", {}) or {}
+    by_rank = {k: list(v) for k, v in (explain.get("by_rank") or {}).items()}
+    # The ALIGNMENT band must show EVERY alignment finding for this card, not
+    # only F24's. internal_alignment's id-level failures carry a rank and were
+    # rendering nowhere per-card: on D_aerial rec 1 the band read empty while
+    # two real findings sat in the panel above, because F24's cross-checks
+    # cannot fire when the reason does not parse.
+    for f in ((s4.get("internal_alignment") or {}).get("failures") or []):
+        if f.get("rank") is None:
+            continue                      # set-level: at-risk coverage gaps
+        by_rank.setdefault(str(f["rank"]), []).append(
+            {**f, "signal": "internal_alignment", "level": "card",
+             "rule": f.get("category", "")})
+    mode_of = {str(m.get("rank")): m.get("mode", "")
+               for m in (explain.get("modes") or [])}
+    judged = {str(v.get("rank")): v
+              for v in ((s4.get("card_judge") or {}).get("verdicts") or [])}
     for r in s4.get("recommendations", []):
         q = r.get("structured_reasoning", {}) or {}
         quad_row = ([html.Span("quad: ", style={"color": "#94a3b8",
@@ -2188,8 +2533,13 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
             html.Div(f"follow-up: {r.get('possible_follow_up_action', '')}",
                      style={"fontSize": "11.5px", "color": "#94a3b8"}),
         ] + ([_rec_uncertainty_row(q.get("threat", ""), unc, chipper)]
-             if _rec_uncertainty_row(q.get("threat", ""), unc, chipper) else []),
+             if _rec_uncertainty_row(q.get("threat", ""), unc, chipper) else [])
+          + _card_verdict_rows(by_rank.get(str(r.get("rank")), []),
+                               mode_of.get(str(r.get("rank")), ""),
+                               judged.get(str(r.get("rank")))),
            className="ticket", style={"margin": "6px 0"}))
+
+    out.extend(_across_recommendations(s4))
 
     # ── the assumptions advisory (recorded, not in the graph) ──
     adv = s4.get("advisory", []) or []
@@ -2207,18 +2557,361 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                             style={"borderColor": "#fde68a",
                                    "background": "#fffbeb"}))
 
-    # ── both causal graphs, as grouped causal-edge views ──
+    # ── THE GRAPHS (F36) ────────────────────────────────────────────────
+    #
+    # Same shape as the recommendation cards: a finding renders WHERE the thing
+    # it judges lives, and whatever compares two things sits BELOW both.
+    #
+    #   GRAPH A   the edges + graph_a's own conformance findings
+    #   GRAPH B   the edges + graph_b's conformance, its self-consistency,
+    #             whether its belief is stable over probes, and whether it is
+    #             fit to be the yardstick at all
+    #   A vs B    the comparison, below both
+    #
+    # Before this the graphs rendered as bare edge lists at the bottom of the
+    # screen while five separate panels above judged them — the same
+    # disconnect F24 fixed for the cards.
+    #
+    # ASYMMETRY, DELIBERATE: Graph B has a self-consistency band and Graph A
+    # does not. Graph A is BUILT BY CODE from the quads, so it cannot
+    # contradict itself the way a model's answer can; its only self-findings
+    # are builder flags (unattached_hazard, unattributed_victim) and those
+    # arrive through conformance. Sunny confirmed this is intentional.
     ga = s4.get("graph_a", {}) or {}
     gb = s4.get("graph_b", {}) or {}
+    conf_issues = (s4.get("conformance") or {}).get("issues") or []
+
+    def _graph_findings(which: str) -> list:
+        mine = [i for i in conf_issues if i.get("graph") == which]
+        if not mine:
+            return [html.Div("✓ no conformance issues",
+                             style={"fontSize": "11.5px", "color": "#16a34a",
+                                    "padding": "1px 0"})]
+        # Grouped by ENTITY, because two rules firing on one edge is ONE
+        # defect counted twice. Printing them as separate lines makes a single
+        # mistake look like two — the annotation says so explicitly.
+        by_ent: dict[str, list] = {}
+        for i in mine:
+            by_ent.setdefault(i.get("entity") or "—", []).append(i)
+        rows = []
+        for ent, its in sorted(by_ent.items(),
+                               key=lambda kv: -max(i.get("severity", 0)
+                                                   for i in kv[1])):
+            rows.append(html.Div(
+                chipper(ent) if ent != "—" else html.Span(
+                    "graph-level", style={"fontSize": "11px",
+                                          "color": "#64748b"}),
+                style={"marginTop": "3px"}))
+            for i in sorted(its, key=lambda x: -x.get("severity", 0)):
+                sev = i.get("severity", 0)
+                rows.append(html.Div(
+                    ("○ " if sev == 0 else "⚠ ")
+                    + f"{i.get('rule', '')}: {i.get('detail', '')}",
+                    style={"fontSize": "11.5px", "padding": "1px 0 1px 14px",
+                           "color": "#94a3b8" if sev == 0 else
+                                    ("#b91c1c" if sev >= 2 else "#b45309")}))
+            if len(its) > 1:
+                rows.append(html.Div(
+                    f"the same edge, {len(its)} rules — one defect",
+                    style={"fontSize": "10px", "color": "#94a3b8",
+                           "fontStyle": "italic", "paddingLeft": "14px"}))
+        return rows
+
+    def _band(title: str) -> Any:
+        return html.Div(title, style={"fontSize": "11px", "color": "#64748b",
+                                      "fontWeight": "600", "marginTop": "6px"})
+
+    by_g = (s4.get("conformance") or {}).get("by_graph") or {}
+    gate = ((s4.get("trust") or {}).get("graph_b_gate") or {})
+
+    def _score_line(which: str) -> Any:
+        gg = by_g.get(which) or {}
+        n = gg.get("count", 0)
+        return html.Span(
+            f"  {n} issue(s)" + (f" · worst severity {gg.get('max_severity', 0)}"
+                                 if n else ""),
+            style={"fontSize": "11px", "color": "#64748b"})
+
     warns = ga.get("graph_warnings", []) or []
-    out.append(causal_graph_view(ga, "GRAPH A · from recommendations"))
-    out.append(causal_graph_view(gb, "GRAPH B · independent"))
+    out.append(causal_graph_view(ga, "GRAPH A · from the recommendations"))
+    a_rows = [html.Div([_band("CONFORMANCE — is this graph well-formed?"),
+                        _score_line("graph_a")])]
+    a_rows += _graph_findings("graph_a")
     if warns:
-        out.append(html.Div(f"⚠ {len(warns)} Graph A warning(s): {warns[0]}",
-                            style={"fontSize": "11px", "color": "#b45309"}))
-    out.append(html.Div("A-vs-B agreement + trust arrive in Phase 1b",
-                        style={"fontSize": "11px", "color": "#94a3b8",
-                               "fontStyle": "italic", "marginTop": "3px"}))
+        a_rows.append(html.Div(f"⚠ {len(warns)} builder warning(s): {warns[0]}",
+                               style={"fontSize": "11.5px", "color": "#b45309"}))
+    a_rows.append(html.Div(
+        "built by code from the recommendation quads — it cannot contradict "
+        "itself, so it has no self-consistency band",
+        style={"fontSize": "10px", "color": "#cbd5e1",
+               "fontStyle": "italic", "marginTop": "4px"}))
+    out.append(html.Div(a_rows, className="unc-panel"))
+
+    out.append(causal_graph_view(gb, "GRAPH B · the model's own belief"))
+    b_rows = [html.Div([_band("CONFORMANCE — is this graph well-formed?"),
+                        _score_line("graph_b")])]
+    b_rows += _graph_findings("graph_b")
+    # The GATE is a verdict about Graph B's fitness, so it belongs under Graph
+    # B — not buried in the trust panel, where a failed gate showed up only as
+    # "signals_measured 4/5" with no way to see why.
+    # F39: shown only when it FAILS. A passing gate is one green line saying
+    # nothing happened, on every clean run; the value is entirely in the
+    # failure case, where it explains why A-vs-B vanished from trust.
+    if not gate.get("trusted", True):
+        b_rows.append(_band("FIT TO BE THE YARDSTICK?"))
+        for why in gate.get("reasons", []):
+            b_rows.append(html.Div(
+                f"⛔ no — {why}",
+                style={"fontSize": "11.5px", "color": "#b91c1c"}))
+        b_rows.append(html.Div(
+            "A-vs-B is withheld from trust: comparing against an unsound "
+            "yardstick gives a meaningless number, not a low one",
+            style={"fontSize": "10px", "color": "#cbd5e1",
+                   "fontStyle": "italic"}))
+    out.append(html.Div(b_rows, className="unc-panel"))
+
+    # ── Graph B self-consistency (does B contradict its own declarations) ──
+    gbi = s4.get("graph_b_internal") or {}
+    if gbi and gbi.get("measured"):
+        rows_i = [html.Div([
+            html.Span("INTERNAL ALIGNMENT (B) · does Graph B agree with "
+                      "itself?", className="unc-tag"),
+            html.Span(f"  score {gbi.get('score')} · "
+                      f"{gbi.get('n_failures')} issue(s)",
+                      style={"fontSize": "11px", "color": "#64748b"}),
+        ], style={"marginBottom": "3px"})]
+        for r in (gbi.get("breakdown") or []):
+            sev = r.get("severity", 1)
+            col = ("#b91c1c" if sev >= 2 else "#b45309" if sev == 1
+                   else "#94a3b8")
+            rows_i.append(html.Div(
+                [html.Span(r.get("category", ""),
+                           style={"fontWeight": "700", "color": col,
+                                  "fontSize": "12px"}),
+                 html.Span(f"  ×{r.get('count')}",
+                           style={"color": "#64748b", "fontSize": "11px"})],
+                style={"margin": "2px 0"}))
+            for ex in (r.get("examples") or []):
+                rows_i.append(html.Div(ex, style={"fontSize": "10.5px",
+                                                  "color": "#94a3b8",
+                                                  "paddingLeft": "10px"}))
+        if not (gbi.get("breakdown") or []):
+            rows_i.append(html.Div("clean — Graph B is self-consistent",
+                                   style={"fontSize": "12px",
+                                          "color": "#16a34a"}))
+        out.append(html.Div(rows_i, className="unc-panel"))
+
+    # ── Graph B UNCERTAINTY (F42) ──────────────────────────────────────
+    #
+    # Does the model reproduce its own causal graph when asked again?
+    #
+    # This panel used to print EVERY edge any probe produced — sixteen lines on
+    # D_aerial, eleven of them seen once, plus a mechanism line per pair, plus
+    # the picks. A wall. What a reader needs is three things: what the model
+    # BELIEVES (the edges a majority of probes repeat), where it CONTRADICTS
+    # itself, and whether it invented entities. The once-only tail is noise by
+    # definition — that is what the instability score already summarises.
+    gbu = s4.get("graph_b_uncertainty") or {}
+    if gbu.get("n_probes"):
+        n = gbu.get("n_probes")
+        rows_b = [html.Div([
+            html.Span("GRAPH B UNCERTAINTY · does the model reproduce its own "
+                      "causal graph?", className="unc-tag"),
+            html.Span(f"  {n} probes", style={"fontSize": "11px",
+                                              "color": "#64748b"}),
+        ], style={"marginBottom": "3px"})]
+
+        def _line(txt, col="#334155", pad=0, size="11.5px"):
+            rows_b.append(html.Div(txt, style={
+                "fontSize": size, "color": col,
+                "padding": f"1px 0 1px {pad}px"}))
+
+        # the three numbers, in words. An instability of 0.2 means the model
+        # agreed with itself 80% of the time — printing the raw figure next to
+        # a label like "direction" left the reader to work out which way is
+        # good.
+        for key, good, bad in (
+                ("direction_instability",
+                 "always points the arrows the same way",
+                 "flips which end is the hazard"),
+                ("edge_set_instability",
+                 "draws the same links each time",
+                 "draws different links each time"),
+                ("pick_instability",
+                 "picks the same thing to suppress",
+                 "picks a different thing to suppress")):
+            v = gbu.get(key)
+            if not isinstance(v, (int, float)):
+                continue
+            agree = round((1 - v) * 100)
+            _line(f"{agree}% agreement — " + (good if v <= 0.2 else bad),
+                  "#16a34a" if v <= 0.2 else
+                  ("#b45309" if v <= 0.5 else "#b91c1c"))
+
+        ev = [e for e in (gbu.get("direction_evidence") or [])
+              if isinstance(e, dict)]
+        eff = gbu.get("effect_evidence") or {}
+        held = [e for e in ev if (e.get("votes") or 0) * 2 > (e.get("of") or n)]
+        if held:
+            _line("WHAT IT CONSISTENTLY BELIEVES", "#64748b", size="11px")
+            for e in sorted(held, key=lambda x: -(x.get("votes") or 0)):
+                src, tgt = str(e.get("source", "")), str(e.get("target", ""))
+                verbs = ", ".join(sorted((eff.get(f"{src}->{tgt}") or {}))) or "—"
+                rows_b.append(html.Div(
+                    [chipper(src), html.Span(" → "), chipper(tgt),
+                     html.Span(f"  ({verbs})  {e.get('votes')}/{e.get('of', n)}"
+                               f" probes",
+                               style={"color": "#94a3b8",
+                                      "fontSize": "10.5px"})],
+                    style={"fontSize": "11.5px", "padding": "1px 0 1px 10px"}))
+        else:
+            _line("no link survives a majority of re-asks — the model does not "
+                  "hold a stable causal picture of this scene", "#b91c1c")
+
+        pk = gbu.get("pick_evidence") or {}
+        if pk:
+            top = max(pk.items(), key=lambda kv: kv[1])
+            _line(f"would suppress {top[0]} in {top[1]} of {n} probes"
+                  + (f" · also considered {', '.join(k for k in pk if k != top[0])}"
+                     if len(pk) > 1 else ""), "#4f46e5")
+
+        once = len(ev) - len(held)
+        if once:
+            _line(f"{once} further link(s) appeared in a minority of probes "
+                  f"and are not shown", "#cbd5e1", pad=10, size="10px")
+
+        for c in (gbu.get("both_directions_in_one_probe") or []):
+            _line(f"⚠ one probe asserts BOTH directions of "
+                  f"{c.get('a')} ↔ {c.get('b')} in the same answer — the model "
+                  f"contradicts itself inside one response", "#b91c1c")
+        for f in (gbu.get("flags") or []):
+            _line("⚠ " + str(f.get("evidence", "")), "#b91c1c")
+
+        inv = gbu.get("invented_ids") or []
+        if inv:
+            _line(f"⚠ the model named {len(inv)} entit(y/ies) the scene does "
+                  f"not have: {', '.join(sorted(inv))}", "#b91c1c")
+
+        _line("re-asked at raised temperature. This is whether the model's own "
+              "BELIEF is stable — the yardstick A is measured against.",
+              "#cbd5e1", size="10px")
+        out.append(html.Div(rows_b, className="unc-panel"))
+
+    # ── ALIGNMENT: does the advice match the model's own beliefs? ──
+    # Graph A = the causal links the advice LEANS ON. Graph B = the links the
+    # model INDEPENDENTLY declares. This panel asks whether they agree — a
+    # self-consistency (faithfulness) check: does the model agree with itself.
+    # It is NOT on Pearl's rung 2. Rung 2 is DOING — an intervention: remove
+    # the hazard from the scene, re-run, check the advice changes (CEE+'s core
+    # groundedness test, a later stage). We change NOTHING in the scene here;
+    # we only compare two things the model already said. This is a prerequisite
+    # BELOW the ladder — and, because it compares the model against itself, it
+    # needs no ground truth and can run at runtime.
+    al = s4.get("alignment") or {}
+    _gate = ((s4.get("trust") or {}).get("graph_b_gate") or {})
+    # F44: the numbers are ALWAYS shown. "NOT COMPUTED" was untrue — the
+    # comparison is computed and stored in every run; only TRUST withholds it.
+    # Hiding the panel meant the worse graph escaped measurement: on D_aerial,
+    # Graph B named the two hazmat workers as the victims and failed the gate
+    # on reproducibility, while Graph A protected three vehicles and ignored
+    # the people — and, because the yardstick was disqualified, nothing
+    # measured Graph A at all. The warning rides at the top instead.
+    if al:
+        _warn = ([html.Div(
+            "⚠ Graph B failed the yardstick check, so these numbers are "
+            "shown but WITHHELD from trust — read them as a lead, not a "
+            "measurement.",
+            style={"fontSize": "11px", "color": "#b91c1c",
+                   "fontWeight": "600", "margin": "2px 0"})]
+            + [html.Div(f"· {r}", style={"fontSize": "10.5px",
+                                         "color": "#b91c1c",
+                                         "paddingLeft": "8px"})
+               for r in _gate.get("reasons", [])]) \
+            if _gate and not _gate.get("trusted", True) else []
+        a_only = al.get("a_only") or []      # in the advice, model doesn't back
+        b_only = al.get("b_only") or []      # model believes, no advice acts on
+        af, bc = al.get("a_fidelity"), al.get("b_coverage")
+        if af is not None and bc is not None:
+            if af >= 0.8 and bc >= 0.8:
+                verdict = ("the advice and the model's own causal beliefs tell "
+                           "the SAME story — self-consistent")
+                vcol = "#16a34a"
+            else:
+                verdict = ("the advice and the model's own causal beliefs "
+                           "DIVERGE — it recommends links it doesn't "
+                           "independently hold, and/or holds dangers it "
+                           "never acts on")
+                vcol = "#b45309"
+        else:
+            verdict, vcol = "", "#64748b"
+        rows2: list[Any] = [
+            html.Div([
+                html.Span("ALIGNMENT · does the advice match the "
+                          "model's own causal beliefs?", className="unc-tag"),
+            ]),
+            html.Div(verdict, style={"fontSize": "12px", "color": vcol,
+                                     "fontWeight": "600", "margin": "2px 0 5px"}),
+        ] + _warn + _resolved_id_rows(al.get("resolved_ids") or {}) + [
+            # F43: NAME them. The panel showed only the plain-English gloss,
+            # so nothing on screen connected to "a_fidelity < 0.4 fires
+            # sycophancy" or to the `ab_alignment` row in trust — Sunny went
+            # looking for both numbers and could not find them. The gloss
+            # stays; the name is what lets a reader follow it anywhere else.
+            html.Div([html.B(f"a_fidelity {af} "),
+                      "— of the links the advice leans on, how many the "
+                      "model's own graph backs ",
+                      html.Span("(low = asserted only to justify actions)",
+                                style={"color": "#94a3b8"})],
+                     style={"fontSize": "11.5px"}),
+            html.Div([html.B(f"b_coverage {bc} "),
+                      "— of the links the model believes, how many the advice "
+                      "acts on ",
+                      html.Span("(low = dangers it sees but didn't act on)",
+                                style={"color": "#94a3b8"})],
+                     style={"fontSize": "11.5px"}),
+        ] + _ab_decomposition_rows(al.get("decomposition") or {}) + \
+            _graph_judge_rows(s4.get("graph_judge") or {}) + [
+            # F43: `overall agreement` removed — a third number derived from
+            # a_fidelity and b_coverage, printed directly beneath both.
+        ]
+        # the ACTUAL disagreeing edges — the whole point of the reframe
+        # F40: collapsed to ENTITY PAIRS, worst hazard first. Four "asserted
+        # not believed" lines and three "believed not acted on" lines described
+        # about three disagreements, repeated with different effect words. The
+        # consequential unit is who-endangers-whom; the verb goes in brackets.
+        # F43: the edge-level dumps are gone. Fourteen lines — three of them
+        # the same claim about one hazard and three vehicles — restating what
+        # the two entity lines above already say, with the verb and a repeated
+        # severity added. The entity lines name WHO; the verbs are covered by
+        # the mechanism splits on the card and by Graph B uncertainty.
+        if not a_only and not b_only:
+            rows2.append(html.Div("every link lines up — nothing to show",
+                                  style={"fontSize": "11px", "color": "#16a34a",
+                                         "marginTop": "4px"}))
+        # F43: the Pearl's-rung-2 footnote printed on every run and belongs in
+        # the docs, not on the screen.
+        out.append(html.Div(rows2, className="unc-panel"))
+
+    # F37: the overall conformance number and Arm A's frozen raw numbers lost
+    # their panel when the findings moved. They are a ROLLUP across the graphs
+    # and the cards, so they sit at the foot of the graph section rather than
+    # above the things they summarise. The Arm A raw pair is kept because the
+    # three-arm comparison depends on it.
+    _conf = s4.get("conformance") or {}
+    if _conf:
+        out.append(html.Div(
+            f"conformance across both graphs and the cards: "
+            f"corrected {_conf.get('validity')} · "
+            f"{_conf.get('n_issues')} issue(s)  ·  Arm A raw (frozen, "
+            f"saturates): A={_conf.get('raw_a_validity')} "
+            f"B={_conf.get('raw_b_validity')} — kept for comparison",
+            style={"fontSize": "10px", "color": "#94a3b8", "marginTop": "4px"}))
+    out.append(html.Div(
+        "A vs B compares the two graphs above. Everything that judges a graph "
+        "now renders under that graph; every score rides in the header of the "
+        "section it scores.",
+        style={"fontSize": "10px", "color": "#cbd5e1",
+               "fontStyle": "italic", "marginTop": "3px"}))
     return out
 
 
@@ -2612,6 +3305,26 @@ def assess_component(d: dict[str, Any], unc_view: str = "both",
                 style={"fontSize": "12px", "fontWeight": "700",
                        "color": "#16a34a" if oc.get("resolved")
                        else "#b45309", "marginTop": "3px"}))
+        elif P.get("status") in ("merged", "failed") and not P.get("added"):
+            # The second look added nothing, so stage 2 never re-ran and no
+            # outcome event is coming. Silence here read as "still working";
+            # say plainly that the stage is finished, that the first-pass
+            # verdict stands, and that whatever triggered the petition is
+            # still open — nothing has been re-tested against it.
+            _open = ", ".join(
+                str(r.get("kind", "")).replace("_", " ")
+                for r in P.get("reasons", [])) or "the original pressure"
+            _ev = "; ".join(str(r.get("evidence", ""))[:90]
+                            for r in P.get("reasons", []) if r.get("evidence"))
+            prows.append(html.Div(
+                "■ NO CHANGE — the second look added nothing, so Stage 2 was "
+                "not re-run and the first-pass verdict STANDS.",
+                style={"fontSize": "12px", "fontWeight": "700",
+                       "color": "#b45309", "marginTop": "3px"}))
+            prows.append(html.Div(
+                f"still unresolved: {_open}"
+                + (f" — {_ev}" if _ev else ""),
+                style={"fontSize": "11px", "color": "#b45309"}))
         # Cross-epoch comparison: the petition's evidentiary payoff.
         e0 = d.get("epoch0")
         after_v = A.get("verdict")          # never trust loop-scope names
@@ -2911,9 +3624,24 @@ def tickets_component(d: dict[str, Any]) -> html.Div:
             ], className="ticket-body"),
         ], className=f"ticket {status}"))
     if not cards:
-        label = ("no violations — clean on arrival"
-                 if d["stop_reason"] == "clean" and not d["violations"]
-                 else "waiting for the model's first answer...")
+        # Three empty states, not two. `petition_started` clears violations
+        # and stop_reason so the re-perception can build its own panels, so
+        # after a petition the first branch fails and the old fallback claimed
+        # the run had not started yet — on a second pass that had already
+        # finished. An empty ticket list means something different depending
+        # on where in the run we are, and the panel has to say which.
+        # Any petition status at all means we are past the first pass — do not
+        # enumerate them ('merged', 'failed', 'in_flight', and whatever a later
+        # route adds), or a new status silently restores the wrong message.
+        _pet = ((d.get("assess") or {}).get("petition") or {}).get("status")
+        if d["stop_reason"] == "clean" and not d["violations"]:
+            label = "no violations — clean on arrival"
+        elif _pet:
+            label = ("re-perceiving — waiting for the second answer..."
+                     if _pet == "in_flight"
+                     else "re-perception raised no violations")
+        else:
+            label = "waiting for the model's first answer..."
         cards = [html.Div(label, className="ticket-empty")]
     # RAG shadow for STAGE 1 (repair): exact-key vs RAG top-1 for the P1-P6
     # rules repair quoted. Same panel grammar as Stage 2, minus the answer
@@ -2933,6 +3661,17 @@ def pipeline_steps(d: dict[str, Any]) -> tuple[list[tuple[str, str]],
     A = d["assess"]
     s1: list[tuple[str, str]] = [(s, d["stages"][s]["status"])
                                  for s in STAGES]
+    # A stage-1 petition blanks the live assessment so the re-run can build
+    # its own panels — but when the second look adds nothing, stage 2 never
+    # re-runs and the blank dict is all that is left. Answer/Probes/Reflect
+    # DID run; the record is in epoch0. Reading the blank made a finished
+    # stage report 'pending' and the badge pulse forever.
+    _pet = A.get("petition") or {}
+    if (A.get("status", "pending") == "pending" and _pet
+            and _pet.get("status") != "in_flight"):
+        _prior = (d.get("epoch0") or {}).get("assess") or {}
+        if _prior.get("status") == "done" or _prior.get("verdict"):
+            A = _prior
     a_status = A.get("status", "pending")
     if a_status == "pending":
         answer = probes = reflect = "pending"
@@ -2946,7 +3685,7 @@ def pipeline_steps(d: dict[str, Any]) -> tuple[list[tuple[str, str]],
         if a_status == "done":
             answer = probes = reflect = "done"
     s2 = [("Answer", answer), ("Probes", probes), ("Reflect", reflect)]
-    pet = A.get("petition")
+    pet = A.get("petition") or _pet
     if pet:
         s2.append(("Second look",
                    "active" if pet.get("status") == "in_flight"
@@ -2955,19 +3694,35 @@ def pipeline_steps(d: dict[str, Any]) -> tuple[list[tuple[str, str]],
 
 
 def phase_status_span(steps: list[tuple[str, str]],
-                      now_text: str = "") -> html.Span:
+                      now_text: str = "",
+                      settled: bool = False) -> html.Span:
     """The little live badge on a stage card's header:
-    '✓ done' · '● <step it is on>…' (pulsing) · '○ waiting'."""
+    '✓ done' · '● <step it is on>…' (pulsing) · '○ waiting'.
+
+    `settled` says the stage has finished even though not every step ran.
+    Without it there was no state meaning "done, but partial", so a finished
+    stage fell into the partial branch, got className 'active', and pulsed
+    forever — the CSS reads 'active' as still working."""
+    if any(s == "failed" for _, s in steps):
+        # terminal and not working: never pulse. The CSS reads 'active' as
+        # still in progress, which is what made a dead run look alive.
+        failed = [n for n, s in steps if s == "failed"][0]
+        return html.Span(f"✕ failed at {failed.lower()}",
+                         className="phase-status")
     if steps and all(s == "done" for _, s in steps):
         return html.Span("✓ done", className="phase-status done")
     active = [n for n, s in steps if s == "active"]
-    if active:
+    if active and not settled:
         label = now_text or active[0].lower()
         done_n = sum(1 for _, s in steps if s == "done")
         return html.Span(f"● {label} · step {done_n + 1}/{len(steps)}",
                          className="phase-status active")
     if any(s == "done" for _, s in steps):
         done_n = sum(1 for _, s in steps if s == "done")
+        if settled:
+            # terminal, not in progress: no pulse.
+            return html.Span(f"✓ done · {done_n}/{len(steps)} steps",
+                             className="phase-status done partial")
         return html.Span(f"● {done_n}/{len(steps)} steps",
                          className="phase-status active")
     return html.Span("○ waiting", className="phase-status pending")
@@ -2984,7 +3739,9 @@ def progress_strip(d: dict[str, Any]) -> html.Div:
             done_link = steps[i - 1][1] == "done"
             chips.append(html.Div(
                 className="pstrip-link" + (" done" if done_link else "")))
-        glyph = {"done": "✓", "active": "●"}.get(status, "○")
+        # F31: a failed stage gets its own glyph. Without it a died-mid-run
+        # stage fell through to "○ waiting", which is the opposite of true.
+        glyph = {"done": "✓", "active": "●", "failed": "✕"}.get(status, "○")
         chips.append(html.Div(
             [html.Div(glyph, className=f"pchip-dot {status}"),
              html.Div(name, className=f"pchip-name {status}")],
@@ -2993,7 +3750,12 @@ def progress_strip(d: dict[str, Any]) -> html.Div:
     # One plain line under the strip: what is happening right now.
     act = d.get("activity") or {}
     active = [n for n, s in steps if s == "active"]
-    if active and act.get("text"):
+    failed = [n for n, s in steps if s == "failed"]
+    if failed:
+        rows.append(html.Div(f"failed at {failed[0].lower()} — {d.get('error', '')}",
+                             style={"fontSize": "11.5px", "color": "#be123c",
+                                    "marginTop": "4px"}))
+    elif active and act.get("text"):
         rows.append(html.Div(f"now: {act['text']}",
                              className="pstrip-now"))
     elif all(s == "done" for _, s in steps) and steps:
@@ -3480,11 +4242,14 @@ app.layout = html.Div([
                      placeholder="or replay a saved run...",
                      style={"width": "260px", "color": "#111"}),
         # Control-plane toggles (no restart, no env vars). Applied at the
-        # moment a run launches; both default to the safe/proven path.
+        # moment a run launches. Defaults from 2026-07-28 (Sunny): LangGraph
+        # and both. The control we ship should be the one every run exercises,
+        # and a RAG seam only measured when someone remembers to switch it on
+        # is a seam nobody measures. Either can still be switched per run.
         html.Div([
             html.Span("control", className="ctl-lbl"),
             dcc.RadioItems(
-                id="control-mode", value="python", inline=True,
+                id="control-mode", value="langgraph", inline=True,
                 options=[{"label": "Python", "value": "python"},
                          {"label": "LangGraph", "value": "langgraph"}],
                 className="ctl-toggle"),
@@ -3492,7 +4257,7 @@ app.layout = html.Div([
         html.Div([
             html.Span("rule lookup", className="ctl-lbl"),
             dcc.RadioItems(
-                id="retrieval-mode", value="rulebook", inline=True,
+                id="retrieval-mode", value="both", inline=True,
                 options=[{"label": "exact", "value": "rulebook"},
                          {"label": "RAG", "value": "rag"},
                          {"label": "both", "value": "both"}],
@@ -3835,8 +4600,14 @@ def render(_n, scrub_value, unc_view, run_id, selected, scrub_max, cached,
     now = (d.get("activity") or {}).get("text", "")
     p0_badge = phase_status_span(
         s1_steps, now if any(s == "active" for _, s in s1_steps) else "")
+    # Stage 2 is SETTLED once a petition has concluded: either the second look
+    # added nothing (stage 2 never re-runs, so no further events are coming) or
+    # the outcome has been recorded. Either way the badge must stop pulsing.
+    _p = ((d.get("assess") or {}).get("petition") or {})
+    _settled = bool(_p) and _p.get("status") != "in_flight"
     p1_badge = phase_status_span(
-        s2_steps, now if any(s == "active" for _, s in s2_steps) else "")
+        s2_steps, now if any(s == "active" for _, s in s2_steps) else "",
+        settled=_settled)
     rail_view: Any = rail_component(d)
     assess_view: Any = assess_component(d, unc_view,
                                         run.get("record_name"), judge)

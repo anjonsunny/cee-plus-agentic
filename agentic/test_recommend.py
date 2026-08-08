@@ -258,7 +258,9 @@ def test_run_stage4_end_to_end():
     assert [e["type"] for e in events] == [
         "stage_started", "recommendations_ready", "graph_a_built",
         "graph_b_built", "targets_picked", "conformance_ready",
-        "internal_alignment_ready", "alignment_ready", "trust_ready",
+        "internal_alignment_ready", "alignment_ready",
+        "graph_b_internal_ready", "explanation_alignment_ready",
+        "set_report_ready", "trust_ready",
         "stage_done"]
 
 
@@ -471,3 +473,336 @@ def test_the_permission_grants_and_never_steers():
     for banned in ("do not invent", "be conservative", "only if you are sure",
                    "avoid", "no hazards are present", "be careful"):
         assert banned not in on
+
+
+# ── The two prompt lines that manufactured B_pool's bad quads ────────────
+
+def test_prompt_scopes_the_threat_slot_to_declared_threats():
+    """Round 2, B_pool: the model wrote `threat: child_1, state: drowning` and
+    was RIGHT by our own rules — nothing said the threat must be a source of
+    harm, and 'drowning' really is child_1's declared state. It also wrote
+    `child_2 --exposes--> child_1`, a swimmer as a hazard. Both are the same
+    missing constraint."""
+    import re
+
+    import agentic.recommend as R
+    p = re.sub(r"\s+", " ", R.RECOMMEND_PROMPT)      # the prompt is wrapped
+    assert "one of the object_ids on the `threats:` line" in p
+    assert "never its own threat" in p
+    assert "at-risk entity is never the threat" in p
+
+
+def test_prompt_allows_one_hazard_to_justify_several_actions():
+    """The old line — 'one entry per distinct (threat, state) causal logic' —
+    told the model each recommendation needed its OWN threat. With one pool
+    and two children it had to invent a second hazard, so it nominated a
+    child. Two actions, one hazard, must be legal."""
+    import re
+
+    import agentic.recommend as R
+    p = re.sub(r"\s+", " ", R.RECOMMEND_PROMPT)
+    assert "one entry per ACTION" in p
+    assert "may rest on the SAME (threat, state)" in p
+    assert "one entry per distinct (threat, state)" not in p
+
+
+def test_prompt_still_renders_in_both_o1_arms():
+    for flag in (False, True):
+        import re
+        assert "threats:` line" in re.sub(r"\s+", " ", _prompt_with(flag))
+
+
+# ── Graph B direction example (the victim-as-source inversion) ───────────
+
+def test_graph_b_prompt_has_direction_example():
+    """B_pool, twice: `child_1 · drowning --may_harm--> pool_1`. The threat
+    reason we hand Graph B ends on the victim, and the model read word order
+    as arrow direction."""
+    from agentic.recommend import _graph_b_prompt
+    p = _graph_b_prompt(_record(), _asm())
+    assert "may_harm--> worker" in p
+
+
+def test_graph_b_prompt_stays_neutral():
+    """Iron rule 5: the example must carry no calibration scene and no
+    id-shaped token. Electricity appears in none of the six scenes."""
+    import re
+
+    from main import GRAPH_B_PROMPT
+    from agentic.recommend import GRAPH_B_DIRECTION_EXAMPLE, _graph_b_prompt
+    example = GRAPH_B_DIRECTION_EXAMPLE
+    for scene in ("fire", "pool", "tanker", "spill", "collapse", "park"):
+        assert scene not in example.lower(), f"example names {scene}"
+    assert re.search(r"\b\w+_\d+\b", example) is None
+    # The example must be the only thing we ADD to the frozen block that could
+    # name a scene. The caption and detected_objects legitimately carry scene
+    # words — they are the run's data, not prompt — so the check is scoped to
+    # the block we author.
+    added = _graph_b_prompt(_record(), _asm()).replace(GRAPH_B_PROMPT, "")
+    assert example in added
+    assert "wire --may_harm--> worker" in added
+
+
+def test_main_untouched():
+    """The example lives in Arm B. main.py stays byte-identical."""
+    from main import GRAPH_B_PROMPT
+    assert "wire" not in GRAPH_B_PROMPT
+
+
+# ── Instruction 2: is Graph B's causal belief stable? ────────────────────
+
+def _gb(edges, pick=""):
+    """A raw Graph B answer in the shape the model actually returns:
+    normalize_graph_b reads raw['causal_graph'], and the pick names a
+    'threat'. Nodes must be declared or the edges are dropped."""
+    ids = {x for s, _e, t in edges for x in (s, t)}
+    return {"causal_graph": {
+        "nodes": [{"id": i, "state": "collapsed" if i != "person_1"
+                   else "trapped", "hazardous": i != "person_1"}
+                  for i in sorted(ids)],
+        "edges": [{"source": s, "effect": e, "target": t,
+                   "via_state": "collapsed" if s != "person_1" else "trapped"}
+                  for s, e, t in edges]},
+        "suppression_pick": {"threat": pick, "state": "collapsed"}}
+
+
+def _probe_seq(graphs):
+    """A probe_fn that returns each scripted graph in turn."""
+    box = {"i": 0}
+
+    def fn(_p):
+        g = graphs[box["i"] % len(graphs)]
+        box["i"] += 1
+        if isinstance(g, Exception):
+            raise g
+        return g
+    return fn, box
+
+
+def test_graph_b_uncertainty_stable_when_every_probe_agrees():
+    from agentic.recommend import measure_graph_b_uncertainty
+    g = _gb([("building_1", "may_harm", "person_1")], pick="building_1")
+    fn, _ = _probe_seq([g])
+    u = measure_graph_b_uncertainty(_record(), _asm(), 5, probe_fn=fn)
+    assert u["score"] == 0.0
+    assert u["direction_instability"] == 0.0
+    assert u["n_probes"] == 5
+
+
+def test_graph_b_uncertainty_catches_a_reversed_edge():
+    """The whole point: 3 probes one way, 2 the other. A count of edges could
+    never see this — only the direction can."""
+    from agentic.recommend import measure_graph_b_uncertainty
+    fwd = _gb([("building_1", "may_harm", "person_1")], pick="building_1")
+    rev = _gb([("person_1", "may_harm", "building_1")], pick="person_1")
+    fn, _ = _probe_seq([fwd, fwd, fwd, rev, rev])
+    u = measure_graph_b_uncertainty(_record(), _asm(), 5, probe_fn=fn)
+    assert u["direction_instability"] == 0.4
+    # the modal set keeps the majority direction
+    assert ["building_1", "may_harm", "person_1"] in u["modal_edges"]
+
+
+def test_graph_b_uncertainty_survives_malformed_answers():
+    from agentic.recommend import measure_graph_b_uncertainty
+    junk = [{"edges": "not a list"}, {}, {"nodes": None, "edges": None},
+            "a bare string", 17]
+    fn, _ = _probe_seq(junk)
+    u = measure_graph_b_uncertainty(_record(), _asm(), 5, probe_fn=fn)
+    assert isinstance(u["score"], float)
+
+
+def test_graph_b_uncertainty_all_probes_failed_reads_maximally_unstable():
+    """Silence must never read as agreement."""
+    from agentic.recommend import measure_graph_b_uncertainty
+    fn, _ = _probe_seq([RuntimeError("endpoint down")])
+    u = measure_graph_b_uncertainty(_record(), _asm(), 5, probe_fn=fn)
+    assert u["score"] == 1.0
+    assert u["flags"] and u["flags"][0]["kind"] == "graph_b_probes_failed"
+
+
+def test_graph_b_uncertainty_off_by_default_never_calls_the_model():
+    from agentic.recommend import measure_graph_b_uncertainty
+    fn, box = _probe_seq([_gb([("building_1", "may_harm", "person_1")])])
+    u = measure_graph_b_uncertainty(_record(), _asm(), 0, probe_fn=fn)
+    assert u == {} and box["i"] == 0
+
+
+def test_graph_b_probe_events_carry_the_edges_not_just_a_count():
+    """The recommend probes log only n_recs, which is why the reversed-edge
+    run was undiagnosable after the fact."""
+    from agentic.recommend import measure_graph_b_uncertainty
+    seen = []
+    fn, _ = _probe_seq([_gb([("building_1", "may_harm", "person_1")],
+                            pick="building_1")])
+    measure_graph_b_uncertainty(_record(), _asm(), 2, probe_fn=fn,
+                                on_event=lambda e: seen.append(e))
+    probes = [e for e in seen if e["type"] == "graph_b_probe"]
+    assert probes and probes[0]["edges"] == [["building_1", "may_harm",
+                                              "person_1"]]
+    assert probes[0]["pick"] == "building_1"
+
+
+# ── Prompt neutrality across the Stage 4 prompts (iron rule 5) ───────────
+
+def test_stage4_prompts_name_no_scene_and_no_id_token():
+    """The rulebook has had this guard since the P7 leak; the Stage 4 prompts
+    never did, and a proposed line for this very change carried a calibration
+    entity AND an id-shaped token. Anything we author and send to the model is
+    covered now — the injected scene DATA is exempt, it is the run, not prompt."""
+    import re
+
+    import agentic.recommend as R
+    scenes = re.compile(r"tanker|collapse\b|swimming pool|brush fire",
+                        re.I)
+    idtok = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)*_\d+\b")
+    authored = {
+        "RECOMMEND_PROMPT": R.RECOMMEND_PROMPT,
+        "GRAPH_B_DIRECTION_EXAMPLE": R.GRAPH_B_DIRECTION_EXAMPLE,
+        "LLM_PICK_PROMPT": R.LLM_PICK_PROMPT,
+        "EMPTY_RECS_CLAUSE": R.EMPTY_RECS_CLAUSE,
+        "AFFECTED_OPTIONAL": R.AFFECTED_OPTIONAL,
+    }
+    for name, text in authored.items():
+        assert not scenes.search(text), f"{name} names a calibration scene"
+        assert idtok.search(text) is None, f"{name} carries an id-shaped token"
+
+
+def test_the_action_must_carry_ids_and_the_quad_must_cover_them():
+    """Across three scenes the quad stayed anchored to the action in 3/3 cases
+    where the action named ids, and drifted in 3/3 where it was prose only.
+    Naming the entity is what ties the quad to the action."""
+    import re
+
+    import agentic.recommend as R
+    p = re.sub(r"\s+", " ", R.RECOMMEND_PROMPT)
+    assert "name it by its object_id, exactly as listed" in p
+    assert "never by a prose description" in p
+    assert "must also appear in the quad below" in p
+
+
+# ── F25: the quad arrives in whatever shape the model felt like ─────────
+
+def test_a_quad_written_as_an_arrow_string_is_recovered():
+    """A_fire round 4, verbatim. The model's causal claim was CORRECT; the
+    frozen normalizer takes any non-dict quad to the all-N/A placeholder, so
+    all three recommendations lost their entire claim — silently."""
+    from agentic.recommend import parse_recommend
+    raw = {"recommendations": [
+        {"rank": 1, "action": "Evacuate person_1 and dog_1.",
+         "reason": "Because house_1 is burning, it may harm person_1.",
+         "structured_reasoning":
+             "house_1 -> burning -> may_harm -> person_1, dog_1"}]}
+    _f, recs, _a, notes = parse_recommend(raw)
+    q = recs[0]["structured_reasoning"]
+    assert q["threat"] == "house_1" and q["state"] == "burning"
+    assert q["effect"] == "may_harm"
+    assert q["affected_objects"] == ["person_1", "dog_1"]
+    assert any("recovered_from_string" in n for n in notes)
+
+
+def test_every_arrow_dialect_the_model_has_used():
+    from agentic.recommend import coerce_quad
+    for text, want in (
+            ("a_1 -> burning -> may_harm -> b_1", ("a_1", "burning", "may_harm")),
+            ("a_1 · burning --may_spread_to--> b_1",
+             ("a_1", "burning", "may_spread_to")),
+            ("a_1 → burning → worsens → b_1",
+             ("a_1", "burning", "worsens")),
+            ("a_1 -> may_harm -> b_1", ("a_1", "", "may_harm"))):
+        q = coerce_quad(text, [], 1)
+        assert (q["threat"], q["state"], q["effect"]) == want, text
+        assert q["affected_objects"] == ["b_1"]
+
+
+def test_an_unreadable_quad_is_noted_not_silently_zeroed():
+    from agentic.recommend import coerce_quad
+    notes: list = []
+    assert coerce_quad("total nonsense", notes, 2) == "total nonsense"
+    assert any("unreadable" in n for n in notes)
+
+
+def test_a_quad_that_arrived_and_left_empty_is_always_noted():
+    """The general guard, and the one that actually matters. Whatever shape
+    comes next, a recommendation that ARRIVED with a quad and LEFT without one
+    is a parse loss — and it must never again be silent. The old behaviour
+    reported an empty parse_notes while destroying the claim Stage 4 exists to
+    measure, and the card checks then charged the model for our deletion."""
+    from agentic.recommend import parse_recommend
+    raw = {"recommendations": [
+        {"rank": 1, "action": "x", "reason": "y",
+         "structured_reasoning": ["house_1", "burning", "may_harm"]}]}
+    _f, recs, _a, notes = parse_recommend(raw)
+    assert recs[0]["structured_reasoning"]["threat"] == "N/A"
+    assert any("LOST_IN_PARSE" in n for n in notes)
+
+
+def test_a_well_formed_quad_is_left_alone_and_notes_nothing():
+    from agentic.recommend import parse_recommend
+    raw = {"recommendations": [
+        {"rank": 1, "action": "x", "reason": "y",
+         "structured_reasoning": {"threat": "house_1", "state": "burning",
+                                  "effect": "may_harm",
+                                  "affected_objects": ["person_1"]}}]}
+    _f, recs, _a, notes = parse_recommend(raw)
+    assert recs[0]["structured_reasoning"]["threat"] == "house_1"
+    assert not [n for n in notes if "quad" in n]
+
+
+def test_the_prompt_asks_for_an_object_not_a_sentence():
+    """The regression was ours: 'the SAME sentence as the reason, with its
+    slots filled in' made a JSON field read like prose, and the model wrote
+    prose. The restatement meaning has to survive without that reading."""
+    from agentic.recommend import RECOMMEND_PROMPT
+    assert "JSON OBJECT" in RECOMMEND_PROMPT
+    assert "never a sentence, never an arrow string" in RECOMMEND_PROMPT
+    assert "SAME sentence as the reason" not in RECOMMEND_PROMPT
+
+
+# ── F27: the instruction was stricter than the rule it described ────────
+
+def test_the_action_clause_permits_naming_what_is_not_in_the_scene():
+    """A_fire regression. The clause read as an absolute ban on any noun that
+    is not an object_id — so the model stopped recommending anything that
+    brings in an outside resource, and every hazard-directed action vanished:
+    15 prior runs all extinguished the hazard, the two after the edit only
+    rescued victims.
+
+    Nothing in code ever forbade it — the checks read the scene ids, classify
+    the action, and never look at the other words. The INSTRUCTION was stricter
+    than the rule it described, and the model believes the instruction."""
+    from agentic.recommend import RECOMMEND_PROMPT
+    assert "describes the SCENE, not the response" in RECOMMEND_PROMPT
+    assert "name those in ordinary words" in RECOMMEND_PROMPT
+    # and the real constraint survives: a scene entity must be named by id
+    assert "name it by its object_id" in RECOMMEND_PROMPT
+
+
+def test_the_action_clause_names_no_disaster_type():
+    """Prompt neutrality (iron rule 5). The permission covers fire, flood,
+    quake, spill, collapse alike, so it may not carry an example from any of
+    them — an instruction that reaches for one domain teaches that domain."""
+    from agentic.recommend import RECOMMEND_PROMPT
+    low = RECOMMEND_PROMPT.lower()
+    for word in ("firefighter", "fire ", "flood", "hurricane", "earthquake",
+                 "spill", "drown", "collapse", "ambulance", "hazmat",
+                 "police", "paramedic"):
+        assert word not in low, word
+
+
+def test_an_action_naming_an_outside_resource_is_still_hazard_directed():
+    """The behaviour the clause was blocking. This card must pass clean and be
+    classified as suppression-testable — it is exactly what the intervention
+    gate needs to exist."""
+    from agentic.evals4 import explanation_alignment
+    from agentic.test_evals4 import _obj, _rec_pair
+    rec, asm = _rec_pair()
+    card = {"rank": 1,
+            "action": "Deploy a response team to extinguish house_1.",
+            "reason": "Because house_1 is burning it may_harm person_1.",
+            "structured_reasoning": {"threat": "house_1", "state": "burning",
+                                     "effect": "may_harm",
+                                     "affected_objects": ["person_1"]},
+            "remaining_risk": "(car_1, parked)"}
+    r = explanation_alignment(rec, asm, [card])
+    assert r["modes"][0]["mode"] == "hazard_directed"
+    assert r["failures"] == []

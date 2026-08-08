@@ -273,16 +273,16 @@ def _rec(objs):
 
 def test_drowning_derives_pool_hazard():
     """The F7 core case: child drowning, pool declared 'normal' (qwen's
-    honest answer about English) -> code derives pool·engulfing."""
+    honest answer about English) -> code derives the medium hazard."""
     rec = _rec([_dob("child_1", "child", "drowning"),
                 _dob("pool_1", "pool", "normal")])
     events = perception.derive_medium_hazards(rec)
     pool = rec.detected_objects[1]
-    assert pool.state == "engulfing"
+    assert pool.state == "hazardous_in_context"
     assert pool.state_kind == "hazard_bearing"
     assert "child_1" in pool.state_note and "normal" in pool.state_note
     assert events == [{"medium": "pool_1", "was": "normal",
-                       "now": "engulfing", "victim": "child_1",
+                       "now": "hazardous_in_context", "victim": "child_1",
                        "victim_state": "drowning"}]
     assert any("derived_hazard" in n for n in rec.notes)
 
@@ -322,7 +322,7 @@ def test_geometry_picks_the_hosting_pool():
                 _dob("pool_2", "pool", "normal", bbox=[400, 50, 600, 300])])
     events = perception.derive_medium_hazards(rec)
     assert [e["medium"] for e in events] == ["pool_1"]
-    assert rec.detected_objects[1].state == "engulfing"
+    assert rec.detected_objects[1].state == "hazardous_in_context"
     assert rec.detected_objects[2].state == "normal"
 
 
@@ -444,3 +444,51 @@ def test_merge_survives_malformed_boxes():
             _human("person_2", "person", "person", [7])]
     kept, _, events = perception.merge_duplicate_lifeforms(objs)
     assert len(kept) == 2 and not events
+
+
+def test_engulfing_is_retired_in_arm_b():
+    """Sunny, 2026-07-28: remove 'engulfing' from the vocabulary. Arm A keeps
+    it (frozen, still authoritative there), but nothing in Arm B emits it and
+    Arm B folds it away if the model does — a word the reader has to translate
+    is a word that hides the finding."""
+    from agentic.perception import (MEDIUM_BOUND_HAZARDS,
+                                    arm_b_canonical_state, state_kind)
+    assert all(derived != "engulfing"
+               for derived, _ in MEDIUM_BOUND_HAZARDS.values())
+    assert arm_b_canonical_state("engulfing") == "hazardous_in_context"
+    assert state_kind("engulfing") == "hazard_bearing"   # still legal input
+
+
+def test_the_state_reminder_never_offers_engulfing():
+    from agentic.repair_loop import _STATE_WORD_REMINDER
+    assert "engulfing" not in _STATE_WORD_REMINDER
+
+
+def test_chemical_spill_is_accepted_as_a_hazard_state():
+    """Sunny, 2026-07-28. Strictly a noun, and the state slot asks for a
+    condition — but the model reaches for it repeatedly, it unambiguously
+    means "there is a hazardous spill here", and refusing it cost far more
+    than the error: kind=unknown meant the entity could not be a threat, so
+    Stage 2 checks fired, a petition ran and failed, and the run became
+    uninterpretable. Perception need not be perfect for the reasoning to be
+    worth measuring."""
+    from agentic.perception import state_kind
+    assert state_kind("chemical_spill") == "hazard_bearing"
+
+
+def test_accepting_it_did_not_open_the_state_slot_to_nouns_generally():
+    """P3b must still fire for other labels in the state slot."""
+    from agentic.perception import state_kind
+    from agentic.repair_loop import detect_violations
+    assert state_kind("tanker_truck") == "unknown"
+    v = [x for x in detect_violations(
+        [{"label": "spill", "state": "tanker_truck",
+          "anchor_bbox": [0, 0, 9, 9]}]) if "state" in x.kind]
+    assert v and v[0].kind == "state_is_a_label"
+
+
+def test_it_is_accepted_but_never_taught():
+    """Not advertised in the reminder — we take the word when offered, we do
+    not tell the model that a noun is a legal condition."""
+    from agentic.repair_loop import _STATE_WORD_REMINDER
+    assert "chemical_spill" not in _STATE_WORD_REMINDER

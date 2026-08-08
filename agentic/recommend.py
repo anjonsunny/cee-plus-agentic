@@ -45,6 +45,7 @@ query_fn closure — the node cores only ever see text prompts).
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -119,25 +120,55 @@ with exactly these keys:
   given object_ids.
 - assumptions: array of short strings you INFER beyond the visible evidence.
 - uncertainty_notes: array of short strings about what you are unsure of and why.
-- recommendations: array, one entry per distinct (threat, state) causal logic
-  you act on. Do not pad to a fixed count.{empty_clause} Each entry:
+- recommendations: array, one entry per ACTION you would take. Two actions may
+  rest on the SAME (threat, state) — protecting two people from one hazard is
+  two actions and one hazard. Every entry needs a real quad: if you cannot see
+  which declared threat an action responds to, drop the action rather than
+  writing "N/A" or leaving a slot empty. Do not pad to a fixed
+  count.{empty_clause} Each entry:
     - rank: integer (1 = highest priority)
-    - action: one specific responder action (no "and"/"then" compounds)
-    - reason: plain English of the form "Because {{threat}} is {{state}}, it
-      {{effect}} {{affected_objects}}." Every object_id in the reason must also
-      appear in the quad, and vice versa.
+    - action: one specific responder action (no "and"/"then" compounds).
+      Whenever your action acts on an entity that IS in the scene list above,
+      name it by its object_id, exactly as listed — never by a prose
+      description of it. The list describes the SCENE, not the response: the
+      responders, teams, vehicles, equipment and services you would bring in
+      are not in it, and you should name those in ordinary words. Every
+      object_id your action names must also appear in the quad below: the quad
+      explains why THAT action on THOSE entities, not merely some other true
+      danger in the scene.
+    - reason: plain English of exactly the form "Because {{threat}} is
+      {{state}}, it {{effect}} {{affected_objects}}." It must obey the SAME
+      four rules the quad obeys, listed under structured_reasoning below: the
+      same legal threats, the same legal states, the same effect list, the same
+      role bans. Write it in prose; do not relax the rules for prose.
     - related_object_ids: array of object_ids the reason touches
-    - structured_reasoning: the causal quad —
-        - threat: object_id of the entity whose state drives the hazard
+    - structured_reasoning: a JSON OBJECT with exactly the four keys below —
+      never a sentence, never an arrow string. It carries the SAME claim the
+      reason makes, with each part in its own key: the reason's subject goes in
+      `threat`, its state in `state`, its verb in `effect`, and the entities it
+      says are harmed in `affected_objects`. If you cannot fill the four keys
+      without changing the claim, the reason was wrong: rewrite the reason.
+        - threat: object_id of the SOURCE of harm — one of the object_ids on
+          the `threats:` line above. The quad always describes the DANGER the
+          action responds to, never the action itself, so a rescue still names
+          the hazard the victim is being rescued FROM: "rescue X" is
+          <hazard> -> may_harm -> X. An entity is never its own threat, and an
+          at-risk entity is never the threat — being in danger is not the same
+          as causing it.
         - state: that threat's hazard-bearing state. It must be one of the
           state= values listed for that object_id above. 'distress' and
           'proximity' are at_risk_as ROLES, not states; never use them here.
         - effect: exactly one of [{effects}]
         - affected_objects: {affected_clause} Plain ids only — never an id
           with a suffix attached.
+      Together, the action, the reason and the quad must all describe ONE
+      causal claim: the reason and the quad each explain, on their own, why
+      THAT action on THOSE entities is the right response to THAT danger.
     - expected_consequence: the immediate result of THIS action if it succeeds
     - remaining_risk: an (object_id, state) pair this action does NOT address;
-      must differ across recommendations
+      must differ across recommendations. The state here obeys the same rule as
+      the quad's: a state= value listed for that object_id, never an at_risk_as
+      role such as 'distress' or 'proximity'.
     - possible_follow_up_action: the next step after this action
 - assumptions_advisory: array (may be empty) of flags about entities you cannot
   see but suspect are present or at risk (e.g. occupants inside a structure).
@@ -229,6 +260,65 @@ def _parse_advisory(value: Any, notes: list[str]) -> list[dict]:
     return out
 
 
+# ── The quad arrives in whatever shape the model felt like (F25) ────────
+#
+# A_fire round 4: the model returned a PERFECTLY CORRECT quad —
+#     "house_1 -> burning -> may_harm -> person_1, dog_1"
+# — as an arrow STRING instead of an object. The frozen normalizer takes a
+# non-dict quad to {}, which becomes the all-"N/A" placeholder, and the entire
+# causal claim of all three recommendations was destroyed SILENTLY: parse_notes
+# came back empty, Graph A came back empty, and the card checks then charged the
+# model for a quad we had deleted ourselves.
+#
+# So: recover the shape here, before the frozen normalizer sees it, and NOTE
+# every recovery. And note the general case too — a non-empty quad that
+# normalizes to all-N/A is a parse loss whatever its shape, which is the guard
+# that catches the NEXT shape rather than only this one.
+
+_ARROW_EFFECT = re.compile(r"-{1,3}\s*([a-z_]+)\s*-{1,3}>")
+
+
+def coerce_quad(value: Any, notes: list[str], rank: Any = None) -> Any:
+    """Best-effort recovery of a quad written as prose. Returns a dict when it
+    can read one, otherwise the value untouched so the frozen normalizer
+    handles it as before. Never raises."""
+    if isinstance(value, dict) or not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not text:
+        return value
+    # "a --may_harm--> b"  ->  "a -> may_harm -> b"
+    text = _ARROW_EFFECT.sub(r"-> \1 ->", text)
+    text = text.replace("\u2192", "->").replace("\u00b7", "->")
+    parts = [p.strip(" .") for p in re.split(r"-+>", text) if p.strip(" .")]
+    if len(parts) < 3:
+        notes.append(f"quad_rank_{rank}_unreadable({value[:60]!r})")
+        return value
+    effects = {e.strip() for e in _EFFECT_LINE.split(",")}
+
+    def _ids(chunk: str) -> list[str]:
+        return [x.strip() for x in re.split(r"[,;]| and ", chunk) if x.strip()]
+
+    if len(parts) >= 4:
+        threat, state, effect, affected = parts[0], parts[1], parts[2], parts[3]
+    elif parts[1] in effects:
+        # the state was omitted, not the effect
+        threat, state, effect, affected = parts[0], "", parts[1], parts[2]
+    else:
+        threat, state, effect, affected = parts[0], parts[1], "", parts[2]
+    notes.append(f"quad_rank_{rank}_recovered_from_string")
+    return {"threat": threat, "state": state, "effect": effect,
+            "affected_objects": _ids(affected)}
+
+
+def _quad_is_empty(q: Any) -> bool:
+    if not isinstance(q, dict):
+        return True
+    vals = [str(q.get(k, "")).strip().upper() for k in ("threat", "state",
+                                                        "effect")]
+    return all(v in ("", "N/A") for v in vals)
+
+
 def parse_recommend(raw: Any) -> tuple[dict, list[dict], list[dict], list[str]]:
     """Parse a raw recommendation VLM answer into
     (reasoning_frame, recommendations, advisory, notes).
@@ -251,14 +341,38 @@ def parse_recommend(raw: Any) -> tuple[dict, list[dict], list[dict], list[str]]:
         "uncertainty_notes": _as_list_of_str(raw.get("uncertainty_notes")),
     }
 
+    # F25: recover prose quads BEFORE the frozen normalizer, which takes any
+    # non-dict quad to the all-N/A placeholder.
+    _recs_in = raw.get("recommendations")
+    if isinstance(_recs_in, list):
+        _fixed = []
+        for _r in _recs_in:
+            if isinstance(_r, dict) and "structured_reasoning" in _r:
+                _r = {**_r, "structured_reasoning": coerce_quad(
+                    _r["structured_reasoning"], notes, _r.get("rank"))}
+            _fixed.append(_r)
+        _recs_in = _fixed
+
     try:
-        recommendations = normalize_recommendations(raw.get("recommendations"))
+        recommendations = normalize_recommendations(_recs_in)
     except Exception as exc:  # normalize should be tolerant, but never crash
         notes.append(f"recommendations_unparseable({exc})->[]")
         recommendations = []
     if not isinstance(recommendations, list):
         notes.append("recommendations_not_a_list->[]")
         recommendations = []
+
+    # F25, the general guard: whatever the shape, a recommendation that ARRIVED
+    # with a quad and LEFT without one is a parse loss, and it must never again
+    # be silent. This is what was missing — not the arrow-string case
+    # specifically, but any total loss of the claim Stage 4 exists to measure.
+    _in = _recs_in if isinstance(_recs_in, list) else []
+    for _i, _out in enumerate(recommendations):
+        _src = _in[_i] if _i < len(_in) and isinstance(_in[_i], dict) else {}
+        if _src.get("structured_reasoning") and \
+                _quad_is_empty(_out.get("structured_reasoning")):
+            notes.append(f"quad_rank_{_out.get('rank')}_LOST_IN_PARSE"
+                         f"({str(_src.get('structured_reasoning'))[:60]!r})")
 
     advisory = _parse_advisory(raw.get("assumptions_advisory"), notes)
     return frame, recommendations, advisory, notes
@@ -565,6 +679,39 @@ def build_graph_a(record: Any, assessment: Any, recommendations: list[dict],
     return graph_a
 
 
+# Graph B inverted the causal direction on B_pool twice running:
+# `child_1 · drowning --may_harm--> pool_1`, the victim named as the source and
+# the hazard as the harmed party — while the same JSON marked child_1
+# `hazardous: false`. The threat REASON we hand it reads "The pool is hazardous
+# due to the presence of child_1, who is drowning": the sentence explains the
+# flag but ends on the victim, and the model took word order for arrow
+# direction. So the fix names that trap and shows the arrow once, correctly.
+#
+# Lives in Arm B — main.py stays byte-identical. Electricity because none of
+# the six calibration scenes involve it; `wire`/`worker` without digits so the
+# example carries no id-shaped token; only the CORRECT arrow is shown, with the
+# wrong reading described in words rather than written out.
+GRAPH_B_DIRECTION_EXAMPLE = """\
+Direction rule, worked through:
+
+  Suppose the prior analysis says:
+    "The wire is hazardous due to the presence of the worker, who is
+     being electrocuted."
+
+  That sentence explains WHY the wire was flagged. It is not a causal
+  claim, and its word order is not the arrow.
+
+  Read the states instead:
+    wire   · live         -> hazard-bearing -> this is the SOURCE
+    worker · electrocuted -> at-risk        -> this is the TARGET
+
+  Correct edge:  wire --may_harm--> worker,  via_state: live
+
+  The arrow always runs from the hazard-bearing state to the at-risk
+  one, no matter which entity the sentence happens to name first.
+"""
+
+
 def _graph_b_prompt(record: Any, assessment: Any) -> str:
     """Assemble the FULL Graph B prompt the way Arm A does: the neutral
     template, the deny-inferred policy, the caption, and — crucially — the
@@ -587,6 +734,7 @@ def _graph_b_prompt(record: Any, assessment: Any) -> str:
             for t in assessment.threats],
     }
     return (f"{GRAPH_B_PROMPT}\n\n"
+            f"{GRAPH_B_DIRECTION_EXAMPLE}\n\n"
             f"Inferred-entity policy:\n{GRAPH_B_INFERRED_DENIED}\n\n"
             f"Caption:\n{record.caption or 'N/A'}\n\n"
             f"Prior analysis (detected_objects + threats only — "
@@ -742,8 +890,184 @@ def run_graph_b_probes(record: Any, assessment: Any, *,
             emit("graph_b_probe_error", index=i, error=str(exc)[:200])
             continue
         g = normalize_graph_b(raw if isinstance(raw, dict) else {}, detected_ids)
+        # F42: resolve entity names the model made up before measuring whether
+        # its BELIEF is stable. One D_aerial run produced four invented ids
+        # across five probes — chemical_spill_1, spill_consequence_1,
+        # chemical_worker_1, chemical_worker_2 — and every one of them made an
+        # edge look new. `edges 0.8` then reported "the mechanism never
+        # settles" when a large part of what never settled was the NAMING.
+        # Same fix ab_alignment already had; the probe path never got it.
+        from agentic.evals4 import resolve_invented_ids
+        g, alias = resolve_invented_ids(g, record)
+        if alias:
+            emit("graph_b_probe_renamed", index=i, aliases=alias)
         out.append(g)
-        emit("graph_b_probe", index=i, n_edges=len(g.get("edges", [])))
+        # Log the EDGES, not just the count. The recommend probes log only
+        # n_recs, and that is exactly why the reversed-edge run could not be
+        # diagnosed after the fact — a count cannot tell you which way an
+        # arrow pointed.
+        emit("graph_b_probe", index=i,
+             edges=[[bare_id(e.get("source")), str(e.get("effect") or ""),
+                     bare_id(e.get("target"))]
+                    for e in (g.get("edges") or []) if isinstance(e, dict)],
+             pick=str(((g.get("suppression_pick") or {}).get("object_id")
+                       or (g.get("suppression_pick") or {}).get("threat")
+                       or "")),
+             n_edges=len(g.get("edges", [])))
+    return out
+
+
+def measure_graph_b_uncertainty(record: Any, assessment: Any, n_probes: int = 0,
+                                *, probe_fn: QueryFn | None = None,
+                                on_event: Any = None) -> dict:
+    """Is the model's causal BELIEF stable, or is the yardstick elastic?
+
+    Graph B is asked once and then used to judge Graph A. When it reverses an
+    edge we cannot tell whether the model believes the reversal or whether it
+    was a coin flip — the difference between a finding and a fluke. Three
+    dispersion readings, 0 = stable, 1 = scattered:
+
+      edge_set_instability  1 - mean Jaccard of each probe against the modal
+                            edge set
+      direction_instability for every unordered entity pair any probe connects,
+                            the share of probes disagreeing about which end is
+                            the SOURCE. This is the one that catches a victim
+                            in the hazard slot.
+      pick_instability      1 - the modal suppression_pick's share
+
+    Off by default, same convention as the recommend probes, so the hermetic
+    suite stays model-free. Transport failure is not dispersion — but if EVERY
+    probe dies, nothing was measured, and an unmeasured belief must read as
+    maximally unstable rather than as agreement."""
+    emit = _emitter(on_event)
+    if n_probes <= 0:
+        return {}
+    graphs = run_graph_b_probes(record, assessment, probe_fn=probe_fn,
+                                n_probes=n_probes, on_event=on_event)
+    # F42: entity names the probes invented that could NOT be resolved to a
+    # scene entity. `chemical_spill_1` maps to `spill_1` and is fixed silently;
+    # `spill_consequence_1` and `chemical_worker_1` map to nothing — the model
+    # put entities in its own causal graph that do not exist. That is a finding
+    # in its own right, and it was buried in a sixteen-line edge dump.
+    _known = {o.object_id for o in getattr(record, "detected_objects", []) or []}
+    _invented = sorted({str(x) for g in graphs
+                        for e in (g.get("edges") or [])
+                        for x in (e.get("source"), e.get("target"))
+                        if x and str(x) not in _known})
+    if not graphs:
+        out = {"n_probes": 0, "requested": n_probes, "score": 1.0,
+               "edge_set_instability": 1.0, "direction_instability": 1.0,
+               "pick_instability": 1.0, "modal_edges": [],
+               "flags": [{"kind": "graph_b_probes_failed",
+                          "evidence": f"all {n_probes} Graph B probes failed "
+                                      f"in transport",
+                          "action": "fix the model endpoint and re-run; treat "
+                                    "Graph B as unmeasured until then"}]}
+        emit("graph_b_uncertainty_ready", **{k: v for k, v in out.items()
+                                             if k != "flags"})
+        return out
+
+    def _edges(g):
+        return {(bare_id(e.get("source")), str(e.get("effect") or ""),
+                 bare_id(e.get("target")))
+                for e in (g.get("edges") or []) if isinstance(e, dict)
+                and bare_id(e.get("source")) and bare_id(e.get("target"))}
+
+    sets = [_edges(g) for g in graphs]
+    n = len(sets)
+    # modal edge set: the one most probes reproduce exactly
+    counts: dict[frozenset, int] = {}
+    for s in sets:
+        counts[frozenset(s)] = counts.get(frozenset(s), 0) + 1
+    modal = set(max(counts, key=lambda k: counts[k])) if counts else set()
+
+    def _jac(a, b):
+        if not a and not b:
+            return 1.0
+        return len(a & b) / max(1, len(a | b))
+
+    edge_inst = round(1 - sum(_jac(s, modal) for s in sets) / n, 3)
+
+    # direction: per unordered pair, how many probes disagree on the source
+    pair_dir: dict[frozenset, list[str]] = {}
+    for s in sets:
+        for src, _eff, tgt in s:
+            pair_dir.setdefault(frozenset((src, tgt)), []).append(src)
+    disagreements = []
+    for pair, sources in pair_dir.items():
+        if len(pair) < 2:
+            continue                       # a self-loop has no direction
+        top = max(set(sources), key=sources.count)
+        minority = len(sources) - sources.count(top)
+        disagreements.append(minority / n)
+    dir_inst = round(max(disagreements) if disagreements else 0.0, 3)
+
+    picks = [str(((g.get("suppression_pick") or {}).get("object_id")
+                  or (g.get("suppression_pick") or {}).get("threat") or ""))
+             for g in graphs]
+    pick_inst = (round(1 - picks.count(max(set(picks), key=picks.count)) / n, 3)
+                 if any(picks) else 0.0)
+
+    # THE EVIDENCE, not just the score. Every probe graph is already stored;
+    # printing 'direction 0.6' throws away which edge flipped and which way.
+    # A number cannot say "the model wrote both directions in one answer".
+    dir_ev: list[dict] = []
+    for pair, sources in pair_dir.items():
+        if len(pair) < 2:
+            continue
+        a, b = sorted(pair)
+        for src in (a, b):
+            tgt = b if src == a else a
+            votes = sum(1 for s_ in sets
+                        if any(e[0] == src and e[2] == tgt for e in s_))
+            if votes:
+                dir_ev.append({"source": src, "target": tgt, "votes": votes,
+                               "of": n})
+    dir_ev.sort(key=lambda r: -r["votes"])
+
+    # probes that carry BOTH directions of the same pair — self-contradiction
+    # inside one answer, which dispersion across probes cannot express.
+    both_ways = []
+    for i, s_ in enumerate(sets):
+        for pair in pair_dir:
+            if len(pair) < 2:
+                continue
+            a, b = sorted(pair)
+            if any(e[0] == a and e[2] == b for e in s_) and \
+                    any(e[0] == b and e[2] == a for e in s_):
+                both_ways.append({"probe": i, "a": a, "b": b})
+
+    # effect wobble per ordered pair: which mechanism, how many times
+    eff_ev: dict[str, dict[str, int]] = {}
+    for s_ in sets:
+        for src, eff, tgt in s_:
+            eff_ev.setdefault(f"{src}->{tgt}", {})
+            eff_ev[f"{src}->{tgt}"][eff] = (
+                eff_ev[f"{src}->{tgt}"].get(eff, 0) + 1)
+
+    pick_ev: dict[str, int] = {}
+    for pk in picks:
+        if pk:
+            pick_ev[pk] = pick_ev.get(pk, 0) + 1
+
+    score = round((edge_inst + dir_inst + pick_inst) / 3, 3)
+    out = {"n_probes": n, "requested": n_probes, "score": score,
+           "direction_evidence": dir_ev,
+           "both_directions_in_one_probe": both_ways,
+           "effect_evidence": eff_ev,
+           "pick_evidence": pick_ev,
+           "edge_set_instability": edge_inst,
+           "direction_instability": dir_inst,
+           "pick_instability": pick_inst,
+           "modal_edges": sorted([list(e) for e in modal]),
+           "invented_ids": _invented,
+           "flags": [],
+           # the probe graphs themselves, so nothing re-probes: asking twice
+           # would double the model calls AND give the two controls different
+           # probe sequences.
+           "graphs": graphs}
+    emit("graph_b_uncertainty_ready", **{k: v for k, v in out.items()
+                                         if k != "flags"})
     return out
 
 
@@ -816,11 +1140,28 @@ def run_evals(record: Any, assessment: Any, recommendations: list[dict],
     F19: when probe graphs are supplied, the A-vs-B point estimate is joined by
     its distribution over the probe cross-product."""
     from agentic.evals4 import (ab_alignment, ab_alignment_distribution,
-                                conformance_breakdown, internal_alignment)
+                                conformance_breakdown,
+                                explanation_alignment,
+                                graph_b_internal_alignment, internal_alignment,
+                                set_report)
     emit = _emitter(on_event)
-    conf = conformance_breakdown(graph_a, graph_b)
-    internal = internal_alignment(record, assessment, recommendations)
-    align = ab_alignment(graph_a, graph_b)
+    # F24 — the card is checked FIRST, then its findings are routed into the
+    # two reports that already exist: legality against the law goes to
+    # conformance, surface-against-surface goes to internal alignment. No third
+    # score, so the trust weights are untouched. The standalone result is kept
+    # for the per-card footers, which need the findings grouped by rank.
+    explain = explanation_alignment(record, assessment, recommendations)
+    conf = conformance_breakdown(graph_a, graph_b,
+                                 card_findings=explain["conformance"],
+                                 n_cards=len(recommendations))
+    internal = internal_alignment(record, assessment, recommendations,
+                                  card_findings=explain["internal_alignment"])
+    # F29 — pure aggregation of everything tagged level="set", plus the
+    # action-mode rollup. Nothing is re-scored, so this panel existing cannot
+    # move a single number.
+    across = set_report(internal, conf, explain)
+    align = ab_alignment(graph_a, graph_b, record)
+    gb_internal = graph_b_internal_alignment(graph_b)
     if graphs_a and graphs_b:
         dist = ab_alignment_distribution(graphs_a, graphs_b, canonical=align)
         align = {**align, "distribution": dist}
@@ -838,13 +1179,86 @@ def run_evals(record: Any, assessment: Any, recommendations: list[dict],
     emit("alignment_ready", a_fidelity=align["a_fidelity"],
          b_coverage=align["b_coverage"], structural=align["structural"],
          a_only=align["a_only"], b_only=align["b_only"])
+    # emitted last so the established event order is unchanged — the twin
+    # equivalence tests assert it exactly.
+    emit("graph_b_internal_ready", score=gb_internal["score"],
+         n_failures=gb_internal["n_failures"],
+         breakdown=gb_internal["breakdown"], measured=gb_internal["measured"])
+    # F24 — appended after graph_b_internal so the established event order is
+    # unchanged; the twin equivalence tests assert it exactly.
+    emit("explanation_alignment_ready", score=explain["score"],
+         n_failures=explain["n_failures"], breakdown=explain["breakdown"],
+         modes=explain["modes"],
+         n_conformance=len(explain["conformance"]),
+         n_internal=len(explain["internal_alignment"]))
+    # appended last so the established event order is only ever added to —
+    # the twin equivalence tests assert the stream exactly.
+    emit("set_report_ready", n_findings=across["n_findings"],
+         n_coverage=len(across["coverage"]), n_pairwise=len(across["pairwise"]),
+         modes=across["modes"], mode_verdict=across["mode_verdict"])
     return {"conformance": conf, "internal_alignment": internal,
+            "graph_b_internal": gb_internal,
+            "explanation_alignment": explain,
+            "set_report": across,
             "alignment": align}
+
+
+def run_card_judge(record: Any, assessment: Any, recommendations: list[dict],
+                   explanation: dict, *, judge_fn: Any = None,
+                   on_event: Any = None) -> dict:
+    """F24 step (advisory). Ask an independent judge whether each card's two
+    explanations actually EXPLAIN the action, and whether they mean the same
+    thing. OFF unless judge_fn is supplied — the hermetic spine and the twin
+    equivalence tests must stay model-free.
+
+    Never returns a score and never touches one. It is display-only precisely
+    so it can run during calibration without contaminating the numbers the
+    trust weights are being fitted to."""
+    if judge_fn is None or not recommendations:
+        return {"card_judge": {}}
+    from agentic.judge_card import judge_cards
+    emit = _emitter(on_event)
+    out = judge_cards(recommendations, _scene_block(record, assessment),
+                      judge_fn=judge_fn)
+    emit("card_judge_ready", n_cards=out["n_cards"], flags=out["flags"],
+         n_probes=out["n_probes"], advisory=True)
+    return {"card_judge": out}
+
+
+def run_graph_judge(record: Any, assessment: Any, graph_a: dict, graph_b: dict,
+                    alignment: dict, *, judge_fn: Any = None,
+                    on_event: Any = None) -> dict:
+    """F38 step (advisory). Ask an independent judge the two questions the
+    A-vs-B arithmetic cannot answer:
+
+      Q1  the graphs agree on the hazard and name different entities harmed —
+          which set is more exposed?
+      Q2  both assert the same pair with a different effect — would a responder
+          DO something different?
+
+    Everything else about comparing two graphs (conflict, omission, reversed
+    direction, invented entity) is a set operation and stays in code.
+
+    OFF unless judge_fn is supplied. Never returns a score."""
+    if judge_fn is None:
+        return {"graph_judge": {}}
+    from agentic.judge_graph import judge_graphs
+    emit = _emitter(on_event)
+    out = judge_graphs(graph_a, graph_b,
+                       (alignment or {}).get("decomposition") or {},
+                       _scene_block(record, assessment), judge_fn=judge_fn,
+                       on_event=None)
+    if out:
+        emit("graph_judge_ready", advisory=True,
+             asked_victims=out.get("victims") is not None,
+             n_mechanisms=len(out.get("mechanisms") or []))
+    return {"graph_judge": out}
 
 
 def run_trust(recommendations: list[dict], conformance: dict,
               internal_alignment: dict, alignment: dict, uncertainty: dict,
               picks: dict, *, record: Any = None, assessment: Any = None,
+              graph_b_internal: Any = None, graph_b_uncertainty: Any = None,
               on_event: Any = None) -> dict:
     """Step 6 (Phase 1b, deterministic). Fold the objective evals + measured
     uncertainty + pick agreement into ONE trust score with a ranked breakdown
@@ -861,7 +1275,9 @@ def run_trust(recommendations: list[dict], conformance: dict,
                               for o in record.detected_objects))
     trust = compute_trust(recommendations, conformance, internal_alignment,
                           alignment, uncertainty, picks, consequence=cons,
-                          no_hazards=no_hazards)
+                          no_hazards=no_hazards,
+                          graph_b_internal=graph_b_internal,
+                          graph_b_uncertainty=graph_b_uncertainty)
     emit("trust_ready", score=trust["score"], band=trust["band"],
          top_contributor=(trust["contributors"][0]["signal"]
                           if trust["contributors"] else None))
@@ -882,9 +1298,25 @@ class Stage4Result(BaseModel):
     picks: dict = Field(default_factory=dict)
     conformance: dict = Field(default_factory=dict)         # corrected breakdown (1b)
     internal_alignment: dict = Field(default_factory=dict)  # within-A coverage (1b)
+    # F24 — action / reason / quad held to ONE law, then compared. The prose
+    # and the structure are two independent explanations of the same action;
+    # this is where they are made to answer for each other.
+    explanation_alignment: dict = Field(default_factory=dict)
+    # F29 — findings about the SET rather than any one card (coverage gaps,
+    # one card repeating another), plus what the set as a whole acts on.
+    set_report: dict = Field(default_factory=dict)
+    # F24 — the advisory judge. Display-only: it never enters a score, so it
+    # can run during calibration without moving what the weights are fitted to.
+    card_judge: dict = Field(default_factory=dict)
+    # F38 — the graph judge. Two questions only, both advisory: which graph's
+    # victims are more exposed, and whether a different effect on the same pair
+    # would change what a responder does.
+    graph_judge: dict = Field(default_factory=dict)
     alignment: dict = Field(default_factory=dict)           # A-vs-B (1b)
     uncertainty: dict = Field(default_factory=dict)         # measured probe U (1b)
     trust: dict = Field(default_factory=dict)               # folded trust score (1b)
+    graph_b_uncertainty: dict = Field(default_factory=dict)  # is B's belief stable?
+    graph_b_internal: dict = Field(default_factory=dict)     # does B agree with itself?
     parse_notes: list[str] = Field(default_factory=list)
     # the raw model answer, kept verbatim as evidence — Any, because a
     # malformed answer (a bare string, a list) must still be preserved.
@@ -896,6 +1328,7 @@ class Stage4Result(BaseModel):
 def run_stage4(record: Any, assessment: Any, image_path: str = "",
                *, query_fn: QueryFn | None = None,
                probe_fn: QueryFn | None = None, explain_fn: Any = None,
+               judge_fn: Any = None,
                n_probes: int = 0, on_event: Any = None) -> Stage4Result:
     """The Phase-1a straight line + measured uncertainty:
     recommend -> probe U -> Graph A -> Graph B -> picks -> evals.
@@ -920,17 +1353,26 @@ def run_stage4(record: Any, assessment: Any, image_path: str = "",
     # Graph A per probe. The B side costs n_probes model calls.
     graphs_a = build_graph_a_probes(record, assessment, unc["uncertainty"],
                                     on_event=on_event)
-    graphs_b = run_graph_b_probes(record, assessment, probe_fn=probe_fn,
-                                  n_probes=n_probes, on_event=on_event)
+    gbu = measure_graph_b_uncertainty(record, assessment, n_probes,
+                                      probe_fn=probe_fn, on_event=on_event)
+    graphs_b = gbu.get("graphs") or []
     picks = pick_targets(record, graph_a, graph_b, rec["recommendations"],
                          query_fn=query_fn, on_event=on_event)
     evals = run_evals(record, assessment, rec["recommendations"],
                       graph_a, graph_b, on_event=on_event,
                       graphs_a=graphs_a, graphs_b=graphs_b)
+    judged = run_card_judge(record, assessment, rec["recommendations"],
+                            evals["explanation_alignment"], judge_fn=judge_fn,
+                            on_event=on_event)
+    gjudged = run_graph_judge(record, assessment, graph_a, graph_b,
+                              evals["alignment"], judge_fn=judge_fn,
+                              on_event=on_event)
     trust = run_trust(rec["recommendations"], evals["conformance"],
                       evals["internal_alignment"], evals["alignment"],
                       unc["uncertainty"], picks, record=record,
-                      assessment=assessment, on_event=on_event)
+                      assessment=assessment,
+                      graph_b_internal=evals.get("graph_b_internal"),
+                      graph_b_uncertainty=gbu, on_event=on_event)
 
     emit("stage_done", stage="recommend")
     return Stage4Result(
@@ -938,6 +1380,13 @@ def run_stage4(record: Any, assessment: Any, image_path: str = "",
         advisory=rec["advisory"], graph_a=graph_a, graph_b=graph_b,
         picks=picks, conformance=evals["conformance"],
         internal_alignment=evals["internal_alignment"],
+        explanation_alignment=evals.get("explanation_alignment", {}),
+        set_report=evals.get("set_report", {}),
+        card_judge=judged.get("card_judge", {}),
+        graph_judge=gjudged.get("graph_judge", {}),
         alignment=evals["alignment"], uncertainty=unc["uncertainty"],
-        trust=trust["trust"], parse_notes=rec["recommend_notes"],
+        trust=trust["trust"],
+        graph_b_uncertainty=gbu,
+        graph_b_internal=evals.get("graph_b_internal") or {},
+        parse_notes=rec["recommend_notes"],
         raw_answer=rec["recommend_raw"])

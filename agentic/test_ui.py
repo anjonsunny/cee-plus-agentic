@@ -1071,7 +1071,7 @@ def test_stage4_panel_renders_from_event():
     out = str(stage4_component(d))
     for needle in ("SUPPRESSION TARGET (FOR THE CAUSAL TEST)", "dust_1", "building_1", "0.667",
                    "they disagree", "Rescue person_1", "may_harm",
-                   "ASSUMPTIONS ADVISORY", "GRAPH A", "GRAPH B", "Phase 1b"):
+                   "ASSUMPTIONS ADVISORY", "GRAPH A", "GRAPH B"):
         assert needle in out, f"missing {needle!r}"
 
 
@@ -1098,14 +1098,22 @@ def test_stage4_conformance_and_alignment_panels():
           "alignment": {"a_fidelity": 0.5, "b_coverage": 0.33,
                         "structural": 0.4, "a_only": ["x"], "b_only": ["y", "z"]}}
     out = str(stage4_component(derive([{"type": "stage4_result", "result": s4}])))
-    assert "CONFORMANCE" in out and "corrected 0.54" in out
-    assert "role mix-up" in out and "cosmetic" in out
-    assert "Arm A raw validity" in out             # frozen number kept
-    assert "INTERNAL ALIGNMENT" in out and "coverage gap" in out
+    # F37: conformance no longer has its own panel — the findings render under
+    # the graph or card they judge, and the ROLLUP sits at the foot of the
+    # graph section rather than above the things it summarises.
+    assert "corrected 0.54" in out
+    assert "Arm A raw" in out                      # frozen number kept
     assert "ALIGNMENT ·" in out and "DIVERGE" in out         # self-consistency reframe
     assert "ALIGNMENT (rung 2)" not in out          # NOT mislabeled as an intervention rung
-    assert "NOT an intervention" in out             # rung 2 named only to say we don't do it
-    assert "no advice acts on it" in out            # b_only wording
+    # F43: named, so the screen connects to "a_fidelity < 0.4 fires sycophancy"
+    assert "a_fidelity" in out and "b_coverage" in out
+    # ...and the three lines that served none of the six objectives are gone
+    assert "overall agreement" not in out
+    assert "same whole claim" not in out and "same who-harms-whom" not in out
+    # F43: the Pearl's-rung-2 footnote printed on every run and belongs in the
+    # docs. The panel header still says what the check IS.             # rung 2 named only to say we don't do it
+    # F43: the edge-level dumps are gone — fourteen lines restating what the
+    # two entity lines already say. Those entity lines are what remains.            # b_only wording
     assert "y" in out and "z" in out                # actual disagreeing edges shown
 
 
@@ -1327,3 +1335,866 @@ def test_retrieval_result_diff_renders_automatically():
          "rulebook_line": "Yes · fire · L7 · threats[-] · at_risk[-]",
          "rag_line": "Yes · fire · L7 · threats[-] · at_risk[-]"}])
     assert "did NOT change it" in str(assess_component(same, "both"))
+
+
+# ── The petition never leaves the ticket panel claiming the run hasn't started
+
+def _fold(events):
+    """Replay an event list through derive(), the way the UI does."""
+    from agentic.ui import derive
+    return derive(events)
+
+
+def _panel_text(d):
+    from agentic.ui import tickets_component
+    return str(tickets_component(d))
+
+
+def test_ticket_panel_never_says_waiting_after_a_petition():
+    """ui_3049cd31: after `petition_started` the accumulators are cleared so
+    the re-perception can build its own panels, which left the empty-state
+    branch claiming the model had not answered yet — on a second pass that had
+    already finished. Fold the real stream and assert the claim never appears
+    once a petition is in flight."""
+    import json
+    import pathlib
+    p = (pathlib.Path(__file__).parent.parent / "exports" / "agentic_runs"
+         / "ui_3049cd31" / "events.jsonl")
+    if not p.exists():                       # record not present in this tree
+        return
+    events = [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
+    start = next(i for i, e in enumerate(events)
+                 if e.get("type") == "petition_started")
+    for i in range(start + 1, len(events) + 1):
+        text = _panel_text(_fold(events[:i]))
+        assert "waiting for the model's first answer" not in text, (
+            f"panel claimed the run had not started, {i - start} events "
+            f"after petition_started")
+
+
+def test_ticket_panel_reports_a_clean_re_perception():
+    """The third empty state has to say what actually happened."""
+    events = [
+        {"type": "run_started", "image_size": [10, 10]},
+        {"type": "petition_started", "reasons": [{"kind": "x"}]},
+        {"type": "run_started", "image_size": [10, 10]},
+        {"type": "petition_done", "added": [], "removed": [], "rejected": [],
+         "disputed": [], "n_petitioned": 0},
+    ]
+    text = _panel_text(_fold(events))
+    assert "re-perception raised no violations" in text
+    assert "waiting for the model's first answer" not in text
+
+
+def test_ticket_panel_still_says_waiting_before_any_answer():
+    """The original empty state must survive for the case it was written for."""
+    text = _panel_text(_fold([{"type": "run_started", "image_size": [10, 10]}]))
+    assert "waiting for the model's first answer" in text
+
+
+# ── A settled Stage 2 must stop pulsing, and must say what stands ───────
+
+def _stage2_badge(d):
+    from agentic.ui import phase_status_span, pipeline_steps
+    _, s2 = pipeline_steps(d)
+    p = ((d.get("assess") or {}).get("petition") or {})
+    return phase_status_span(s2, "", settled=bool(p) and
+                             p.get("status") != "in_flight")
+
+
+def test_stage2_badge_stops_pulsing_after_a_petition_concludes():
+    """ui_3049cd31: the petition added nothing, so Stage 2 never re-ran and no
+    petition_outcome ever fires. petition_started had blanked the live
+    assessment, so Answer/Probes/Reflect read 'pending', the badge hit the
+    partial branch, got className 'active' — the class the CSS pulses — and
+    blinked forever on a stage that was finished."""
+    import json
+    import pathlib
+    p = (pathlib.Path(__file__).parent.parent / "exports" / "agentic_runs"
+         / "ui_3049cd31" / "events.jsonl")
+    if not p.exists():
+        return
+    events = [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
+    end = next(i for i, e in enumerate(events)
+               if e.get("type") == "petition_done")
+    for i in range(end + 1, len(events) + 1):
+        badge = str(_stage2_badge(_fold(events[:i])))
+        assert "phase-status active" not in badge, (
+            f"Stage 2 still pulsing {i - end} events after petition_done")
+
+
+def test_the_first_pass_is_not_lost_when_the_petition_adds_nothing():
+    """Answer/Probes/Reflect DID run — the record is in epoch0. Reading the
+    blanked live dict made a finished stage report pending."""
+    import json
+    import pathlib
+    p = (pathlib.Path(__file__).parent.parent / "exports" / "agentic_runs"
+         / "ui_3049cd31" / "events.jsonl")
+    if not p.exists():
+        return
+    from agentic.ui import pipeline_steps
+    events = [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
+    _, s2 = pipeline_steps(_fold(events))
+    by = dict(s2)
+    assert by["Answer"] == "done" and by["Probes"] == "done"
+    assert by["Reflect"] == "done" and by["Second look"] == "done"
+
+
+def test_a_no_change_petition_says_the_verdict_stands_and_what_is_open():
+    """Silence read as 'still working'. The panel must state the outcome and
+    name the pressure that is still unresolved."""
+    events = [
+        {"type": "run_started", "image_size": [10, 10]},
+        {"type": "assess_verdict", "scenario": "Yes", "level": 7,
+         "threats": [], "at_risk": [], "n_violations": 0},
+        {"type": "reflect_stopped", "reason": "clean", "rounds": 0},
+        {"type": "petition_started", "target": "stage1", "reasons": [
+            {"kind": "caption_state_contradiction",
+             "evidence": "caption describes 'unconscious' but no entity "
+                         "carries that state"}]},
+        {"type": "petition_done", "added": [], "removed": [], "rejected": [],
+         "disputed": [], "n_petitioned": 0},
+    ]
+    from agentic.ui import assess_component
+    text = str(assess_component(_fold(events), None, "r", None))
+    assert "verdict STANDS" in text
+    assert "still unresolved" in text
+    assert "caption state contradiction" in text
+
+
+# ── Instruction 5: panels split by producer ─────────────────────────────
+
+def _s4_panel(stage4):
+    """Render the Stage 4 panel from a stage4_result event."""
+    from agentic.ui import derive, stage4_component
+    d = derive([{"type": "run_started", "image_size": [10, 10]},
+                {"type": "stage4_result", "result": stage4}])
+    return str(stage4_component(d))
+
+
+def test_each_graph_carries_its_own_conformance_score():
+    """F37: the score-only CONFORMANCE panel is gone. Each graph's count and
+    worst severity ride in that graph's own header, so a number never sits
+    above the thing it describes."""
+    s4 = {"conformance": {
+        "validity": 0.6, "n_issues": 2, "breakdown": [],
+        "issues": [
+            {"graph": "graph_b", "entity": "child_1", "severity": 2,
+             "category": "role mix-up", "rule": "edge_from_non_hazardous",
+             "detail": "child_1->pool_1"},
+            {"graph": "graph_b", "entity": "child_1", "severity": 1,
+             "category": "inconsistency", "rule": "via_state_not_hazard_bearing",
+             "detail": "child_1->pool_1: via 'drowning'"}],
+        "by_graph": {
+            "graph_a": {"count": 0, "max_severity": 0, "breakdown": []},
+            "graph_b": {"count": 2, "max_severity": 2, "breakdown": []}}}}
+    t = _s4_panel(s4)
+    a, b = t.index("GRAPH A ·"), t.index("GRAPH B ·")
+    assert "0 issue(s)" in t[a:b]                    # clean graph stays visible
+    assert "2 issue(s) · worst severity 2" in t[b:]
+    # the findings render under the graph they judge, once
+    assert t.count("edge_from_non_hazardous") == 1
+    assert "via_state_not_hazard_bearing" in t
+    # two rules on one edge is ONE defect counted twice — say so
+    assert "the same edge, 2 rules — one defect" in t
+
+
+def test_the_gate_verdict_renders_under_graph_b():
+    """F37: the gate is a verdict about Graph B's FITNESS, so it belongs under
+    Graph B. Buried in the trust panel, a failed gate showed up only as
+    "signals_measured 4/5" with no way to see why."""
+    s4 = {"conformance": {"validity": 0.4, "n_issues": 1, "breakdown": [],
+                          "by_graph": {
+                              "graph_a": {"count": 0, "max_severity": 0,
+                                          "breakdown": []},
+                              "graph_b": {"count": 1, "max_severity": 2,
+                                          "breakdown": []}}},
+          "trust": {"score": 0.5, "band": "moderate", "contributors": [],
+                    "graph_b_gate": {
+                        "trusted": False,
+                        "reasons": ["Graph B contradicts its own declarations "
+                                    "(self-consistency 0.2, 3 issue(s))"]}}}
+    t = _s4_panel(s4)
+    b = t.index("GRAPH B ·")
+    assert "FIT TO BE THE YARDSTICK?" in t[b:]
+    assert "contradicts its own declarations" in t[b:]
+    assert "meaningless number, not a low one" in t[b:]
+
+
+def test_a_passing_gate_says_nothing():
+    """F39. A passing gate was one green line reporting that nothing happened,
+    on every clean run. Its whole value is the FAILURE case, where it explains
+    why A-vs-B disappeared from trust."""
+    t = _s4_panel({"trust": {"graph_b_gate": {"trusted": True, "reasons": []}}})
+    assert "FIT TO BE THE YARDSTICK" not in t
+
+
+def test_graph_b_uncertainty_panel_shows_belief_not_every_edge():
+    """F42. It used to print EVERY edge any probe produced — sixteen lines on
+    D_aerial, eleven seen once, plus a mechanism line per pair. A wall.
+
+    What a reader needs is three things: what the model consistently BELIEVES
+    (links a majority of probes repeat), where it CONTRADICTS itself, and
+    whether it invented entities. The once-only tail is noise by definition —
+    that is exactly what the instability score summarises."""
+    s4 = {"graph_b_uncertainty": {
+        "n_probes": 5, "score": 0.6, "edge_set_instability": 0.8,
+        "direction_instability": 0.6, "pick_instability": 0.4, "flags": [],
+        "direction_evidence": [
+            {"source": "child_1", "target": "pool_1", "votes": 4, "of": 5},
+            {"source": "pool_1", "target": "child_1", "votes": 3, "of": 5},
+            # a minority link — seen once, must be counted and not listed
+            {"source": "swing_1", "target": "child_2", "votes": 1, "of": 5}],
+        "both_directions_in_one_probe": [
+            {"probe": 2, "a": "child_1", "b": "pool_1"},
+            {"probe": 4, "a": "child_1", "b": "pool_1"}],
+        "effect_evidence": {"pool_1->child_2": {
+            "exposes": 1, "increases_risk_to": 1, "may_harm": 1}},
+        "pick_evidence": {"pool_1": 3, "child_1": 2}}}
+    t = _s4_panel(s4)
+    assert "GRAPH B UNCERTAINTY" in t          # not "stability"
+    # links a MAJORITY of probes repeat are listed with their counts...
+    assert "4/5 probes" in t and "3/5 probes" in t
+    # ...and the once-seen tail is counted, never listed. On D_aerial that tail
+    # was fifteen lines.
+    assert "1 further link(s)" in t and "not shown" in t
+    assert "swing_1" not in t
+    assert "contradicts itself inside one response" in t
+    # the numbers read as agreement, in words — "direction 0.6" left the reader
+    # to work out which way is good
+    assert "40% agreement" in t and "flips which end is the hazard" in t
+    assert "would suppress pool_1 in 3 of 5 probes" in t
+
+
+def test_the_withheld_notice_lives_under_graph_b():
+    """F37 moved the gate verdict under GRAPH B, where the question "is this
+    fit to be the yardstick" belongs. It used to be visible only as
+    `signals_measured 4/5` in the trust panel."""
+    s4 = {"graph_b_uncertainty": {
+              "n_probes": 5, "score": 0.6, "edge_set_instability": 0.8,
+              "direction_instability": 0.6, "pick_instability": 0.4,
+              "flags": [], "direction_evidence": [], "pick_evidence": {}},
+          "trust": {"score": 0.5, "band": "moderate", "contributors": [],
+                    "graph_b_gate": {"trusted": False, "reasons": [
+                        "the model does not reproduce its own arrows "
+                        "(direction instability 0.6 over 5 probes)"]}}}
+    t = _s4_panel(s4)
+    assert "FIT TO BE THE YARDSTICK" in t
+    assert "does not reproduce its own arrows" in t
+
+
+def test_graph_b_internal_panel_renders_beside_graph_a():
+    s4 = {"graph_b_internal": {
+        "score": 0.4, "n_failures": 2, "measured": True,
+        "breakdown": [{"category": "role contradiction", "count": 2,
+                       "severity": 2, "examples": ["child_1 hazardous: false"]}]}}
+    t = _s4_panel(s4)
+    assert "INTERNAL ALIGNMENT (B)" in t
+    assert "role contradiction" in t
+
+
+def test_the_numbers_are_shown_with_a_warning_when_graph_b_fails_the_gate():
+    """F44. "NOT COMPUTED" was untrue — the comparison IS computed and stored
+    in every run; only TRUST withholds it. Hiding the panel also meant the
+    worse graph escaped measurement: on D_aerial, Graph B named the two hazmat
+    workers as the victims and failed the gate on reproducibility, while
+    Graph A protected three vehicles and ignored the people — and nothing
+    measured Graph A at all, because the yardstick had been disqualified.
+
+    Show the numbers, warn at the top, and say plainly that trust ignored
+    them."""
+    s4 = {"alignment": {"a_fidelity": 0.0, "b_coverage": 0.0,
+                        "structural": 0.0, "a_only": [], "b_only": []},
+          "trust": {"score": 0.5, "band": "moderate", "contributors": [],
+                    "graph_b_gate": {"trusted": False, "reasons": [
+                        "conformance flags 1 serious issue(s) against Graph B"]}}}
+    t = _s4_panel(s4)
+    assert "a_fidelity" in t and "b_coverage" in t     # shown, not hidden
+    assert "WITHHELD from trust" in t
+    assert "read them as a lead, not a measurement" in t
+    assert "conformance flags 1 serious issue" in t    # WHICH check failed
+
+
+def test_alignment_still_renders_when_graph_b_passes():
+    s4 = {"alignment": {"a_fidelity": 0.9, "b_coverage": 0.9,
+                        "structural": 0.9, "a_only": [], "b_only": []},
+          "trust": {"score": 0.9, "band": "high", "contributors": [],
+                    "graph_b_gate": {"trusted": True, "reasons": []}}}
+    t = _s4_panel(s4)
+    assert "WITHHELD from trust" not in t
+    assert "SAME story" in t
+
+
+def test_ui_toggles_default_to_langgraph_and_both():
+    """Sunny, 2026-07-28. The env defaults and the UI defaults must agree —
+    a UI that silently re-selects the old path would make every run through
+    the app disagree with every run through the CLI."""
+    import agentic.ui as U
+    from agentic.graph_live import control_flag, set_control
+    from agentic.retrieval import retrieval_mode
+
+    def _find(node, wanted):
+        if getattr(node, "id", None) == wanted:
+            return node
+        for kid in (getattr(node, "children", None) or []
+                    if isinstance(getattr(node, "children", None), list)
+                    else [getattr(node, "children", None)]):
+            if kid is None or isinstance(kid, str):
+                continue
+            hit = _find(kid, wanted)
+            if hit is not None:
+                return hit
+        return None
+
+    assert _find(U.app.layout, "control-mode").value == "langgraph"
+    assert _find(U.app.layout, "retrieval-mode").value == "both"
+    # and the env defaults agree, so CLI and UI runs match
+    set_control(None)
+    assert control_flag() == "langgraph"
+    assert retrieval_mode() == "both"
+
+
+# ── The picture must show the record the run reasoned on ────────────────
+
+def test_a_refused_petition_reverts_the_displayed_perception():
+    """ui_9d48a00e: the second look returned three `other` entities, all
+    vlm_sam_fallback, so the two-witness rule refused them all and the run
+    proceeded on the ORIGINAL record. But petition_started had cleared the
+    live accumulators and nothing restored them, so the overlay drew the
+    rejected pass — boxes for entities that were turned away, and none for the
+    hazmat workers and the spill every later stage reasoned about."""
+    import json
+    import pathlib
+    p = (pathlib.Path(__file__).parent.parent / "exports" / "agentic_runs"
+         / "ui_9d48a00e" / "events.jsonl")
+    if not p.exists():
+        return
+    from agentic.ui import derive
+    d = derive([json.loads(l) for l in p.read_text().splitlines() if l.strip()])
+    shown = set(d["bound"])
+    assert {"hazmat_worker_1", "hazmat_worker_2", "spill_1"} <= shown
+    assert not any(o.startswith("other_") for o in shown)
+    # the record the pipeline used and the picture agree
+    used = {o["object_id"]
+            for o in ((d.get("result") or {}).get("detected_objects") or [])}
+    assert used == shown
+
+
+def test_the_refused_pass_is_not_erased():
+    """No-erasure: reverting the DISPLAY must not delete the evidence of what
+    was refused and why — that stays in the petition panel."""
+    import json
+    import pathlib
+    p = (pathlib.Path(__file__).parent.parent / "exports" / "agentic_runs"
+         / "ui_9d48a00e" / "events.jsonl")
+    if not p.exists():
+        return
+    from agentic.ui import derive
+    d = derive([json.loads(l) for l in p.read_text().splitlines() if l.strip()])
+    pet = (d.get("assess") or {}).get("petition") or {}
+    assert pet.get("status") == "failed"
+    assert "did not survive" in pet.get("error", "") or pet.get("error")
+    assert "other" in pet.get("error", "")          # what was refused
+    assert (d.get("epoch0") or {}).get("bound")     # the first pass kept too
+
+
+def test_a_merged_petition_that_adds_something_keeps_the_new_view():
+    """The revert is for petitions that add NOTHING. A real merge must still
+    show the merged record."""
+    from agentic.ui import derive
+    evs = [{"type": "run_started", "image_size": [10, 10]},
+           {"type": "entity_bound", "object_id": "a_1",
+            "box_source": "dino_matched", "bbox": [0, 0, 5, 5]},
+           {"type": "petition_started", "target": "stage1", "reasons": []},
+           {"type": "entity_bound", "object_id": "b_1",
+            "box_source": "dino_matched", "bbox": [1, 1, 6, 6]},
+           {"type": "petition_done", "added": ["b_1·leaking"], "removed": [],
+            "rejected": [], "disputed": [], "n_petitioned": 1}]
+    d = derive(evs)
+    assert "b_1" in d["bound"]
+
+
+# ── F24: each card carries its own verdict, under it ───────────────────
+
+def _text(tree) -> str:
+    """Flatten a Dash component tree to the text a reader would see."""
+    out = []
+    def walk(n):
+        if isinstance(n, (list, tuple)):
+            for x in n:
+                walk(x)
+        elif isinstance(n, str):
+            out.append(n)
+        elif hasattr(n, "children"):
+            walk(n.children)
+    walk(tree)
+    return " ".join(out)
+
+
+def _s4_with_findings():
+    return {"stage4": {"recommendations": [
+        {"rank": 1, "action": "Isolate the area.",
+         "reason": "Because person_1 is standing it may_harm house_1.",
+         "structured_reasoning": {"threat": "house_1", "state": "burning",
+                                  "effect": "may_harm",
+                                  "affected_objects": ["person_1"]}}],
+        "explanation_alignment": {
+            "modes": [{"rank": 1, "mode": "hazard_directed"}],
+            "by_rank": {"1": [
+                {"rule": "action_names_no_object_id", "signal": "conformance",
+                 "level": "card", "severity": 2, "rank": 1,
+                 "detail": "rec 1: the action names no object_id"},
+                {"rule": "subject_mismatch", "signal": "internal_alignment",
+                 "level": "card", "severity": 2, "rank": 1,
+                 "detail": "rec 1: the reason blames person_1, the quad blames house_1"},
+                {"rule": "victim_named_with_no_hazard_declared",
+                 "signal": "conformance", "level": "card", "severity": 0,
+                 "rank": 1, "detail": "rec 1: no hazard was declared"},
+                {"rule": "rank_not_a_triage", "signal": "conformance",
+                 "level": "set", "severity": 1, "rank": None,
+                 "detail": "rank 1 used more than once"}]}},
+        "card_judge": {"verdicts": [
+            {"rank": 1, "advisory": True,
+             "prose": {"verdict": "not_causally_aligned", "votes": 4, "n": 5,
+                       "unanimous": False},
+             "structure": {"verdict": "causally_aligned", "votes": 5, "n": 5,
+                           "unanimous": True}}]},
+        "graph_a": {}, "graph_b": {}}}
+
+
+def test_a_cards_verdict_renders_under_that_card():
+    """The whole point of the footer: before this, the checks fired in one
+    panel and the evidence sat in another, so '5 alignment failures' pointed at
+    no card in particular."""
+    txt = _text(stage4_component(_s4_with_findings()))
+    assert "the action names no object_id" in txt
+    assert "the reason blames person_1, the quad blames house_1" in txt
+
+
+def test_the_two_signals_stay_visibly_apart():
+    """'the surface broke the law' and 'two surfaces disagree' are different
+    failures and map to different pathologies."""
+    txt = _text(stage4_component(_s4_with_findings())).upper()
+    assert "CONFORMANCE" in txt and "ALIGNMENT" in txt
+
+
+def test_a_severity_zero_finding_says_it_is_not_charged():
+    """These are the cases where OUR constraint had no legal answer. Rendering
+    them like a real defect would undo the point of separating them."""
+    txt = _text(stage4_component(_s4_with_findings()))
+    assert "recorded, not charged" in txt
+
+
+def test_the_judge_is_labelled_advisory_on_the_card():
+    """Judges advise, never overwrite — the panel has to say so, or a reader
+    will treat a judge verdict as a measurement."""
+    txt = _text(stage4_component(_s4_with_findings()))
+    assert "ADVISORY" in txt.upper()
+    assert "NOT causally aligned" in txt
+    # the vote split rides beside the verdict — 4/5 and 5/5 are different
+    # findings, and showing only the winner throws away the more useful half
+    assert "(4/5)" in txt and "(5/5)" in txt
+
+
+def test_action_mode_is_shown_and_says_what_it_is_for():
+    txt = _text(stage4_component(_s4_with_findings()))
+    assert "hazard-directed" in txt and "suppression" in txt
+
+
+def test_set_level_findings_do_not_land_on_a_card():
+    """rank and cross-card duplication are about the SET; they have no card to
+    sit under, so they must never appear in a card footer."""
+    txt = _text(stage4_component(_s4_with_findings()))
+    assert "rank 1 used more than once" not in txt
+
+
+# ── F29: the ACROSS ALL RECOMMENDATIONS panel ──────────────────────────
+
+def _with_set_report(**over):
+    d = _s4_with_findings()
+    rep = {"coverage": [], "pairwise": [], "n_findings": 0, "n_cards": 2,
+           "modes": {"hazard_directed": 0, "victim_directed": 0, "mixed": 0,
+                     "unattributed": 2},
+           "mode_verdict": "nothing in this set is testable by hazard "
+                           "suppression",
+           "suppression_testable": 0}
+    rep.update(over)
+    d["stage4"]["set_report"] = rep
+    return d
+
+
+def test_the_panel_renders_even_when_clean():
+    """The opposite of a card footer. A missing footer means "this card is
+    clean"; a missing PANEL would be ambiguous between "no cross-card problems"
+    and "not rendered" — and absence of duplication is a real positive
+    signal."""
+    txt = _text(stage4_component(_with_set_report()))
+    assert "ACROSS ALL RECOMMENDATIONS" in txt
+    assert "no duplicated quads, actions or remaining risks" in txt
+    assert "every at-risk entity is acted on" in txt
+
+
+def test_coverage_and_pairwise_stay_in_separate_blocks():
+    """They mean different things and, at S5, map to different pathologies: a
+    coverage gap is under-response, duplication is padding."""
+    d = _with_set_report(
+        coverage=[{"severity": 2,
+                   "detail": "at-risk dog_1 is not addressed by any "
+                             "recommendation"}],
+        pairwise=[{"severity": 1, "detail": "rec 2: same quad as rec 1"}])
+    txt = _text(stage4_component(d))
+    assert "COVERAGE" in txt and "PAIRWISE" in txt
+    assert "at-risk dog_1 is not addressed" in txt
+    assert "rec 2: same quad as rec 1" in txt
+    assert "every at-risk entity is acted on" not in txt
+
+
+def test_the_mode_rollup_says_whether_anything_is_testable():
+    """D_aerial round 4 produced two unattributed recommendations, so nothing
+    in that run was testable by hazard suppression — the most important
+    sentence about it, computed nowhere before this."""
+    txt = _text(stage4_component(_with_set_report()))
+    assert "WHAT THE SET ACTS ON" in txt
+    assert "hazard-directed 0" in txt and "unattributed 2" in txt
+    assert "nothing in this set is testable by hazard suppression" in txt
+
+
+def test_a_severity_zero_set_finding_is_not_shown_as_a_defect():
+    d = _with_set_report(pairwise=[
+        {"severity": 0, "detail": "rec 2: remaining_risk duplicates rec 1"}])
+    assert "○ rec 2: remaining_risk duplicates rec 1" in _text(
+        stage4_component(d))
+
+
+def test_no_panel_before_the_report_exists():
+    """Older runs have no set_report; they must not grow an empty panel."""
+    d = _s4_with_findings()
+    d["stage4"].pop("set_report", None)
+    assert "ACROSS ALL RECOMMENDATIONS" not in _text(stage4_component(d))
+
+
+def test_a_card_with_no_findings_grows_no_footer():
+    """Scoped to the CARD footer. Since F36 the word CONFORMANCE also appears
+    under each graph, which is correct and not a card footer."""
+    d = _s4_with_findings()
+    d["stage4"]["explanation_alignment"] = {}
+    d["stage4"]["card_judge"] = {}
+    txt = _text(stage4_component(d))
+    # the card's own bands, not the graph sections' identically-named ones
+    assert "rec 1:" not in txt
+    assert "ADVISORY, NOT SCORED" not in txt
+    assert "◆ hazard-directed" not in txt
+
+
+def test_the_alignment_band_shows_id_level_failures_too():
+    """D_aerial rec 1: the band rendered EMPTY while two internal-alignment
+    findings sat in the panel above. F24's cross-checks cannot fire when the
+    reason does not parse — but the older id-level checks still can, and they
+    carry a rank, so they belong under their card."""
+    from agentic.ui import stage4_component
+    d = _s4_with_findings()
+    d["stage4"]["internal_alignment"] = {"failures": [
+        {"category": "coverage gap", "severity": 1, "rank": 1,
+         "detail": "rec 1: quad ids not in reason: ['fire_truck_1']"},
+        {"category": "coverage gap", "severity": 2, "rank": None,
+         "detail": "at-risk hazmat_worker_1 is not addressed"}]}
+    txt = _text(stage4_component(d))
+    assert "quad ids not in reason" in txt
+    # rank-less findings are about the SET and have no card to sit under —
+    # they render in ACROSS ALL RECOMMENDATIONS, never in a card footer
+    card_end = txt.index("ACROSS ALL RECOMMENDATIONS")
+    assert "hazmat_worker_1" not in txt[:card_end]
+    assert "hazmat_worker_1" in txt[card_end:]
+
+
+def test_the_semantic_block_completes_the_panel():
+    """F30. Conformance and alignment each have a card view and a set view;
+    the judge only had a card view."""
+    d = _with_set_report()
+    d["stage4"]["card_judge"] = {"rollup": {
+        "headline": "2 finding(s) across 2 card(s) · 1 card(s) clean",
+        "findings": [
+            {"kind": "not_aligned", "text": "rec 1: the reason is not causally"
+             " aligned with its action", "votes": 3, "n": 5, "thin": True},
+            {"kind": "undecided", "text": "rec 1: the judge could not decide "
+             "about the quad", "votes": 2, "n": 5, "thin": True}],
+        "clean_ranks": [2], "n_judged": 2, "unreachable": 0,
+        "advisory": True}}
+    txt = _text(stage4_component(d))
+    assert "SEMANTIC" in txt and "ADVISORY, NOT SCORED" in txt
+    assert "rec 1: the reason is not causally aligned" in txt
+    # a scraped majority is marked, never hidden
+    assert "thin majority" in txt and "(3/5)" in txt
+
+
+def test_an_undecided_verdict_is_visually_apart_from_a_finding():
+    """◇ the judge could not decide · ◈ the judge found something. An
+    undecided verdict is a finding about the INSTRUMENT."""
+    d = _with_set_report()
+    d["stage4"]["card_judge"] = {"rollup": {
+        "headline": "h", "findings": [
+            {"kind": "undecided", "text": "rec 1: the judge could not decide "
+             "about the quad", "votes": 2, "n": 5, "thin": True}],
+        "clean_ranks": [], "n_judged": 1, "unreachable": 0}}
+    txt = _text(stage4_component(d))
+    assert "◇ rec 1: the judge could not decide" in txt
+    assert "◈" not in txt
+
+
+def test_no_semantic_block_when_the_judge_did_not_run():
+    d = _with_set_report()
+    d["stage4"]["card_judge"] = {}
+    assert "SEMANTIC" not in _text(stage4_component(d))
+
+
+# ── F31: a run that died mid-stage must not look like it is still working ──
+
+_DEAD = [
+    {"type": "run_started", "image_size": [400, 300], "caption": "c",
+     "image_name": "s.jpg"},
+    {"type": "stage_started", "stage": "Perceive"},
+    {"type": "run_error", "message": "HTTPConnectionPool(host='localhost', "
+     "port=11434): Connection refused"},
+]
+
+
+def test_a_stage_in_flight_when_the_run_died_is_marked_failed():
+    """A_fire errored 10ms in — Ollama was not listening — and the stage sat
+    at 'active' forever, so the screen showed an eternal spinner on Perceive.
+    The failure was in the event stream and rendered nowhere."""
+    d = derive(_DEAD)
+    assert d["stages"]["Perceive"]["status"] == "failed"
+    assert "Connection refused" in d["stages"]["Perceive"]["info"]
+
+
+def test_the_failure_message_reaches_the_screen():
+    from agentic.ui import progress_strip
+    txt = _text(progress_strip(derive(_DEAD)))
+    assert "failed at perceive" in txt.lower()
+    assert "Connection refused" in txt
+
+
+def test_a_dead_run_never_renders_as_busy():
+    """The CSS reads 'active' as still working; that is what made it pulse."""
+    d = derive(_DEAD)
+    assert d["activity"]["busy"] is False
+    assert "run failed" in d["activity"]["text"]
+
+
+def test_stages_that_never_started_stay_pending():
+    """Only the stage that was in flight failed — the rest were never
+    reached, and marking them failed would overstate what went wrong."""
+    d = derive(_DEAD)
+    others = [s for n, s in d["stages"].items() if n != "Perceive"]
+    assert all(s["status"] == "pending" for s in others)
+
+
+def test_a_healthy_run_is_untouched():
+    d = derive(EVENTS)
+    assert not any(s["status"] == "failed" for s in d["stages"].values())
+
+
+# ── F36: findings render under the graph they judge ────────────────────
+
+def _s4_graphs(**over):
+    d = {"recommendations": [],
+         "graph_a": {"nodes": [{"id": "spill_1", "label": "spill",
+                                "state": "chemical_spill", "hazardous": True}],
+                     "edges": [{"source": "spill_1", "effect": "may_harm",
+                                "target": "worker_1"}]},
+         "graph_b": {"nodes": [], "edges": []},
+         "conformance": {"validity": 0.6, "n_issues": 2, "breakdown": [],
+                         "issues": [
+                             {"graph": "graph_a", "entity": "spill_1",
+                              "severity": 2, "category": "role mix-up",
+                              "rule": "hazard_flag_state_mismatch",
+                              "detail": "spill_1: state vs hazardous"},
+                             {"graph": "graph_b", "entity": "dog_1",
+                              "severity": 1, "category": "inconsistency",
+                              "rule": "via_state_not_hazard_bearing",
+                              "detail": "dog_1->person_1: via 'running'"}],
+                         "by_graph": {
+                             "graph_a": {"count": 1, "max_severity": 2,
+                                         "breakdown": []},
+                             "graph_b": {"count": 1, "max_severity": 1,
+                                         "breakdown": []}}}}
+    d.update(over)
+    return {"stage4": d}
+
+
+def test_each_graph_carries_its_own_conformance_findings():
+    """Before F36 the graphs rendered as bare edge lists at the bottom while
+    five separate panels above judged them — the same disconnect F24 fixed for
+    the recommendation cards."""
+    t = _text(stage4_component(_s4_graphs()))
+    a = t.index("GRAPH A ·")
+    b = t.index("GRAPH B ·")
+    assert a < t.index("hazard_flag_state_mismatch") < b
+    assert b < t.index("via_state_not_hazard_bearing")
+
+
+def test_a_finding_is_not_printed_twice_on_one_screen():
+    """The score panel keeps the count; the detail lives under the graph."""
+    t = _text(stage4_component(_s4_graphs()))
+    assert t.count("hazard_flag_state_mismatch") == 1
+    assert "GRAPH A ·" in t
+
+
+def test_a_clean_graph_says_so_rather_than_vanishing():
+    d = _s4_graphs()
+    d["stage4"]["conformance"]["issues"] = []
+    t = _text(stage4_component(d))
+    assert t.count("no conformance issues") == 2      # one per graph
+
+
+def test_graph_a_states_why_it_has_no_self_consistency_band():
+    """Graph A is BUILT BY CODE from the quads, so it cannot contradict itself
+    the way a model's answer can. The asymmetry with Graph B is intentional
+    and the panel says so rather than looking like an oversight."""
+    t = _text(stage4_component(_s4_graphs()))
+    assert "built by code from the recommendation quads" in t
+    assert "no self-consistency band" in t
+
+
+def test_a_vs_b_renders_below_both_graphs():
+    """The comparison sits under the two things compared, the way ACROSS ALL
+    RECOMMENDATIONS sits under the cards."""
+    d = _s4_graphs(alignment={"a_fidelity": 0.0, "b_coverage": 0.0,
+                              "structural": 0.0, "a_only": [], "b_only": [],
+                              "decomposition": {}})
+    t = _text(stage4_component(d))
+    assert t.index("GRAPH B ·") < t.index("A vs B compares the two graphs above")
+
+
+def test_no_finding_is_printed_twice_anywhere_on_the_screen():
+    """F37. The whole point of the reorganisation: a finding renders once,
+    under the thing it judges. Before it, `hazard_flag_state_mismatch` appeared
+    four times, the card findings appeared in the trust panel AND their own
+    footers, and the internal-alignment panel reprinted all five of its
+    findings a second time."""
+    import json
+    from agentic.ui import stage4_component
+    d = json.load(open('exports/agentic_runs/ui_21f1cdad/stage4.json'))
+    t = _text(stage4_component({"stage4": d}))
+    # one per graph — two graphs, not four printings
+    assert t.count("hazard_flag_state_mismatch") == 2
+    # one per card
+    assert t.count("quad ids not in reason") == 2
+    # one per unaddressed entity
+    assert t.count("is not addressed by any recommendation") == 2
+
+
+def test_a_set_level_finding_survives_on_runs_that_predate_set_report():
+    """Older runs have no set_report, and their coverage findings used to live
+    in the panel F37 removed. They are the evidence the bias work needs."""
+    d = _s4_with_findings()
+    d["stage4"].pop("set_report", None)
+    d["stage4"]["internal_alignment"] = {"failures": [
+        {"category": "coverage gap", "severity": 2, "rank": None,
+         "detail": "at-risk dog_1 is not addressed by any recommendation"}]}
+    t = _text(stage4_component(d))
+    assert "at-risk dog_1 is not addressed" in t
+
+
+def test_the_trust_row_names_what_dented_a_card_not_the_finding():
+    """The finding belongs in that card's footer. Printing it in the trust
+    panel too put the same sentence above the cards and under them."""
+    d = _s4_with_findings()
+    d["stage4"]["trust"] = {"score": 0.7, "band": "moderate", "contributors": [],
+                            "per_rec": [{"rank": 1, "score": 0.7,
+                                         "worst_contributor": {
+                                             "signal": "internal_alignment",
+                                             "penalty": 0.5,
+                                             "text": "rec 1: quad ids not in reason"}}]}
+    t = _text(stage4_component(d))
+    assert "its parts don't line up" in t
+    assert t.count("rec 1: quad ids not in reason") == 0
+
+
+# ── F38: the graph judge renders in the A-vs-B panel ───────────────────
+
+def _s4_graph_judge(**over):
+    gj = {"advisory": True, "n_probes": 5,
+          "victims": {"verdict": "graph_b", "votes": 4, "n": 5,
+                      "sets": {"graph_a": ["fire_truck_1"],
+                               "graph_b": ["hazmat_worker_1"]}},
+          "mechanisms": [
+              {"source": "tanker_truck_1", "target": "spill_1",
+               "effect_a": "exposes", "effect_b": "may_spread_to",
+               "verdict": "same_response", "votes": 5, "n": 5}]}
+    gj.update(over)
+    return {"stage4": {"recommendations": [],
+                       "graph_a": {"nodes": [], "edges": []},
+                       "graph_b": {"nodes": [], "edges": []},
+                       "alignment": {"a_fidelity": 0.0, "b_coverage": 0.0,
+                                     "structural": 0.0, "a_only": [],
+                                     "b_only": [], "decomposition": {}},
+                       "graph_judge": gj}}
+
+
+def test_the_victim_verdict_is_stated_without_diagnosing():
+    """"Graph B's victims are more exposed" IS "Graph A is minimizing the
+    victims" — established by a closed choice with a right answer. The naming
+    stays in the pathology layer; the judge only supplies the evidence."""
+    t = _text(stage4_component(_s4_graph_judge()))
+    # F43: NAME both sets. "Graph B's harmed entities are more exposed" made
+    # the reader hold in their head that Graph B is the model's belief, Graph A
+    # is the advice, and that the point is the advice protects the wrong people.
+    assert "hazmat_worker_1" in t and "fire_truck_1" in t
+    assert "MORE danger" in t
+    assert "(4/5)" in t
+    assert "minimiz" not in t.lower()        # no diagnosis in the judge's words
+
+
+def test_the_mechanism_verdict_names_the_pair_and_both_effects():
+    t = _text(stage4_component(_s4_graph_judge()))
+    assert "tanker_truck_1 → spill_1" in t
+    assert "'exposes' vs 'may_spread_to'" in t
+    assert "same response either way" in t
+
+
+def test_the_graph_judge_is_labelled_advisory():
+    """Judges advise, never overwrite — the panel has to say so, or a reader
+    treats a judge verdict as a measurement."""
+    t = _text(stage4_component(_s4_graph_judge()))
+    assert "ADVISORY, NOT SCORED" in t
+
+
+def test_an_undecided_graph_verdict_is_visually_apart():
+    d = _s4_graph_judge(victims={"verdict": "unclear", "votes": 2, "n": 5})
+    t = _text(stage4_component(d))
+    assert "◇ the judge could not decide which set is more exposed" in t
+
+
+def test_nothing_renders_when_the_graph_judge_did_not_run():
+    d = _s4_graph_judge()
+    d["stage4"]["graph_judge"] = {}
+    assert "ADVISORY, NOT SCORED" not in _text(stage4_component(d))
+
+
+def test_the_graph_judge_still_shows_when_the_gate_withheld_the_numbers():
+    """F38. The judge reads the two graphs directly, so its verdict does not
+    depend on the gate. When the arithmetic is withheld as meaningless is
+    exactly when the semantic reading is the only thing left saying anything —
+    hiding it there was backwards. D_aerial is the live case: gate failed,
+    a_fidelity withheld, and the judge still says Graph B's victims are the
+    exposed ones."""
+    d = _s4_graph_judge()
+    d["stage4"]["trust"] = {"graph_b_gate": {
+        "trusted": False, "reasons": ["conformance flags 1 serious issue"]}}
+    t = _text(stage4_component(d))
+    assert "WITHHELD from trust" in t
+    assert "MORE danger" in t
+
+
+def test_invented_entities_are_named_as_a_finding_not_buried_in_edges():
+    """F42. One D_aerial run's probes invented four entity names. Three of them
+    map to nothing in the scene — the model put entities in its own causal
+    graph that do not exist — and that was invisible inside a sixteen-line
+    edge dump."""
+    s4 = {"graph_b_uncertainty": {
+        "n_probes": 5, "score": 0.5, "direction_evidence": [],
+        "invented_ids": ["chemical_worker_1", "spill_consequence_1"]}}
+    t = _s4_panel(s4)
+    assert "named 2 entit" in t
+    assert "chemical_worker_1" in t and "spill_consequence_1" in t

@@ -16,7 +16,7 @@ replacing it until proven identical. `run_graph` must return byte-identical
 (record, result, petitioned) to `assess_with_petition` given the same model
 answers. That equivalence is asserted hermetically in test_graph_live.py.
 
-Selected with the env flag AGENTIC_CONTROL=langgraph (default: python).
+Selected with the env flag AGENTIC_CONTROL=python (default: langgraph).
 
 SCOPE (v1): this graph replaces the STAGE-2 + PETITION control (the rich
 part: the 3-way router, the cascade, run_assessment's own reflection loop
@@ -67,10 +67,15 @@ def set_control(mode: str | None) -> None:
 
 
 def control_flag() -> str:
-    """python (default) | langgraph — UI override, else AGENTIC_CONTROL."""
+    """python | langgraph (default) — UI override, else AGENTIC_CONTROL.
+
+    LangGraph is the default from 2026-07-28 (Sunny). The two controls are
+    proven byte-identical under scripted models, so the default is a choice
+    about which one we exercise in anger — and the one we ship should be the
+    one every run tests."""
     if _CONTROL_OVERRIDE:
         return _CONTROL_OVERRIDE
-    return os.getenv("AGENTIC_CONTROL", "python").strip().lower()
+    return os.getenv("AGENTIC_CONTROL", "langgraph").strip().lower()
 
 
 # ── Build the graph (nodes close over the run config) ───────────────────

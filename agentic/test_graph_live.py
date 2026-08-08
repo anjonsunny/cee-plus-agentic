@@ -166,11 +166,13 @@ def test_equivalence_stage1_relook():
 # ── the flag helper ─────────────────────────────────────────────────────
 
 def test_control_flag_default(monkeypatch):
-    from agentic.graph_live import control_flag
+    """LangGraph is the default from 2026-07-28."""
+    from agentic.graph_live import control_flag, set_control
+    set_control(None)
     monkeypatch.delenv("AGENTIC_CONTROL", raising=False)
-    assert control_flag() == "python"
-    monkeypatch.setenv("AGENTIC_CONTROL", "LangGraph")
     assert control_flag() == "langgraph"
+    monkeypatch.setenv("AGENTIC_CONTROL", "Python")
+    assert control_flag() == "python"
 
 
 def test_dispatcher_routes_by_flag(monkeypatch):

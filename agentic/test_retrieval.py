@@ -25,17 +25,21 @@ needs_rag = pytest.mark.skipif(
 
 # ── mode switch ─────────────────────────────────────────────────────────
 
-def test_mode_default_is_rulebook(monkeypatch):
+def test_mode_default_is_both(monkeypatch):
+    """'both' is the default from 2026-07-28: exact answers, RAG shadows it,
+    and the two are compared on every retrieval. A seam only measured when
+    someone remembers to switch it on is a seam nobody measures."""
     monkeypatch.delenv("AGENTIC_RETRIEVAL", raising=False)
-    assert retrieval.retrieval_mode() == "rulebook"
+    assert retrieval.retrieval_mode() == "both"
     monkeypatch.setenv("AGENTIC_RETRIEVAL", "RAG")
     assert retrieval.retrieval_mode() == "rag"
 
 
 def test_rulebook_mode_is_exact_key(monkeypatch):
-    """The default must equal rulebook.retrieve — this is what keeps the
-    pipeline and the LangGraph equivalence unchanged."""
-    monkeypatch.delenv("AGENTIC_RETRIEVAL", raising=False)
+    """rulebook mode must equal rulebook.retrieve exactly — and 'both' must
+    ANSWER from the same exact key, with RAG only shadowing beside it, so the
+    default change cannot move what the pipeline actually uses."""
+    monkeypatch.setenv("AGENTIC_RETRIEVAL", "rulebook")
     for kind in RULES:
         chunk, meta = retrieval.retrieve_rule(kind)
         assert chunk is rulebook.retrieve(kind)

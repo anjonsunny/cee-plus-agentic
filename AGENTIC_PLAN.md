@@ -1473,3 +1473,78 @@ API questions. **The cuts are the strongest answers** — "I did not use an agen
 here is why" reads as judgment; agents everywhere reads as resume-driven design. **Name the
 cost of every choice**: the firewall costs the ability to report conformance for the
 repaired artifact; isolation costs tokens; deterministic scoring costs flexibility.
+
+---
+
+## 13. Addendum (2026-08-04) — the optimizer arm and the evidence-vs-verdict principle
+
+Ratified in discussion (Sunny, Aug 4). Two additions; neither changes current pipeline
+structure, so no flowchart edit is needed yet.
+
+### 13.1 The verdict-vs-evidence rule (names the existing design)
+
+The rule the reflection loop already follows, now stated explicitly:
+
+> **Reflection may say something is WRONG, with named evidence. It may never say which
+> answer is RIGHT.**
+
+A finding is a *checkable claim about a specific defect* ("your reason for building_1 does
+not cite its declared state") — the model can verify it against its own record, reason over
+it, or STAND. A verdict is a *preference* ("your revision is worse than your original") —
+uncheckable by the model; the only responses are obey or refuse. Findings may enter
+reflection; verdicts may not.
+
+This is why each judge sits where it sits:
+- **Rubric** and **runoff** produce findings → their content feeds reflection.
+- **Pairwise** produces only a preference between pre- and post-reflection answers, whose
+  input does not exist until the loop has closed. Feeding it back could only mean "revert" —
+  the judge overwriting the model through the back door — and, given the model's documented
+  capitulation under authoritative pressure, would produce obedience rather than reasoning.
+  Pairwise therefore stays OUTSIDE the loop as its auditor: it measures whether reflection
+  helped. The auditor must not be part of what it audits (same principle as iron rule 7:
+  the instrument must not grade itself into the right answer).
+- **Card judge** produces a finding ("carrying out this action would not reduce the harm
+  the explanation names") — eligible to feed Stage 4 reflection when wired (roadmap step 2);
+  advisory/display-only today.
+
+### 13.2 The optimizer arm (future, separate — extends the three-arm harness)
+
+Most agentic systems are **optimizers** (best answer, whatever it takes). CEE+ agentic is
+an **instrument** (measure the model's own self-correction). Both are legitimate; they must
+never be mixed in one pipeline, because a judge-steered revision improves answers while
+destroying the measurement — the thing being measured becomes the model+judge ensemble.
+
+Planned addition, after the current roadmap (S5/S6): an **optimizer arm** alongside the
+clean arm —
+
+- **Clean arm (exists):** model corrects itself; judges advise via findings only; pairwise
+  audits from outside. Product: the measurement.
+- **Optimizer arm (future):** judges may steer — e.g. a pairwise-triggered third round
+  ("an independent judge found the revision fits the declared evidence worse, per these
+  criteria"), verdict-informed rounds, best-of-N with judge selection. Product: the best
+  answer. Needs its own stopping rule (oscillation risk) and its own outside auditor.
+
+**The comparison is itself a new measurement, free:** the gap between arms =
+**judge dependence** — how much of the system's final quality the model cannot produce on
+its own. A large gap is a finding about the model, not just a product number. Slots into
+the existing three-arm comparison harness (roadmap: "slots around S5/S6 and blocks
+nothing"); the deployment framing (e.g. alert products) uses the optimizer arm, the
+research claims use the clean arm.
+
+### 13.3 The training thesis, recorded (strengthens Stage 25 track 3 framing)
+
+> **"RLHF trains on verdicts, so it produces approval-seekers. The proposal is to train on
+> evidence instead: grounding signals from intervention — did the recommendation actually
+> rest on the reason given, did the action actually reduce the harm. Those signals track
+> truth, not taste. Same training machinery, different signal — and the difference is
+> exactly the difference between a model that wants to be right and a model that wants to
+> be liked."**
+
+Connection to the pathology program: RLHF is verdict-based training at scale; a model
+trained on rater preferences learns to please the grader — which is what the five
+inherited pathologies (sycophancy first) look like in conversation. The rater-drift
+failure ("optimizing the rater instead of the truth") is the same disease as the
+judge-taste ratchet that bars verdicts from reflection (13.1) — one principle at three
+scales: reflection, the optimizer arm, and training. Stage 25 track 3 is the
+evidence-signal alternative: CEE+ as a reward model for causal groundedness, with the
+Goodhart mitigations already specified there.
