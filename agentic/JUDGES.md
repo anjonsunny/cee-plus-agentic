@@ -138,6 +138,39 @@ contradicts your own arithmetic.
 Q1 doubles as the preference pair for training (§8). Q2 is the one reflection
 can act on.
 
+### Every judge is a twin: text-only + image-aware
+
+Decided 2026-08-08 (Sunny). Each subjective judge runs TWICE:
+
+- **text-only** — the OFFICIAL judge. Sees the record, never the image. Its
+  verdict is the one that feeds reflection and the capture records.
+- **image-aware** — the second witness. Same prompt, plus the image, framed
+  with the constraint: *"the entity list below is what was extracted from the
+  image — restrict yourself to these detected objects and their
+  relationships; use the image as context."* Runs on a VISION model from a
+  different family than the subject (`llava`; the text judge stays
+  `llama3.1:8b` — which cannot see images at all, so the twin is necessarily
+  a different model).
+
+**For now, only the agreement is shown.** No routing, no arbitration — a
+chip per judged item: `twins agree` / `twins disagree (text: X, image: Y)`.
+What to do with disagreement is deliberately undecided until test runs show
+how often and where they split.
+
+**Why the image judge cannot be the official one.** The constraint is an
+instruction, not a firewall: if the image shows a person the record lacks,
+the image judge will prefer the answer that mentions them — that IS
+perceiving, whatever the prompt says, and its verdicts would contradict every
+code check, which are all record-based.
+
+**Why it is worth running anyway.** Disagreement between the twins is a
+finding about STAGE 1: the image twin deviating means either it saw something
+perception missed, or it re-perceived where it was told not to. Either way,
+perception quality gets measured for free — the same two-witness pattern as
+the pathology detector/judge pair. Both verdicts land in the capture record
+(`judge` and `judge_image_twin` fields, plus `twins_agree`), so the
+agreement rate accumulates across runs before any decision is made.
+
 ---
 
 ## 5. The overseer
@@ -505,6 +538,12 @@ answers; what it produces is still an opinion.)
 **Used as:** RLAIF / critique-tuning, and the human-readable audit of why a
 verdict landed. The overseer's critiques are the most valuable of these:
 free-form reasoning anchored to a stated objective.
+
+**Twin fields (all judge records, 9.2 and 9.3 alike):** beside `judge`, the
+record carries `judge_image_twin` — same shape, the image-aware witness's
+verdict, votes and reasoning — and `twins_agree: true|false`. Only the
+text-only verdict is ever a label; the twin exists so the agreement rate can
+accumulate before any routing decision is made (§4).
 
 ### 9.4 Repair pairs — before, advice, after, verified
 
