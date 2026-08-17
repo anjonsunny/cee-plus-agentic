@@ -27,6 +27,7 @@ from langgraph.graph import END, START, StateGraph
 from agentic.graph_live import control_flag, set_control  # noqa: F401
 from agentic.recommend import (QueryFn, Stage4Result, build_graph_a,
                                run_card_judge, run_graph_judge,
+                               run_runoff_judge,
                                build_graph_a_probes, measure_graph_b_uncertainty,
                                pick_targets, run_evals,
                                run_graph_b, run_graph_b_probes,
@@ -55,6 +56,9 @@ class S4State(TypedDict, total=False):
     explanation_alignment: dict  # F24: action / reason / quad, same rules
     set_report: dict        # F29: findings about the SET, not one card
     card_judge: dict        # F24: the advisory judge (display-only)
+    probe_recs: list        # each probe's FULL parsed recs (F49) — runoff input
+    runoff_judge: dict      # JUDGES.md step 1: twin runoff verdicts
+    image_path: str         # scene image, for the image-aware judge twin
     graph_judge: dict       # F38: the graph judge (display-only)
     alignment: dict         # A-vs-B declared-vs-structured (Phase 1b)
     trust: dict             # folded trust score + breakdown (Phase 1b)
@@ -135,6 +139,14 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
                                state.get("alignment") or {},
                                judge_fn=judge_fn, on_event=on_event)
 
+    def runoff_judge(state: S4State) -> dict[str, Any]:
+        return run_runoff_judge(state["record"], state["assessment"],
+                                state.get("probe_recs") or [],
+                                (state.get("graph_b_uncertainty") or {})
+                                .get("graphs") or [],
+                                state.get("image_path", ""),
+                                judge_fn=judge_fn, on_event=on_event)
+
     def trust(state: S4State) -> dict[str, Any]:
         t = run_trust(state["recommendations"], state["conformance"],
                       state["internal_alignment"], state["alignment"],
@@ -155,6 +167,7 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
     g.add_node("evals", evals)
     g.add_node("card_judge", card_judge)
     g.add_node("graph_judge", graph_judge)
+    g.add_node("runoff_judge", runoff_judge)
     g.add_node("trust", trust)
 
     g.add_edge(START, "recommend")
@@ -165,7 +178,8 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
     g.add_edge("picks", "evals")
     g.add_edge("evals", "card_judge")
     g.add_edge("card_judge", "graph_judge")
-    g.add_edge("graph_judge", "trust")
+    g.add_edge("graph_judge", "runoff_judge")
+    g.add_edge("runoff_judge", "trust")
     g.add_edge("trust", END)
     return g.compile()
 
@@ -185,7 +199,8 @@ def run_s4_graph(record: Any, assessment: Any, image_path: str = "",
     graph = build_s4_graph(query_fn=query_fn, probe_fn=probe_fn,
                            explain_fn=explain_fn, judge_fn=judge_fn,
                            n_probes=n_probes, on_event=on_event)
-    final: S4State = graph.invoke({"record": record, "assessment": assessment})
+    final: S4State = graph.invoke({"record": record, "assessment": assessment,
+                                   "image_path": image_path})
 
     _emitter(on_event)("stage_done", stage="recommend")
     return Stage4Result(
@@ -201,6 +216,7 @@ def run_s4_graph(record: Any, assessment: Any, image_path: str = "",
         set_report=final.get("set_report", {}) or {},
         card_judge=final.get("card_judge", {}) or {},
         graph_judge=final.get("graph_judge", {}) or {},
+        runoff_judge=final.get("runoff_judge", {}) or {},
         alignment=final.get("alignment", {}),
         uncertainty=final.get("uncertainty", {}),
         trust=final.get("trust", {}),

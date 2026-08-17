@@ -571,6 +571,7 @@ def measure_recommend_uncertainty(prompt: str, n_probes: int, *,
     probe_fn = probe_fn or (lambda p: _query_vlm(p,
                                                  temperature=REC_PROBE_TEMPERATURE))
     readings: list[dict] = []
+    probe_recs: list[list] = []     # F49/runoff: each probe's FULL parsed recs
     for i in range(n_probes):
         try:
             _frame, recs, _adv, _notes = parse_recommend(probe_fn(prompt))
@@ -580,6 +581,7 @@ def measure_recommend_uncertainty(prompt: str, n_probes: int, *,
             continue
         reading = _recommend_reading(recs)
         readings.append(reading)
+        probe_recs.append(recs)
         if emit:
             # F49 (capture spec 9.9): the probe's FULL parsed output rides in
             # the event, prose included. The reading above keeps only the quad
@@ -599,7 +601,7 @@ def measure_recommend_uncertainty(prompt: str, n_probes: int, *,
             action="fix the model endpoint and re-run; treat this advice as "
                    "unmeasured until then"))
     explain(mu, "recommendation set", explain_fn)
-    return mu
+    return mu, probe_recs
 
 
 def run_recommend_uncertainty(record: Any, assessment: Any, *,
@@ -618,13 +620,14 @@ def run_recommend_uncertainty(record: Any, assessment: Any, *,
         empty_clause=EMPTY_RECS_CLAUSE if RECS_MAY_BE_EMPTY else "",
         affected_clause=(AFFECTED_OPTIONAL if RECS_MAY_BE_EMPTY
                          else AFFECTED_REQUIRED))
-    mu = measure_recommend_uncertainty(prompt, n_probes, probe_fn=probe_fn,
-                                       explain_fn=explain_fn,
-                                       canonical_threats=canonical_threats,
-                                       emit=emit)
+    mu, probe_recs = measure_recommend_uncertainty(
+        prompt, n_probes, probe_fn=probe_fn, explain_fn=explain_fn,
+        canonical_threats=canonical_threats, emit=emit)
     emit("recommend_uncertainty_ready", score=mu.score, n_probes=mu.n_probes,
          drivers=len(mu.drivers))
-    return {"uncertainty": mu.model_dump()}
+    # probe_recs ride beside the measurement: the runoff judge needs the FULL
+    # prose candidates, and the skeleton readings above cannot carry it.
+    return {"uncertainty": mu.model_dump(), "probe_recs": probe_recs}
 
 
 def bare_id(x: Any) -> str:
@@ -1270,6 +1273,55 @@ def run_graph_judge(record: Any, assessment: Any, graph_a: dict, graph_b: dict,
     return {"graph_judge": out}
 
 
+def run_runoff_judge(record: Any, assessment: Any, probe_recs: list,
+                     graph_b_probes: list, image_path: str = "", *,
+                     judge_fn: Any = None, judge_image_fn: Any = None,
+                     n_probes: int = 5, on_event: Any = None) -> dict:
+    """JUDGES.md step-1 judge (advisory). When the subject's probes disagreed,
+    show the two leading candidates to an independent judge and ask which one
+    the record supports — once over the recommendation candidates, once over
+    the Graph B candidates. Each verdict is produced by TWIN judges (text-only
+    official + image-aware witness); only their agreement is displayed.
+
+    OFF unless judge_fn is supplied — the hermetic spine and the twin
+    equivalence tests stay model-free. Never returns a score.
+
+    The emitted events carry both candidates VERBATIM plus both twins'
+    verdicts, votes and reasoning: each event is a §9.2 preference record in
+    waiting, and the F5 majority guard is applied at carry time, not here."""
+    if judge_fn is None:
+        return {"runoff_judge": {}}
+    from agentic.judge_runoff import (default_image_judge,
+                                      runoff_graph_b,
+                                      runoff_recommendations)
+    emit = _emitter(on_event)
+    if judge_image_fn is None:
+        judge_image_fn = default_image_judge(image_path)
+    out: dict = {}
+    r = runoff_recommendations(probe_recs or [], record, assessment,
+                               judge_fn=judge_fn,
+                               judge_image_fn=judge_image_fn,
+                               n_probes=n_probes)
+    if r:
+        out["recommendations"] = r
+    g = runoff_graph_b(graph_b_probes or [], record, assessment,
+                       judge_fn=judge_fn, judge_image_fn=judge_image_fn,
+                       n_probes=n_probes)
+    if g:
+        out["graph_b"] = g
+    for app, v in out.items():
+        emit("runoff_judged", application=app, advisory=True,
+             prompt_version=v["prompt_version"],
+             text_verdict=v["text"]["verdict"], text_votes=v["text"]["votes"],
+             image_verdict=(v["image"] or {}).get("verdict"),
+             twins_agree=v["twins_agree"],
+             candidate_a=v["candidate_a"], candidate_b=v["candidate_b"],
+             text_reasoning=v["text"].get("reasoning", ""),
+             image_reasoning=(v["image"] or {}).get("reasoning", ""),
+             code_facts=v["code_facts"])
+    return {"runoff_judge": out}
+
+
 def run_trust(recommendations: list[dict], conformance: dict,
               internal_alignment: dict, alignment: dict, uncertainty: dict,
               picks: dict, *, record: Any = None, assessment: Any = None,
@@ -1333,6 +1385,9 @@ class Stage4Result(BaseModel):
     # F24 — the advisory judge. Display-only: it never enters a score, so it
     # can run during calibration without moving what the weights are fitted to.
     card_judge: dict = Field(default_factory=dict)
+    # JUDGES.md step 1 — the runoff judge, twin verdicts (text official,
+    # image witness) over the two leading probe candidates. Advisory.
+    runoff_judge: dict = Field(default_factory=dict)
     # F38 — the graph judge. Two questions only, both advisory: which graph's
     # victims are more exposed, and whether a different effect on the same pair
     # would change what a responder does.
@@ -1392,6 +1447,11 @@ def run_stage4(record: Any, assessment: Any, image_path: str = "",
     gjudged = run_graph_judge(record, assessment, graph_a, graph_b,
                               evals["alignment"], judge_fn=judge_fn,
                               on_event=on_event)
+    rjudged = run_runoff_judge(record, assessment,
+                               unc.get("probe_recs") or [],
+                               (gbu or {}).get("graphs") or [],
+                               image_path, judge_fn=judge_fn,
+                               on_event=on_event)
     trust = run_trust(rec["recommendations"], evals["conformance"],
                       evals["internal_alignment"], evals["alignment"],
                       unc["uncertainty"], picks, record=record,
@@ -1410,6 +1470,7 @@ def run_stage4(record: Any, assessment: Any, image_path: str = "",
         set_report=evals.get("set_report", {}),
         card_judge=judged.get("card_judge", {}),
         graph_judge=gjudged.get("graph_judge", {}),
+        runoff_judge=rjudged.get("runoff_judge", {}),
         alignment=evals["alignment"], uncertainty=unc["uncertainty"],
         trust=trust["trust"],
         graph_b_uncertainty=gbu,

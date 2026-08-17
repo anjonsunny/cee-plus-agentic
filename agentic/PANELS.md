@@ -35,6 +35,7 @@ hides the findings that matter.
 | ~~effect-wording rules~~ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | ~~duplicate lone-hazard rule~~ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | ~~passing gate line~~ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **runoff judge, twin verdicts** (JUDGES.md step 1) | ✅ severity-minimizing lean measurable | ❌ advisory | ✅ which candidate the record supports | ✅ judges the wobble's content | | ✅ preference pairs |
 | **serious single errors** (F48) | ✅ named, per error | ✅ subtracted after the weighted sum | ✅ names the entities | | ✅ | ✅ verifiable |
 | three-line trust explanation (F48) | | | ✅ the main insight surface | | | |
 

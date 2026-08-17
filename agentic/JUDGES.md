@@ -1,7 +1,13 @@
 # Stage 4 — the judges
 
-Decided with Sunny, 2026-08-07/08. Nothing here is built yet. This is the
-spec; the build order is at the bottom.
+Decided with Sunny, 2026-08-07/08. This is the spec; the build order is at
+the bottom.
+
+BUILD STATUS (2026-08-08): the RUNOFF judge is built — `judge_runoff.py`,
+both applications (recommendations + Graph B), twin verdicts, agreement
+chip in the UI, capture-complete `runoff_judged` events, 12 hermetic tests,
+twin byte-identical. Its live calibration against gemma4:26b happens as we
+go (Sunny). Everything else is still spec.
 
 Stage 4 has its own judges. Nothing is borrowed from Stage 2 — same ideas in
 places, separate code, separate test sets, separate namespace.

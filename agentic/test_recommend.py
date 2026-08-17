@@ -317,7 +317,7 @@ def test_probes_all_fail_reads_as_unmeasured():
         raise RuntimeError("endpoint down")
 
     from agentic.recommend import measure_recommend_uncertainty
-    mu = measure_recommend_uncertainty("prompt", 5, probe_fn=boom)
+    mu, _recs = measure_recommend_uncertainty("prompt", 5, probe_fn=boom)
     assert mu.score == 1.0
     assert any(d.kind == "probes_failed" for d in mu.drivers)
 
@@ -336,7 +336,7 @@ def test_probe_garbage_answer_counts_as_empty_reading():
         box["i"] += 1
         return a
 
-    mu = measure_recommend_uncertainty("prompt", 5, probe_fn=probe_fn)
+    mu, _recs = measure_recommend_uncertainty("prompt", 5, probe_fn=probe_fn)
     # 5 readings recorded (3 empty from garbage), count wobble surfaced
     assert mu.n_probes == 5
     assert mu.granular["fields"]["recommendation_count"]["u"] > 0.0

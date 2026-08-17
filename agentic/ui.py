@@ -1543,6 +1543,78 @@ def _disagreement_rows(edges: list, title: str, s4: dict,
     return rows
 
 
+def _runoff_rows(ro: dict) -> list:
+    """JUDGES.md step 1 — the runoff judge's twin verdicts, rendered under the
+    uncertainty panel whose candidates it judged.
+
+    TWINS. The same judge model answers twice: text-only (the OFFICIAL
+    verdict) and image-aware (the witness). Only the agreement is displayed —
+    no routing, no arbitration — because what disagreement MEANS is
+    deliberately undecided until live runs show how the twins actually split
+    (Sunny, 2026-08-08). A disagreement chip names both verdicts so the reader
+    can see the split, not just that one exists.
+    """
+    if not ro:
+        return []
+    label = {"answer_a": "candidate A", "answer_b": "candidate B",
+             "equally_good": "both equally good", "unclear": "no clear verdict"}
+    t = ro.get("text") or {}
+    im = ro.get("image")
+    rows = [html.Div([
+        html.Span("RUNOFF · of the two leading candidates, which does the "
+                  "record support?", className="unc-tag"),
+        html.Span("  advisory, twin-judged", style={"fontSize": "10px",
+                                                    "color": "#94a3b8"}),
+    ], style={"marginTop": "5px"})]
+    rows.append(html.Div([
+        html.Span("text-only judge: ", style={"color": "#64748b"}),
+        html.B(label.get(t.get("verdict"), t.get("verdict", "?"))),
+        html.Span(f"  ({t.get('votes', 0)}/{t.get('n', 0)})",
+                  style={"color": "#94a3b8"}),
+    ], style={"fontSize": "11.5px", "padding": "1px 0 1px 8px"}))
+    if im:
+        rows.append(html.Div([
+            html.Span("image-aware judge: ", style={"color": "#64748b"}),
+            html.B(label.get(im.get("verdict"), im.get("verdict", "?"))),
+            html.Span(f"  ({im.get('votes', 0)}/{im.get('n', 0)})",
+                      style={"color": "#94a3b8"}),
+        ], style={"fontSize": "11.5px", "padding": "1px 0 1px 8px"}))
+        agree = ro.get("twins_agree")
+        rows.append(html.Div(
+            "twins agree" if agree else
+            f"twins DISAGREE (text: {label.get(t.get('verdict'), '?')} · "
+            f"image: {label.get(im.get('verdict'), '?')})",
+            style={"fontSize": "11px", "fontWeight": "700",
+                   "color": "#16a34a" if agree else "#b45309",
+                   "padding": "1px 0 1px 8px"}))
+    else:
+        rows.append(html.Div("image twin did not run (no image available)",
+                             style={"fontSize": "10px", "color": "#cbd5e1",
+                                    "fontStyle": "italic",
+                                    "padding": "0 0 0 8px"}))
+    # the two candidates, one line each, so the verdict is readable in place
+    for tag, cand in (("A", ro.get("candidate_a")),
+                      ("B", ro.get("candidate_b"))):
+        rows.append(html.Details([
+            html.Summary(f"candidate {tag}", style={"fontSize": "10.5px",
+                                                    "color": "#64748b",
+                                                    "cursor": "pointer"}),
+            html.Pre(str(cand or ""), style={"fontSize": "10px",
+                                             "whiteSpace": "pre-wrap",
+                                             "margin": "2px 0 4px 8px",
+                                             "color": "#475569"}),
+        ], style={"paddingLeft": "8px"}))
+    facts = ro.get("code_facts") or {}
+    inv = [x for k in ("invented_ids_a", "invented_ids_b")
+           for x in (facts.get(k) or [])]
+    if inv:
+        rows.append(html.Div(
+            f"code note: invented entity ids in play — {', '.join(sorted(set(inv)))}",
+            style={"fontSize": "10.5px", "color": "#b45309",
+                   "padding": "1px 0 1px 8px"}))
+    return rows
+
+
 def _graph_judge_rows(gj: dict) -> list:
     """F38 — the two questions the A-vs-B arithmetic cannot answer.
 
@@ -2646,6 +2718,8 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                        "fontWeight": "600", "marginTop": "3px"}))
         # (The dense driver narrative is intentionally NOT dumped here — the
         # structured rows above already say what's unstable and by how much.)
+        urows += _runoff_rows((s4.get("runoff_judge") or {})
+                              .get("recommendations") or {})
         out.append(html.Div(urows, className="unc-panel",
                             style={"borderColor": "#c7d2fe",
                                    "background": "#eef2ff"}))
@@ -2979,6 +3053,8 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
         _line("re-asked at raised temperature. This is whether the model's own "
               "BELIEF is stable — the yardstick A is measured against.",
               "#cbd5e1", size="10px")
+        rows_b += _runoff_rows((s4.get("runoff_judge") or {})
+                               .get("graph_b") or {})
         out.append(html.Div(rows_b, className="unc-panel"))
 
     # ── ALIGNMENT: does the advice match the model's own beliefs? ──
