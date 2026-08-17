@@ -27,6 +27,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+
+from agentic import models as _models
 import sys
 from pathlib import Path
 from typing import Any, Optional
@@ -458,7 +460,7 @@ def _query_vlm_raw(text: str, image_data_url: str) -> list[dict[str, Any]]:
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     payload = {
-        "model": os.getenv("QWEN_MODEL_NAME", "qwen2.5vl:7b"),
+        "model": _models.SUBJECT_MODEL,
         "messages": [{
             "role": "user",
             "content": [
@@ -745,7 +747,10 @@ def run_perception(
     out_dir.mkdir(parents=True, exist_ok=True)
     notes: list[str] = []
 
-    emit("run_started", image_size=[image.width, image.height],
+    # Model-agnostic stamp: a directory of runs from mixed subjects is
+    # unusable without knowing which model produced which run.
+    emit("run_started", **_models.stamp(),
+         image_size=[image.width, image.height],
          caption=caption, image_name=image_path.name)
     data_url: str | None = None
     stage("Perceive")

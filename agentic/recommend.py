@@ -45,6 +45,8 @@ query_fn closure — the node cores only ever see text prompts).
 from __future__ import annotations
 
 import os
+
+from agentic import models as _models
 import re
 import sys
 from pathlib import Path
@@ -83,7 +85,7 @@ def _query_vlm(prompt: str, *, image_contents: Optional[str] = None,
             {"type": "image_url", "image_url": {"url": image_contents}},
         ]
     payload = {
-        "model": os.getenv("QWEN_MODEL_NAME", "qwen2.5vl:7b"),
+        "model": _models.SUBJECT_MODEL,
         "messages": [{"role": "user", "content": content}],
         "temperature": temperature,
         "response_format": {"type": "json_object"},

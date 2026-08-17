@@ -58,6 +58,8 @@ from __future__ import annotations
 import json
 import operator
 import os
+
+from agentic import models as _models
 import re
 import sys
 import threading
@@ -111,7 +113,7 @@ def _ollama_llm(messages: list[dict[str, Any]],
 
     api_url = os.getenv("QWEN_API_URL", "http://localhost:11434/v1/chat/completions")
     r = requests.post(api_url, json={
-        "model": os.getenv("DIALOGUE_MODEL", "qwen2.5:7b"),
+        "model": _models.DIALOGUE_MODEL,
         "messages": messages,
         "tools": tools,
         "temperature": 0,

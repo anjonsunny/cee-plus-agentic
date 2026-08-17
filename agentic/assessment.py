@@ -46,6 +46,8 @@ from __future__ import annotations
 
 import json
 import os
+
+from agentic import models as _models
 import re
 import sys
 from pathlib import Path
@@ -480,7 +482,7 @@ def _query_vlm_text(prompt: str, temperature: float = 0.0) -> dict[str, Any]:
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     payload = {
-        "model": os.getenv("QWEN_MODEL_NAME", "qwen2.5vl:7b"),
+        "model": _models.SUBJECT_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature,
         "response_format": {"type": "json_object"},

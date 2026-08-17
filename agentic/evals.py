@@ -38,6 +38,8 @@ from __future__ import annotations
 
 import json
 import os
+
+from agentic import models as _models
 import random
 import sys
 from pathlib import Path
@@ -237,7 +239,7 @@ def _ollama_judge(prompt: str) -> str:
     api_url = os.getenv("QWEN_API_URL",
                         "http://localhost:11434/v1/chat/completions")
     r = requests.post(api_url, json={
-        "model": os.getenv("JUDGE_MODEL", "llama3.1:8b"),
+        "model": _models.JUDGE_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0,
     }, timeout=int(os.getenv("QWEN_TIMEOUT", "600")))

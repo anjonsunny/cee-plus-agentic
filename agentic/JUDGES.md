@@ -147,10 +147,27 @@ Decided 2026-08-08 (Sunny). Each subjective judge runs TWICE:
 - **image-aware** — the second witness. Same prompt, plus the image, framed
   with the constraint: *"the entity list below is what was extracted from the
   image — restrict yourself to these detected objects and their
-  relationships; use the image as context."* Runs on a VISION model from a
-  different family than the subject (`llava`; the text judge stays
-  `llama3.1:8b` — which cannot see images at all, so the twin is necessarily
-  a different model).
+  relationships; use the image as context."* Runs on the SAME model as the
+  text twin, once without the image and once with it, so the image is the
+  ONLY variable between the twins — disagreement then means exactly what we
+  want it to mean, not "different model families disagree."
+
+**The seats (2026-08-08, after a registry search — see agentic/models.py for
+the single source of truth and the full history):**
+
+```
+subject        qwen3-vl:8b   the newest open Qwen VL (Qwen3.5 is text-only
+                             so far); the specimen, swappable by design
+judge twins    gemma4:26b    Apr 2026, vision-native, MoE with 3.8B active
+                             (fast per call), Google family ≠ Qwen
+```
+
+The system is MODEL-AGNOSTIC: any VL model can sit in the subject seat, any
+capable model can judge — but a NEW judge model must pass every
+discrimination set before its verdicts count, and the judge stack stays
+FROZEN while subjects rotate, or cross-subject comparisons confound the
+specimen with the instrument. Every run is stamped with the ids that
+produced it (models.stamp()).
 
 **For now, only the agreement is shown.** No routing, no arbitration — a
 chip per judged item: `twins agree` / `twins disagree (text: X, image: Y)`.

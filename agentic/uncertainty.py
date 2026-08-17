@@ -33,6 +33,8 @@ calibrated probability.
 from __future__ import annotations
 
 import os
+
+from agentic import models as _models
 from collections import Counter
 from typing import Any, Callable, Optional  # noqa: F401
 
@@ -509,7 +511,7 @@ def _ollama_explain(prompt: str) -> str:
     api_url = os.getenv("QWEN_API_URL",
                         "http://localhost:11434/v1/chat/completions")
     r = requests.post(api_url, json={
-        "model": os.getenv("DIALOGUE_MODEL", "qwen2.5:7b"),
+        "model": _models.DIALOGUE_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0,
     }, timeout=int(os.getenv("QWEN_TIMEOUT", "600")))

@@ -99,6 +99,8 @@ telling us it cannot see the boundary — which is worth more than the verdict.
 from __future__ import annotations
 
 import os
+
+from agentic import models as _models
 import re
 import sys
 from collections import Counter
@@ -216,7 +218,7 @@ def _ollama_judge(prompt: str, temperature: float = 0.0) -> str:
 
     r = requests.post(os.getenv("QWEN_API_URL",
                                 "http://localhost:11434/v1/chat/completions"),
-                      json={"model": os.getenv("JUDGE_MODEL", "llama3.1:8b"),
+                      json={"model": _models.JUDGE_MODEL,
                             "messages": [{"role": "user", "content": prompt}],
                             "temperature": temperature},
                       timeout=int(os.getenv("QWEN_TIMEOUT", "600")))
