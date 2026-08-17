@@ -5,7 +5,7 @@
 | Cat | Failure mode | Findings | Count |
 |---|---|---|---|
 | A | LANGUAGE GAP — schema can't hear the model's honest English | F8, F11, F12, F10(paved), F45 | 5 |
-| B | INDUCED ERROR — model was right until our machinery pressured it | F1, F2, F5, F10, F25, F27 | 6 |
+| B | INDUCED ERROR — model was right until our machinery pressured it | F1, F2, F5, F10, F25, F27, F50 | 7 |
 | C | OUR RULES COLLIDE — our own rules fighting each other | F3, F9, F24 | 3 |
 | D | JUDGE NOISE / BIAS — ill-posed questions, severity-minimizing | F4(open), F5, F11, F26, F28 | 5 |
 | E | GENUINE MODEL ERROR — unstable second looks; flat self-confidence; reflection jitter | F7(parts), jitter | ~2 |
@@ -1359,3 +1359,46 @@ The two uses read the same probes but need different fidelity, and the
 compression was silently deciding for both.
 
 **Flowchart:** no change — same probes, same loop; one event got richer.
+
+---
+
+## F50 — the JSON leash strangled the new subject
+
+**Category: B (induced error — the model was fine until our machinery
+constrained it).** Found 2026-08-08, minutes into onboarding `qwen3-vl:8b`.
+
+**What happened.** The new subject is a THINKING model: it reasons before it
+answers, and Ollama routes that reasoning to a separate field. Our subject
+calls all carried `response_format: {"type": "json_object"}`. The constraint
+collided with the reasoning phase, and the model's entire answer came back as
+literally `{}` — two tokens, an empty object, on a prompt it answers perfectly
+without the constraint.
+
+**The smoke test that caught it, before any scene ran:**
+
+```
+with response_format      content: '{}'                    completion_tokens: 2
+without                   content: '{"greeting": "hello"}' reasoning: separate
+```
+
+**Fix.** The constraint is removed from all three subject call sites
+(perception, assessment, recommend). Prompts already demand JSON, and
+`extract_json_block` has always tolerated prose around the JSON — the belt was
+already there; the leash was redundant for the old subject and fatal for the
+new one.
+
+**Why this is F26 again.** The card judge went 0-for-5 partly because
+`response_format` suppressed its step-by-step reasoning. Same mechanism, other
+side of the table: format constraints suppress the very output they were meant
+to shape. A model-agnostic system cannot assume the constraint is harmless,
+because whether it harms depends on the model behind the endpoint.
+
+**Also learned in the same smoke test:** thinking costs real tokens (~300 for a
+seven-word answer), so per-call latency rises across every probe. No token
+caps exist anywhere in the pipeline (checked), so nothing truncates — it is
+purely a time cost, and worth watching on the six-scene re-run.
+
+**Status.** 681 tests pass (hermetic — they inject scripted answers, so no
+test touches this path). The real verification is Sunny's first live scene.
+
+**Flowchart:** no change.

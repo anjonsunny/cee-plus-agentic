@@ -485,7 +485,13 @@ def _query_vlm_text(prompt: str, temperature: float = 0.0) -> dict[str, Any]:
         "model": _models.SUBJECT_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature,
-        "response_format": {"type": "json_object"},
+        # F50: NO response_format. On a thinking model (qwen3-vl) the
+        # json_object constraint collided with the reasoning phase and the
+        # content came back literally "{}" — two tokens, empty. Without the
+        # constraint the thinking lands in a separate field and the content is
+        # clean JSON; extract_json_block already tolerates surrounding prose.
+        # Same lesson as the judges (F26): format constraints suppress the
+        # very output they were meant to shape.
     }
     r = requests.post(api_url, headers=headers, json=payload,
                       timeout=int(os.getenv("QWEN_TIMEOUT", "600")))
