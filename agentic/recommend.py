@@ -573,8 +573,15 @@ def measure_recommend_uncertainty(prompt: str, n_probes: int, *,
         reading = _recommend_reading(recs)
         readings.append(reading)
         if emit:
+            # F49 (capture spec 9.9): the probe's FULL parsed output rides in
+            # the event, prose included. The reading above keeps only the quad
+            # skeleton, so before this every probe's action/reason text was
+            # discarded at parse time — and those five answers to the same
+            # prompt are the preference-pair corpus (JUDGES.md 9.2). Every run
+            # before this change lost them permanently. Graph B probes never
+            # had this bug; they are stored whole in graph_b_uncertainty.
             emit("recommend_probe", index=i, n_recs=reading["n_recs"],
-                 top_threat=reading["top_threat"])
+                 top_threat=reading["top_threat"], recs=recs)
     mu = measure_recommendations(readings, canonical_threats=canonical_threats)
     if n_probes > 0 and not readings:
         mu.score = 1.0

@@ -53,8 +53,15 @@ agentic/                         Arm B — all the new code
   ui.py                          the Dash UI (the main way runs happen)
   dialogue.py, agent_tools.py    "ask the analyst" chat over run records
   test_*.py                      297 hermetic tests, no models needed
-  FINDINGS.md                    THE LEDGER. Findings F1-F14 + fix
+  FINDINGS.md                    THE LEDGER. Findings F1-F48 + fix
                                  taxonomy. Read it.
+  JUDGES.md                      Stage 4's judges: the spec, agreed
+                                 2026-08-08, NOT BUILT YET. Objective vs
+                                 subjective, what skill each uses, the
+                                 overseer's purpose -> features -> defs,
+                                 prompt formats, build order.
+  PANELS.md                      the forest table: every finding mapped to
+                                 the six objectives it serves
 experiments/agentic_scenes/      the six frozen calibration scenes:
   A_fire, B_pool, C_tanker_fire, D_aerial_spill, E_collapse,
   F_park_control (.jpg + .txt caption each)

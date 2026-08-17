@@ -9,7 +9,7 @@
 | C | OUR RULES COLLIDE — our own rules fighting each other | F3, F9, F24 | 3 |
 | D | JUDGE NOISE / BIAS — ill-posed questions, severity-minimizing | F4(open), F5, F11, F26, F28 | 5 |
 | E | GENUINE MODEL ERROR — unstable second looks; flat self-confidence; reflection jitter | F7(parts), jitter | ~2 |
-| F | METRIC DEFECT — scoring that hides/distorts the real signal | F15, F24, F25, F29, F45, F46, F47, F48 | 8 |
+| F | METRIC DEFECT — scoring that hides/distorts the real signal | F15, F24, F25, F29, F45, F46, F47, F48, F49 | 9 |
 
 **Standing observation (through F12, 4 of 6 scenes):** only ~2 of ~15
 defects were the subject model failing unprompted. The dominant modes
@@ -1325,3 +1325,37 @@ through both controls). Old runs replay with their stored numbers.
 checks produce a score, SERIOUS SINGLE ERRORS are subtracted from it — a small
 box feeding the trust box from the side, labelled "named errors, priced by
 consequence".
+
+---
+
+## F49 — the probe loop threw away the half of the answer worth training on
+
+**Category: F (metric defect — this time in the CAPTURE, not the score).**
+Found 2026-08-08 while writing the training-data capture spec (JUDGES.md §9).
+
+**What happened.** The recommendation probe loop parsed each probe's full
+answer — action, reason, quad — and then kept only the quad skeleton. The
+event written per probe was:
+
+```json
+{"type": "recommend_probe", "index": 0, "n_recs": 3, "top_threat": "spill_1"}
+```
+
+Three recommendations generated, a count and one entity id kept. The prose is
+the half a subject model would actually be trained on, and five answers to the
+SAME prompt are precisely the preference-pair corpus (§9.2). **Every run to
+date has lost it permanently.** Graph B's probes never had the bug — they are
+stored whole in `graph_b_uncertainty.graphs` — which is how the asymmetry was
+noticed.
+
+**Fix.** The full parsed recs ride in the `recommend_probe` event; the flight
+recorder is already the per-run durable store. One argument added to one emit
+call, inside the shared node core, so the LangGraph twin is untouched. Pinned
+by a test that fails if the prose ever drops out again.
+
+**The general lesson, for the paper's data section:** dispersion measurement
+compresses at parse time; training-data capture must keep the verbatim answer.
+The two uses read the same probes but need different fidelity, and the
+compression was silently deciding for both.
+
+**Flowchart:** no change — same probes, same loop; one event got richer.

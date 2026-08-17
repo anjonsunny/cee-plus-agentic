@@ -806,3 +806,27 @@ def test_an_action_naming_an_outside_resource_is_still_hazard_directed():
     r = explanation_alignment(rec, asm, [card])
     assert r["modes"][0]["mode"] == "hazard_directed"
     assert r["failures"] == []
+
+
+def test_probe_events_carry_the_full_prose_not_just_the_skeleton():
+    """F49 / JUDGES.md 9.9. The five probe answers to the SAME prompt are the
+    preference-pair corpus for DPO. The loop used to keep only the quad
+    skeleton (a count and one entity id per probe), so every run before the
+    fix permanently lost the action/reason prose — the half of the answer a
+    subject model would actually be trained on."""
+    def probe_fn(prompt):
+        return _rec_answer([_rec("building_1", "collapsed", "may_harm",
+                                 ["person_1"])])
+
+    events = []
+    run_stage4(_record(), _asm(), query_fn=_script(), probe_fn=probe_fn,
+               n_probes=2, on_event=events.append)
+    probes = [e for e in events if e["type"] == "recommend_probe"]
+    assert len(probes) == 2
+    for e in probes:
+        recs = e["recs"]
+        assert recs, "the full parsed recommendations must ride in the event"
+        assert recs[0]["action"], "prose action lost — the capture bug is back"
+        assert recs[0]["reason"], "prose reason lost — the capture bug is back"
+        q = recs[0]["structured_reasoning"]
+        assert q["threat"] == "building_1" and q["state"] == "collapsed"
