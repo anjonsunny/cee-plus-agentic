@@ -1651,6 +1651,14 @@ def _graph_judge_rows(gj: dict) -> list:
                                 style={"fontSize": "11px", "color": "#64748b",
                                        "fontWeight": "600",
                                        "marginTop": "6px"})]
+    # F53 follow-up: when Q1 sat out, code says WHY and states the
+    # informative fact itself (e.g. Graph B's exposed set contains no
+    # declared at-risk entity) — which needs no judge.
+    note = gj.get("victims_note")
+    if note:
+        rows.append(html.Div("◈ " + str(note),
+                             style={"fontSize": "11.5px", "color": "#b45309",
+                                    "padding": "1px 0"}))
     v = gj.get("victims") or {}
     if v.get("n"):
         # F43: name BOTH sets and say which is worse. "Graph B's harmed
@@ -1670,18 +1678,29 @@ def _graph_judge_rows(gj: dict) -> list:
         split = f"  ({votes}/{n})" + ("  · thin, close to a coin flip"
                                       if thin else "")
         if who:
-            worse = "believes" if v.get("verdict") == "graph_b" else "protects"
-            other = "protects" if worse == "believes" else "believes"
-            w_set = ", ".join(vic.get(v.get("verdict")) or []) or "—"
-            o_set = ", ".join(
-                vic.get("graph_a" if v.get("verdict") == "graph_b"
-                        else "graph_b") or []) or "—"
+            # F53 follow-up (Sunny: "less vague"). The old sentence packed
+            # both sets and both roles into one clause and came out garbled
+            # ("the entities the model protects are endangered are in MORE
+            # danger than the ones the advice believes"). Three lines: what
+            # each account says, then the verdict in plain words.
+            a_set = ", ".join(vic.get("graph_a") or []) or "—"
+            b_set = ", ".join(vic.get("graph_b") or []) or "—"
             rows.append(html.Div(
-                f"◈ the entities the model {worse} are endangered ({w_set}) "
-                f"are in MORE danger than the ones the advice {other} "
-                f"({o_set}){split}",
+                f"the ADVICE acts as if endangered: {a_set}",
+                style={"fontSize": "11px", "color": "#64748b",
+                       "padding": "1px 0 0 10px"}))
+            rows.append(html.Div(
+                f"asked independently, the model BELIEVES endangered: {b_set}",
+                style={"fontSize": "11px", "color": "#64748b",
+                       "padding": "0 0 0 10px"}))
+            side = ("the model's own belief"
+                    if v.get("verdict") == "graph_b" else "the advice")
+            rows.append(html.Div(
+                f"◈ judge: {side} names the set in MORE danger{split}"
+                + (" — the advice may be acting on the lesser set"
+                   if v.get("verdict") == "graph_b" else ""),
                 style={"fontSize": "11.5px", "color": "#be123c",
-                       "padding": "1px 0"}))
+                       "fontWeight": "600", "padding": "1px 0"}))
         elif v.get("verdict") == "equally":
             rows.append(html.Div(
                 f"◆ both sets are equally exposed{split}",

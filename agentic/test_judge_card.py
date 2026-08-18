@@ -452,3 +452,44 @@ def test_neither_graph_prompt_says_what_to_look_for():
         for phrase in ("you are looking for", "do not reward", "audit"):
             assert phrase not in low, phrase
         assert not re.search(r"\b[a-z][a-z0-9_]*_\d+\b", low)
+
+
+# ── F53 follow-up: Q1 convenes only in its designed case ────────────────
+
+def test_graph_judge_sits_out_when_a_victim_set_has_no_at_risk_entity():
+    """C_tanker live: Graph B's "victims" were a road and a spill, and "which
+    set is more exposed, people or pavement" answered itself 3/3, informing
+    nobody. When a set contains no declared at-risk entity the judge sits out
+    and CODE states the informative fact — no model call spent."""
+    from agentic.judge_graph import judge_graphs
+    A = {"edges": [{"source": "fire_1", "effect": "may_harm",
+                    "target": "person_1"}]}
+    B = {"edges": [{"source": "fire_1", "effect": "may_spread_to",
+                    "target": "road_1"}]}
+    dc = {"hazards": 1.0, "victims_only_in_a": ["person_1"],
+          "victims_only_in_b": ["road_1"]}
+    calls = []
+    out = judge_graphs(A, B, dc, "scene", judge_fn=lambda p: calls.append(p),
+                       at_risk_ids={"person_1"})
+    assert out.get("victims") is None
+    assert "no declared at-risk entity" in out["victims_note"]
+    assert "Graph B" in out["victims_note"]
+    assert not calls                       # the judge was never called for Q1
+
+
+def test_graph_judge_convenes_when_both_sets_hold_at_risk_entities():
+    """D_aerial's shape — the case Q1 was designed for."""
+    from agentic.judge_graph import judge_graphs
+    A = {"edges": [{"source": "spill_1", "effect": "blocks_access_to",
+                    "target": "fire_truck_1"},
+                   {"source": "spill_1", "effect": "may_harm",
+                    "target": "person_1"}]}
+    B = {"edges": [{"source": "spill_1", "effect": "may_harm",
+                    "target": "hazmat_worker_1"}]}
+    dc = {"hazards": 1.0, "victims_only_in_a": ["fire_truck_1", "person_1"],
+          "victims_only_in_b": ["hazmat_worker_1"]}
+    out = judge_graphs(A, B, dc, "scene",
+                       judge_fn=lambda p: "VERDICT: [graph_b]",
+                       at_risk_ids={"person_1", "hazmat_worker_1"})
+    assert out.get("victims", {}).get("verdict") == "graph_b"
+    assert "victims_note" not in out

@@ -1262,10 +1262,12 @@ def run_graph_judge(record: Any, assessment: Any, graph_a: dict, graph_b: dict,
         return {"graph_judge": {}}
     from agentic.judge_graph import judge_graphs
     emit = _emitter(on_event)
+    _ar = {str(getattr(x, "object_id", "")) for x in
+           (getattr(assessment, "at_risk", None) or [])}
     out = judge_graphs(graph_a, graph_b,
                        (alignment or {}).get("decomposition") or {},
                        _scene_block(record, assessment), judge_fn=judge_fn,
-                       on_event=None)
+                       at_risk_ids=_ar, on_event=None)
     if out:
         emit("graph_judge_ready", advisory=True,
              asked_victims=out.get("victims") is not None,
