@@ -1278,7 +1278,7 @@ def test_stage4_status_badge():
     mid = badge([{"type": "recommendations_ready", "ranks": [1], "n_recs": 1,
                   "n_advisory": 0},
                  {"type": "graph_a_built", "n_nodes": 3, "n_edges": 2}])
-    assert "step 3/6" in mid                       # 2 done, on step 3 of 6
+    assert "step 3/9" in mid    # 9 steps: the judges own their header time
     assert "done" in badge([{"type": "stage4_result",
                              "result": {"picks": {}}}])
 

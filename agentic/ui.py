@@ -1413,9 +1413,14 @@ def rag_shadow_panel(shadow: list[dict[str, Any]] | None, stage_label: str,
 def stage4_status_span(d: dict[str, Any]) -> html.Span:
     """The running/done badge on the Stage 4 card header — same look as
     Stages 1-2. Steps: recommend → Graph A → Graph B → pick."""
+    # Kept in step with the LIVE list in stage4_component: the judges own
+    # their time in BOTH places, or the header chip says "trust · step 6/6"
+    # for 20 minutes while the body correctly shows the runoff voting.
     STEPS = [("recommend", "recommend"), ("uncertainty", "uncertainty"),
              ("Graph A", "graph_a"), ("Graph B", "graph_b"),
-             ("pick", "picks"), ("trust", "trust")]
+             ("pick", "picks"), ("card judge", "card_judge"),
+             ("graph judge", "graph_judge"), ("runoff twins", "runoff"),
+             ("trust", "trust")]
     if d.get("stage4") is not None or d.get("stage4_error"):
         return phase_status_span([(name, "done") for name, _ in STEPS])
     marks = d.get("stage4_marks") or set()
