@@ -1297,19 +1297,10 @@ def run_runoff_judge(record: Any, assessment: Any, probe_recs: list,
     emit = _emitter(on_event)
     if judge_image_fn is None:
         judge_image_fn = default_image_judge(image_path)
-    out: dict = {}
-    r = runoff_recommendations(probe_recs or [], record, assessment,
-                               judge_fn=judge_fn,
-                               judge_image_fn=judge_image_fn,
-                               n_probes=n_probes)
-    if r:
-        out["recommendations"] = r
-    g = runoff_graph_b(graph_b_probes or [], record, assessment,
-                       judge_fn=judge_fn, judge_image_fn=judge_image_fn,
-                       n_probes=n_probes)
-    if g:
-        out["graph_b"] = g
-    for app, v in out.items():
+    def _emit_one(app: str, v: dict) -> None:
+        # emitted AS EACH application finishes — the live view labels the
+        # judging phase from these, and one emit at the end left 20 minutes
+        # of judge work rendering as "folding the trust score" (Sunny).
         emit("runoff_judged", application=app, advisory=True,
              prompt_version=v["prompt_version"],
              text_verdict=v["text"]["verdict"], text_votes=v["text"]["votes"],
@@ -1319,6 +1310,21 @@ def run_runoff_judge(record: Any, assessment: Any, probe_recs: list,
              text_reasoning=v["text"].get("reasoning", ""),
              image_reasoning=(v["image"] or {}).get("reasoning", ""),
              code_facts=v["code_facts"])
+
+    out: dict = {}
+    r = runoff_recommendations(probe_recs or [], record, assessment,
+                               judge_fn=judge_fn,
+                               judge_image_fn=judge_image_fn,
+                               n_probes=n_probes)
+    if r:
+        out["recommendations"] = r
+        _emit_one("recommendations", r)
+    g = runoff_graph_b(graph_b_probes or [], record, assessment,
+                       judge_fn=judge_fn, judge_image_fn=judge_image_fn,
+                       n_probes=n_probes)
+    if g:
+        out["graph_b"] = g
+        _emit_one("graph_b", g)
     return {"runoff_judge": out}
 
 

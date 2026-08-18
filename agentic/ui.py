@@ -332,7 +332,16 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
             d["stage4_probe"] = d.get("stage4_probe", 0) + 1
         elif t == "recommend_uncertainty_ready":
             d["stage4_marks"].add("uncertainty")
+        elif t == "card_judge_ready":
+            d["stage4_marks"].add("card_judge")
+        elif t == "graph_judge_ready":
+            d["stage4_marks"].add("graph_judge")
+        elif t == "runoff_judged":
+            d["stage4_runoff"] = d.get("stage4_runoff", 0) + 1
         elif t == "trust_ready":
+            # runoff has no fixed application count (0-2 fire), so its step is
+            # marked done when trust starts — trust follows it immediately.
+            d["stage4_marks"].add("runoff")
             d["stage4_marks"].add("trust")
         elif t == "hazard_derived":
             line = (f"{ev.get('medium')} '{ev.get('was')}' → "
@@ -2689,6 +2698,17 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                 ("graph_a", "graph_a", "assembling Graph A"),
                 ("graph_b", "graph_b", "asking for the independent Graph B"),
                 ("picks", "picks", "choosing what to intervene on"),
+                # the judges own their time on screen: they are the slow part
+                # (gemma reasons on every vote), and without these rows their
+                # ~20 minutes rendered as "folding the trust score" (Sunny).
+                ("card_judge", "card_judge",
+                 "the card judge is voting (minutes — it reasons per vote)"),
+                ("graph_judge", "graph_judge",
+                 "the graph judge is voting (minutes)"),
+                ("runoff", "runoff",
+                 f"the runoff twins are voting · "
+                 f"{d.get('stage4_runoff', 0)}/2 comparisons done "
+                 f"(the slowest step — text + image, per vote)"),
                 ("trust", "trust", "folding the trust score")]
         rows: list[Any] = [html.Div("STAGE 4 · running…", className="unc-tag")]
         active_used = False
