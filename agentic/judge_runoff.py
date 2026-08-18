@@ -344,7 +344,7 @@ def runoff_recommendations(probe_recs: list, record: Any, assessment: Any, *,
         at_risk=at_risk, n_asks=len(probe_recs),
         candidate_a=_fmt_recs(probe_recs[i]),
         candidate_b=_fmt_recs(probe_recs[j]))
-    facts = {"probe_a": i, "probe_b": j,
+    facts = {"probe_a": i, "probe_b": j, "n_asks": len(probe_recs),
              "invented_ids_a": _invented_ids(_ids_in_recs(probe_recs[i]), record),
              "invented_ids_b": _invented_ids(_ids_in_recs(probe_recs[j]), record)}
     return runoff("recommendations", prompt, _fmt_recs(probe_recs[i]),
@@ -366,7 +366,7 @@ def runoff_graph_b(probe_graphs: list, record: Any, assessment: Any, *,
         n_asks=len(probe_graphs),
         candidate_a=_fmt_graph(probe_graphs[i]),
         candidate_b=_fmt_graph(probe_graphs[j]))
-    facts = {"probe_a": i, "probe_b": j,
+    facts = {"probe_a": i, "probe_b": j, "n_asks": len(probe_graphs),
              "invented_ids_a": _invented_ids(_ids_in_graph(probe_graphs[i]), record),
              "invented_ids_b": _invented_ids(_ids_in_graph(probe_graphs[j]), record)}
     return runoff("graph_b", prompt, _fmt_graph(probe_graphs[i]),

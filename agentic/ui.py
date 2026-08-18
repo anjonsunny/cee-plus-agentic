@@ -2522,10 +2522,26 @@ def _runoff_bench_card(ro: dict, which: str) -> Any:
     if inv:
         rows.append(html.Div(f"code note: invented ids — {', '.join(inv)}",
                              style={"fontSize": "9.5px", "color": "#b45309"}))
-    return _bench_card(
-        f"RUNOFF · {which}",
-        "of the two leading probe candidates, which does the record support?",
-        rows, _twin_chip(ro))
+    # The TASK must say WHAT the candidates are and what "support" means —
+    # "of the two leading probe candidates, which does the record support?"
+    # told the reader a choice happened without saying what was chosen
+    # between (Sunny). Each application states its own object and criterion,
+    # mirroring the judge's actual prompt (COVERS / SUPPORTED, JUDGES.md).
+    task = {
+        "RECOMMENDATIONS": (
+            "asked for recommendations {n} times, the model gave differing "
+            "answers. Candidates = two complete recommendation SETS (each "
+            "action + reason + causal claim). Verdict = which set better "
+            "covers the declared dangers and at-risk entities, naming only "
+            "entities that exist."),
+        "GRAPH B": (
+            "asked to draw its causal graph {n} times, the model gave "
+            "differing answers. Candidates = two complete who-endangers-whom "
+            "graphs. Verdict = which graph the scene record supports: real "
+            "entities only, arrows out of dangerous states, every danger "
+            "covered."),
+    }[which].format(n=(ro.get("code_facts") or {}).get("n_asks", "several"))
+    return _bench_card(f"RUNOFF · {which}", task, rows, _twin_chip(ro))
 
 
 def _judges_bench(s4: dict, d: dict) -> list:
