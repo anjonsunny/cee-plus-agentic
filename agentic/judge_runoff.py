@@ -68,7 +68,9 @@ from agentic.judge_card import (JUDGE_PROBE_TEMPERATURE, _ollama_judge,
 # Stamped into every emitted verdict. Bump on ANY prompt edit: pairs judged by
 # different prompt versions must be separable forever (JUDGES.md §9.8 — data
 # from a later-fixed judge has to be findable to drop).
-PROMPT_VERSION = "runoff-v2"   # v2: F51 — "invented" defined, reasons do not act
+PROMPT_VERSION = "runoff-v3"   # v3: F52 — audience declared, delegation
+                               # is not invention. v2: F51 — "invented"
+                               # defined, reasons do not act.
 
 ANSWER_A, ANSWER_B, EQUAL = "answer_a", "answer_b", "equally_good"
 _ALLOWED = (ANSWER_A, ANSWER_B, EQUAL)
@@ -100,16 +102,23 @@ ANSWER A:
 ANSWER B:
 {candidate_b}
 
+These recommendations are FOR the emergency response team — the test of an
+answer is whether that team can use it.
+
 An answer COVERS this scene when all three hold:
   1. every declared danger is acted on by at least one of its ACTIONS. A
-     reason that merely mentions a danger does not act on it;
+     reason that merely mentions a danger does not act on it. Directing the
+     team to summon or coordinate an outside specialist unit against a
+     danger IS acting on that danger — delegation is a legitimate response;
   2. every entity declared at risk is protected by at least one of its
      actions — acting on a danger and protecting someone at risk are both
      legitimate ways to cover something;
-  3. every entity the answer names — in its actions, its reasons, or its
-     causal claims — appears in the scene's entity list above. Anything
-     named that is not in the list counts as INVENTED, whether or not it
-     looks like an id. Naming an invented entity is a failure.
+  3. every scene entity the answer names in its REASONS or its CAUSAL
+     CLAIMS appears in the scene's entity list above. Anything presented as
+     part of the scene that is not in the list counts as INVENTED, whether
+     or not it looks like an id, and naming it is a failure. Outside units
+     and equipment the team is told to summon are NOT scene entities and
+     are not inventions.
 
 Which answer covers this scene with fewer failures? Judge only against the
 scene and the declarations — never against what you yourself would
@@ -226,8 +235,18 @@ def _fmt_recs(recs: list) -> str:
 
 
 def _fmt_graph(graph: dict) -> str:
-    lines = [f"  {e.get('source')} --{e.get('effect')}--> {e.get('target')}"
-             for e in ((graph or {}).get("edges") or []) if isinstance(e, dict)]
+    """F52: deduped. A probe graph can carry the same edge three times
+    (A_fire ui_6ddd5df6, verbatim), and the judge was shown all three —
+    harmless that day, but prompt bloat that could sway a closer call."""
+    seen, lines = set(), []
+    for e in ((graph or {}).get("edges") or []):
+        if not isinstance(e, dict):
+            continue
+        k = (e.get("source"), e.get("effect"), e.get("target"))
+        if k in seen:
+            continue
+        seen.add(k)
+        lines.append(f"  {e.get('source')} --{e.get('effect')}--> {e.get('target')}")
     return "\n".join(lines) or "  (no causal links)"
 
 

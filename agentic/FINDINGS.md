@@ -6,7 +6,7 @@
 |---|---|---|---|
 | A | LANGUAGE GAP — schema can't hear the model's honest English | F8, F11, F12, F10(paved), F45 | 5 |
 | B | INDUCED ERROR — model was right until our machinery pressured it | F1, F2, F5, F10, F25, F27, F50 | 7 |
-| C | OUR RULES COLLIDE — our own rules fighting each other | F3, F9, F24, F51 | 4 |
+| C | OUR RULES COLLIDE — our own rules fighting each other | F3, F9, F24, F51, F52 | 5 |
 | D | JUDGE NOISE / BIAS — ill-posed questions, severity-minimizing | F4(open), F5, F11, F26, F28, F51 | 6 |
 | E | GENUINE MODEL ERROR — unstable second looks; flat self-confidence; reflection jitter | F7(parts), jitter | ~2 |
 | F | METRIC DEFECT — scoring that hides/distorts the real signal | F15, F24, F25, F29, F45, F46, F47, F48, F49 | 9 |
@@ -1467,5 +1467,70 @@ specimen.
 
 **Status.** 700 tests. The v2 prompt has NOT yet been through a live run;
 the next scene is its first test.
+
+**Flowchart:** no change.
+
+---
+
+## F52 — the audience was never declared, and every rule quietly assumed one
+
+**Category: C (our rules collide).** Second live calibration run
+(A_fire, ui_6ddd5df6, prompt runoff-v2), 2026-08-08.
+
+**What the run showed.** The v2 judge — applying F51's new "invented"
+definition exactly as written — counted "fire department" as an invented
+entity and charged the candidate for it. The reasoning made it visible:
+
+> "'fire department' is named in Action 2. This is not in the entity list,
+> so it counts as an invented entity."
+
+But "alert the fire department" is a valid recommendation, and F27 had
+already established that actions may summon responders and equipment not in
+the scene. The v2 definition, written to close F51's loophole, overshot and
+re-broke F27. Judge-vs-code split in the OPPOSITE direction from F51 — same
+class of defect, our definition, one run to catch it again.
+
+**The question underneath (Sunny):** *"Alert the fire department is a valid
+recommendation. Now is it less valid because we assume the recommendations
+are for the fire department?"* — and the honest answer was that NOTHING in
+the system ever said who the recommendations are for. The prompt declares
+who is writing ("you are an emergency-response analyst"), never who is
+acting. Meanwhile rule after rule quietly assumed an on-scene actor: the
+"contact emergency services is a non-action" reading of C_tanker, the
+"Firefighters" escapee, the judge's coverage criterion.
+
+**Decided (Sunny): the audience is THE EMERGENCY RESPONSE TEAM — "the point
+is they can use it."** Under that reading, a team summoning the specialist
+unit is coordination, not circularity, and delegation is a legitimate way to
+act on a danger.
+
+**Fixes (runoff-v2 → runoff-v3):**
+
+1. The audience is DECLARED in the judge prompt: "These recommendations are
+   FOR the emergency response team — the test of an answer is whether that
+   team can use it."
+2. Delegation legitimized: directing the team to summon an outside
+   specialist unit against a danger IS acting on that danger.
+3. Invention scoped to the scene-describing surfaces: reasons and causal
+   claims must name only scene entities; outside units the team is told to
+   summon are not scene entities and not inventions.
+4. Probe graphs are DEDUPED before the judge sees them — one probe carried
+   the same edge three times, shown verbatim.
+5. The judge's reasoning renders on the bench card — every vote,
+   verdict-tagged, collapsible. F51 was found by reading reasoning off
+   disk; the person at the screen had no way to do that.
+
+**A near-miss worth recording:** my first v3 draft wrote "alert the fire
+department about the burning house" INTO the prompt template as the worked
+example — an A_fire-flavored token in a scene-neutral prompt, exactly the
+F2 failure. The prompt-neutrality TEST caught it before it shipped. The
+guardrails are load-bearing.
+
+**Grounding note, for the record:** audience-validity is a QUALITY question
+and stays out of scope. On GROUNDING, "alert the fire department" was always
+in good standing — its quad names `house_1 · burning`, so suppressing the
+fire should make the alert vanish, and the intervention gate can test that.
+
+**Status.** 702 tests. v3 meets its first live run on the next scene.
 
 **Flowchart:** no change.

@@ -197,9 +197,34 @@ def test_invented_is_defined_in_both_prompts():
             in flat(RECS_RUNOFF_PROMPT))
 
 
+def test_the_audience_is_declared_and_delegation_is_not_invention():
+    """F52 (Sunny): the recommendations are FOR the emergency response team —
+    "the point is they can use it." A team summoning the specialist unit
+    ("alert the fire department") is coordination, not invention: v2's blanket
+    invented rule punished it, contradicting F27, and judge-vs-code split in
+    the OPPOSITE direction from F51 — same class of defect, our definition."""
+    import re
+    flat = re.sub(r"\s+", " ", RECS_RUNOFF_PROMPT)
+    assert "FOR the emergency response team" in flat
+    assert "delegation is a legitimate response" in flat
+    assert "are NOT scene entities and are not inventions" in flat
+    # and the example that taught delegation must NOT be scene-flavored —
+    # my first draft wrote "alert the fire department about the burning
+    # house" into the TEMPLATE, and the neutrality test caught it (F2's
+    # lesson: worked examples leak into unrelated scenes)
+
+
+def test_probe_graphs_are_deduped_before_the_judge_sees_them():
+    """A_fire ui_6ddd5df6 verbatim: the same edge three times in one probe."""
+    from agentic.judge_runoff import _fmt_graph
+    g = {"edges": [{"source": "smoke_1", "effect": "may_harm",
+                    "target": "person_1"}] * 3}
+    assert _fmt_graph(g).count("smoke_1") == 1
+
+
 def test_prompt_version_bumped_so_v1_pairs_are_separable():
     from agentic.judge_runoff import PROMPT_VERSION
-    assert PROMPT_VERSION == "runoff-v2"
+    assert PROMPT_VERSION == "runoff-v3"
 
 
 def test_every_votes_reasoning_is_captured():

@@ -2522,6 +2522,23 @@ def _runoff_bench_card(ro: dict, which: str) -> Any:
     if inv:
         rows.append(html.Div(f"code note: invented ids — {', '.join(inv)}",
                              style={"fontSize": "9.5px", "color": "#b45309"}))
+    # F52: the judge's reasoning, readable in place. F51's loophole was found
+    # by reading the stored reasoning off disk — the person at the screen had
+    # no way to see it. Every vote, verdict-tagged, one click away.
+    for name, tw in (("text-only", t), ("image-aware", im)):
+        votes = (tw or {}).get("all_reasoning") or []
+        if votes:
+            rows.append(html.Details([
+                html.Summary(f"{name} judge's reasoning ({len(votes)} votes)",
+                             style={"fontSize": "9.5px", "color": "#7c3aed",
+                                    "cursor": "pointer"}),
+                html.Div([html.Div([
+                    html.B(lab.get(v.get("verdict"), v.get("verdict", "?")),
+                           style={"fontSize": "9px"}),
+                    html.Pre(v.get("text", ""), style={
+                        "fontSize": "9px", "whiteSpace": "pre-wrap",
+                        "color": "#475569", "margin": "1px 0 6px"})])
+                    for v in votes])]))
     # The TASK must say WHAT the candidates are and what "support" means —
     # "of the two leading probe candidates, which does the record support?"
     # told the reader a choice happened without saying what was chosen
