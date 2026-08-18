@@ -59,6 +59,13 @@ JUDGE_MODEL = os.getenv("JUDGE_MODEL", "gemma4:26b")
 JUDGE_VISION_MODEL = os.getenv("JUDGE_VISION_MODEL", JUDGE_MODEL)
 DIALOGUE_MODEL = os.getenv("DIALOGUE_MODEL", "qwen2.5:7b")
 
+# How many times a Stage 4 judge votes on one question. 5 -> 3 (Sunny,
+# 2026-08-08): the first full run spent 55 of 59 minutes judging — gemma4
+# reasons on every vote, ~110s per image call — and 3 votes still gives a
+# majority. The vote SPLITS are training data either way; this trades split
+# resolution for iteration speed during calibration. Env-overridable.
+JUDGE_VOTES = int(os.getenv("JUDGE_VOTES", "3"))
+
 
 def stamp() -> dict:
     """The id block every run record and capture record carries."""

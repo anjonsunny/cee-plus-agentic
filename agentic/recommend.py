@@ -1276,7 +1276,7 @@ def run_graph_judge(record: Any, assessment: Any, graph_a: dict, graph_b: dict,
 def run_runoff_judge(record: Any, assessment: Any, probe_recs: list,
                      graph_b_probes: list, image_path: str = "", *,
                      judge_fn: Any = None, judge_image_fn: Any = None,
-                     n_probes: int = 5, on_event: Any = None) -> dict:
+                     n_probes: int | None = None, on_event: Any = None) -> dict:
     """JUDGES.md step-1 judge (advisory). When the subject's probes disagreed,
     show the two leading candidates to an independent judge and ask which one
     the record supports — once over the recommendation candidates, once over

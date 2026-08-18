@@ -9,6 +9,13 @@ chip in the UI, capture-complete `runoff_judged` events, 12 hermetic tests,
 twin byte-identical. Its live calibration against gemma4:26b happens as we
 go (Sunny). Everything else is still spec.
 
+LAYOUT (2026-08-08): Stage 4 renders as five numbered collapsible sections —
+VERDICT / RECOMMENDATIONS / STABILITY / CAUSAL GRAPHS / THE JUDGES' BENCH.
+Every subjective verdict lives on the bench as its own card (Stage 2's
+TASK / AUTHORITY / THIS RUN grammar + the twin chip); the judged panels keep
+one-line pointer chips. One verdict, one home. JUDGE_VOTES dropped 5 -> 3
+(models.py): the first full run spent 55 of 59 minutes judging.
+
 Stage 4 has its own judges. Nothing is borrowed from Stage 2 — same ideas in
 places, separate code, separate test sets, separate namespace.
 

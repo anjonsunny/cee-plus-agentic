@@ -219,7 +219,8 @@ def judge_mechanism(scene_block: str, source: str, target: str,
 
 
 def judge_graphs(graph_a: dict, graph_b: dict, decomposition: dict,
-                 scene_block: str, *, judge_fn: Any = None, n_probes: int = 5,
+                 scene_block: str, *, judge_fn: Any = None,
+                 n_probes: int | None = None,
                  on_event: Any = None) -> dict[str, Any]:
     """Ask only the questions this pair of graphs actually raises.
 
@@ -231,6 +232,9 @@ def judge_graphs(graph_a: dict, graph_b: dict, decomposition: dict,
     equivalence tests must stay model-free."""
     if judge_fn is None:
         return {}
+    if n_probes is None:
+        from agentic import models as _models
+        n_probes = _models.JUDGE_VOTES
     dc = decomposition or {}
     out: dict[str, Any] = {"advisory": True, "n_probes": n_probes,
                            "victims": None, "mechanisms": []}

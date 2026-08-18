@@ -114,7 +114,8 @@ if str(REPO_ROOT) not in sys.path:
 JudgeFn = Callable[[str], str]
 
 JUDGE_PROBE_TEMPERATURE = float(os.getenv("CARD_JUDGE_TEMP", "0.7"))
-DEFAULT_JUDGE_PROBES = int(os.getenv("CARD_JUDGE_PROBES", "5"))
+DEFAULT_JUDGE_PROBES = int(os.getenv("CARD_JUDGE_PROBES",
+                                     str(_models.JUDGE_VOTES)))
 
 ALIGNED = "causally_aligned"
 NOT_ALIGNED = "not_causally_aligned"

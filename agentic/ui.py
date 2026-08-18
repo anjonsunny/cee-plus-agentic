@@ -677,6 +677,14 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
                              "oid": ev.get("object_id"), "busy": True}
         elif t == "assembled":
             d["activity"] = {"text": "done", "oid": None, "busy": False}
+    # Judge wall-clock for the bench header: everything between the last
+    # deterministic eval (alignment) and trust is judge time. Live events
+    # carry wall stamps; replayed ones do not, so this is best-effort.
+    _ts = {e.get("type"): e.get("t") for e in events
+           if isinstance(e, dict) and e.get("t")}
+    if _ts.get("alignment_ready") and _ts.get("trust_ready"):
+        d["s4_judge_seconds"] = round(_ts["trust_ready"]
+                                      - _ts["alignment_ready"], 1)
     return d
 
 
@@ -2421,6 +2429,210 @@ def _stage4_pins(d: dict[str, Any], chipper) -> list[Any]:
     return labels
 
 
+
+
+_RO_LAB = {"answer_a": "candidate A", "answer_b": "candidate B",
+           "equally_good": "equal", "unclear": "unclear"}
+
+
+def _bench_pointer(text: str) -> Any:
+    """The one-line pointer left behind where a judge verdict used to render.
+    The verdict itself lives on the bench (section 5) — one verdict, one
+    home; the panel keeps just enough to know a judge spoke and where."""
+    return html.Div("⚖ " + text + "  → see THE JUDGES' BENCH",
+                    style={"fontSize": "10px", "color": "#7c3aed",
+                           "fontWeight": "600", "marginTop": "3px"})
+
+
+def _bench_card(title: str, task: str, verdict_rows: list,
+                twin_chip: Any = None, foot: str = "",
+                wide: bool = False) -> Any:
+    """One judge, one card — Stage 2's TASK / AUTHORITY / THIS RUN grammar,
+    purple frame, plus the twin-agreement chip. Sunny: judges were almost
+    hidden inside the panels they judged; a judge must be recognizable as a
+    judge and findable in exactly one place."""
+    rows = [
+        html.Div("⚖ " + title, style={
+            "fontSize": "10px", "fontWeight": "800", "letterSpacing": ".08em",
+            "color": "#fff", "background": "#7c3aed",
+            "padding": "3px 10px", "borderRadius": "8px 8px 0 0"}),
+        html.Div([html.Span("TASK ", className="unc-tag"),
+                  html.Span(task, style={"fontSize": "10px"})],
+                 style={"padding": "3px 8px 0"}),
+        html.Div([html.Span("AUTHORITY ", className="unc-tag"),
+                  html.Span("advises — never enters a score",
+                            style={"fontSize": "10px",
+                                   "fontStyle": "italic"})],
+                 style={"padding": "0 8px"}),
+        html.Div([html.Span("THIS RUN ", className="unc-tag")]
+                 + verdict_rows, style={"padding": "0 8px 4px"}),
+    ]
+    if twin_chip is not None:
+        rows.append(html.Div(twin_chip, style={"padding": "0 8px 4px"}))
+    if foot:
+        rows.append(html.Div(foot, style={"fontSize": "9.5px",
+                                          "color": "#94a3b8",
+                                          "padding": "0 8px 6px"}))
+    return html.Div(rows, style={
+        "border": "1px solid #7c3aed66", "borderRadius": "8px",
+        "background": "#fff", "width": "420px" if wide else "246px",
+        "verticalAlign": "top",
+        "display": "inline-block", "margin": "0 8px 8px 0"})
+
+
+def _twin_chip(ro: dict) -> Any:
+    lab = {"answer_a": "candidate A", "answer_b": "candidate B",
+           "equally_good": "equal", "unclear": "unclear"}
+    t, im = ro.get("text") or {}, ro.get("image")
+    if not im:
+        return html.Span("image twin did not run", style={
+            "fontSize": "9.5px", "color": "#cbd5e1", "fontStyle": "italic"})
+    agree = ro.get("twins_agree")
+    return html.Span(
+        "✓ TWINS AGREE" if agree else
+        f"⚠ TWINS DISAGREE (text: {lab.get(t.get('verdict'), '?')} · "
+        f"image: {lab.get(im.get('verdict'), '?')})",
+        style={"fontSize": "9.5px", "fontWeight": "800",
+               "color": "#16a34a" if agree else "#b45309"})
+
+
+def _runoff_bench_card(ro: dict, which: str) -> Any:
+    lab = {"answer_a": "candidate A", "answer_b": "candidate B",
+           "equally_good": "both equally good", "unclear": "no clear verdict"}
+    t, im = ro.get("text") or {}, ro.get("image")
+
+    def _v(name, v):
+        return html.Div([html.Span(name + ": ", style={"color": "#64748b"}),
+                         html.B(lab.get(v.get("verdict"), "?")),
+                         html.Span(f" ({v.get('votes', 0)}/{v.get('n', 0)})",
+                                   style={"color": "#94a3b8"})],
+                        style={"fontSize": "10.5px"})
+    rows = [_v("text-only", t)] + ([_v("image-aware", im)] if im else [])
+    facts = ro.get("code_facts") or {}
+    inv = sorted({x for k in ("invented_ids_a", "invented_ids_b")
+                  for x in (facts.get(k) or [])})
+    rows.append(html.Details([
+        html.Summary("the two candidates", style={"fontSize": "9.5px",
+                                                  "color": "#64748b",
+                                                  "cursor": "pointer"}),
+        html.Pre(f"A:\n{ro.get('candidate_a', '')}\n\nB:\n"
+                 f"{ro.get('candidate_b', '')}",
+                 style={"fontSize": "9px", "whiteSpace": "pre-wrap",
+                        "color": "#475569", "margin": "2px 0"})]))
+    if inv:
+        rows.append(html.Div(f"code note: invented ids — {', '.join(inv)}",
+                             style={"fontSize": "9.5px", "color": "#b45309"}))
+    return _bench_card(
+        f"RUNOFF · {which}",
+        "of the two leading probe candidates, which does the record support?",
+        rows, _twin_chip(ro))
+
+
+def _judges_bench(s4: dict, d: dict) -> list:
+    """Section 5 — every subjective verdict of the run, one card per judge.
+
+    The bench OWNS the verdicts; the panels that were judged keep one-line
+    pointer chips. One verdict, one home (the F37 no-double-print rule,
+    applied to judges)."""
+    cards: list = []
+    cj = s4.get("card_judge") or {}
+    for v in (cj.get("verdicts") or []):
+        judged_rows = _card_verdict_rows([], "", v)
+        if judged_rows:
+            cards.append(_bench_card(
+                f"CARD JUDGE · rec {v.get('rank')}",
+                "does each explanation actually explain the action?",
+                judged_rows, None,
+                "text-only (twin arrives with the A-vs-B judge build)",
+                wide=True))
+            continue
+    gj = s4.get("graph_judge") or {}
+    if gj:
+        # F43's decisions travel with the verdict: the original renderer
+        # names both victim sets, keeps the judge's words diagnosis-free,
+        # and marks unclear verdicts apart. The bench reuses it verbatim.
+        rows = _graph_judge_rows(gj)
+        if rows:
+            cards.append(_bench_card(
+                "GRAPH JUDGE",
+                "the two questions the A-vs-B arithmetic cannot answer",
+                rows, None,
+                "text-only (twin arrives with the A-vs-B judge build)",
+                wide=True))
+    ro = s4.get("runoff_judge") or {}
+    if ro.get("recommendations"):
+        cards.append(_runoff_bench_card(ro["recommendations"],
+                                        "RECOMMENDATIONS"))
+    if ro.get("graph_b"):
+        cards.append(_runoff_bench_card(ro["graph_b"], "GRAPH B"))
+    if not cards:
+        return [html.Div("no judge ran on this run",
+                         className="ticket-empty")]
+    # bench header: twins + judge time, when the live event stream carried it
+    twins = [x.get("twins_agree") for x in ro.values()
+             if isinstance(x, dict) and x.get("twins_agree") is not None]
+    head_bits = []
+    if twins:
+        head_bits.append(f"twins: {sum(1 for t in twins if t)} agree / "
+                         f"{sum(1 for t in twins if not t)} disagree")
+    jt = (d.get("s4_judge_seconds") or 0)
+    if jt:
+        head_bits.append(f"judge time {jt / 60:.0f} min")
+    head = html.Div(
+        ("  ·  ".join(head_bits) + "  ·  " if head_bits else "")
+        + "every verdict on this bench is advisory — none moves a score",
+        style={"fontSize": "10.5px", "color": "#64748b",
+               "margin": "0 0 6px 2px"})
+    return [head, html.Div(cards)]
+
+
+_S4_SECTIONS = (
+    ("verdict", "1 · THE VERDICT", "read this first", True),
+    ("recs", "2 · THE RECOMMENDATIONS", "what the model said", True),
+    ("picks", None, None, None),           # folded into section 2
+    ("stability", "3 · STABILITY", "does it say the same thing twice?", False),
+    ("graphs", "4 · THE CAUSAL GRAPHS", "the claim being tested", False),
+    ("bench", "5 · THE JUDGES' BENCH",
+     "all subjective, all advisory, one card each", True),
+)
+
+
+def _assemble_stage4_sections(out: list, s4: dict, d: dict) -> list:
+    """Partition the built panels by the «sec:name» markers and emit five
+    numbered, collapsible sections (Sunny, 2026-08-08: 'stage 4 is getting
+    crowded'). The build ORDER above is unchanged — only the display order
+    is decided here, so the marker scheme adds no new render logic."""
+    buckets: dict[str, list] = {}
+    cur = "verdict"
+    for item in out:
+        if isinstance(item, str) and item.startswith("«sec:"):
+            cur = item[5:-1]
+            continue
+        buckets.setdefault(cur, []).append(item)
+    # picks fold into the recommendations section, after the cards
+    recs = buckets.get("recs", []) + buckets.get("picks", [])
+    body = {"verdict": buckets.get("verdict", []), "recs": recs,
+            "stability": buckets.get("stability", []),
+            "graphs": buckets.get("graphs", []),
+            "bench": _judges_bench(s4, d)}
+    sections: list = []
+    for key, title, sub, open_ in _S4_SECTIONS:
+        if title is None or not body.get(key):
+            continue
+        sections.append(html.Details([
+            html.Summary([
+                html.Span(title, style={"fontSize": "12px",
+                                        "fontWeight": "800",
+                                        "letterSpacing": ".04em"}),
+                html.Span("  — " + sub, style={"fontSize": "10.5px",
+                                               "color": "#94a3b8"}),
+            ], style={"cursor": "pointer", "padding": "6px 8px",
+                      "background": "#f1f5f9", "borderRadius": "6px"}),
+            html.Div(body[key], style={"padding": "6px 0 2px 4px"}),
+        ], open=open_, style={"marginBottom": "8px"}))
+    return sections
+
+
 def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[Any]:
     """STAGE 4 body: the ON-THE-IMAGE overlay, the trust headline, the three-way
     intervention picks, measured uncertainty, the checks, the model's
@@ -2468,6 +2680,7 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
     # (The recommendation + uncertainty labels are pinned ON the main scene
     # image — the big canvas — not here; see _stage4_pins in scene_component.)
 
+    out.append("«sec:verdict»")
     # ── TRUST · the headline verdict: can we trust the VLM's advice so far? ──
     trust = s4.get("trust") or {}
     if trust and trust.get("score") is not None:
@@ -2638,6 +2851,7 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                                                   "fontSize": "11px",
                                                   "marginRight": "4px"}), el],
                         style={"padding": "2px 0"})
+    out.append("«sec:picks»")
     out.append(html.Div([
         html.Span("SUPPRESSION TARGET (FOR THE CAUSAL TEST)",
                   className="unc-tag"),
@@ -2656,6 +2870,7 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
     ], className="unc-panel", style={"borderColor": "#a78bfa",
                                      "background": "#faf5ff"}))
 
+    out.append("«sec:stability»")
     # ── measured uncertainty (Phase 1b): how stable is the advice on re-ask? ──
     unc = s4.get("uncertainty") or {}
     if unc and unc.get("n_probes"):
@@ -2718,8 +2933,14 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                        "fontWeight": "600", "marginTop": "3px"}))
         # (The dense driver narrative is intentionally NOT dumped here — the
         # structured rows above already say what's unstable and by how much.)
-        urows += _runoff_rows((s4.get("runoff_judge") or {})
-                              .get("recommendations") or {})
+        _ro = (s4.get("runoff_judge") or {}).get("recommendations") or {}
+        if _ro:
+            _t = (_ro.get("text") or {}).get("verdict")
+            urows.append(_bench_pointer(
+                f"runoff: {_RO_LAB.get(_t, '?')}"
+                + ("" if _ro.get("twins_agree") is None else
+                   " · twins agree" if _ro.get("twins_agree")
+                   else " · twins DISAGREE")))
         out.append(html.Div(urows, className="unc-panel",
                             style={"borderColor": "#c7d2fe",
                                    "background": "#eef2ff"}))
@@ -2735,6 +2956,7 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
     # Each score now rides in the header of the section it scores, so no
     # finding and no number appears twice on one screen.
 
+    out.append("«sec:recs»")
     # ── recommendations (the model's output, under test) ──
     #
     # F24: each card carries its OWN verdict in a footer. Before this, the
@@ -2785,7 +3007,9 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
              if _rec_uncertainty_row(q.get("threat", ""), unc, chipper) else [])
           + _card_verdict_rows(by_rank.get(str(r.get("rank")), []),
                                mode_of.get(str(r.get("rank")), ""),
-                               judged.get(str(r.get("rank")))),
+                               None)
+          + ([_bench_pointer(f"card judge ruled on rec {r.get('rank')}")]
+             if judged.get(str(r.get("rank"))) else []),
            className="ticket", style={"margin": "6px 0"}))
 
     out.extend(_across_recommendations(s4))
@@ -2806,6 +3030,7 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                             style={"borderColor": "#fde68a",
                                    "background": "#fffbeb"}))
 
+    out.append("«sec:graphs»")
     # ── THE GRAPHS (F36) ────────────────────────────────────────────────
     #
     # Same shape as the recommendation cards: a finding renders WHERE the thing
@@ -2953,6 +3178,7 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                                           "color": "#16a34a"}))
         out.append(html.Div(rows_i, className="unc-panel"))
 
+    out.append("«sec:stability»")
     # ── Graph B UNCERTAINTY (F42) ──────────────────────────────────────
     #
     # Does the model reproduce its own causal graph when asked again?
@@ -3053,8 +3279,14 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
         _line("re-asked at raised temperature. This is whether the model's own "
               "BELIEF is stable — the yardstick A is measured against.",
               "#cbd5e1", size="10px")
-        rows_b += _runoff_rows((s4.get("runoff_judge") or {})
-                               .get("graph_b") or {})
+        _rog = (s4.get("runoff_judge") or {}).get("graph_b") or {}
+        if _rog:
+            _t = (_rog.get("text") or {}).get("verdict")
+            rows_b.append(_bench_pointer(
+                f"runoff: {_RO_LAB.get(_t, '?')}"
+                + ("" if _rog.get("twins_agree") is None else
+                   " · twins agree" if _rog.get("twins_agree")
+                   else " · twins DISAGREE")))
         out.append(html.Div(rows_b, className="unc-panel"))
 
     # ── ALIGNMENT: does the advice match the model's own beliefs? ──
@@ -3067,6 +3299,7 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
     # we only compare two things the model already said. This is a prerequisite
     # BELOW the ladder — and, because it compares the model against itself, it
     # needs no ground truth and can run at runtime.
+    out.append("«sec:graphs»")
     al = s4.get("alignment") or {}
     _gate = ((s4.get("trust") or {}).get("graph_b_gate") or {})
     # F44: the numbers are ALWAYS shown. "NOT COMPUTED" was untrue — the
@@ -3132,7 +3365,8 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                      style={"fontSize": "11.5px"}),
         ] + _ab_decomposition_rows(al.get("decomposition") or {}) + \
             _effect_toggle_rows(al) + \
-            _graph_judge_rows(s4.get("graph_judge") or {}) + [
+            ([_bench_pointer("graph judge spoke on this comparison")]
+             if s4.get("graph_judge") else []) + [
             # F43: `overall agreement` removed — a third number derived from
             # a_fidelity and b_coverage, printed directly beneath both.
         ]
@@ -3179,7 +3413,7 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
         "section it scores.",
         style={"fontSize": "10px", "color": "#cbd5e1",
                "fontStyle": "italic", "marginTop": "3px"}))
-    return out
+    return _assemble_stage4_sections(out, s4, d)
 
 
 def assess_component(d: dict[str, Any], unc_view: str = "both",

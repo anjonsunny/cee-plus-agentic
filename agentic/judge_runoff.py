@@ -303,10 +303,13 @@ def _probe_twin(prompt: str, judge_fn: Any, n_probes: int) -> dict[str, Any]:
 
 def runoff(application: str, prompt: str, cand_a: str, cand_b: str,
            code_facts: dict, *, judge_fn: Any, judge_image_fn: Any = None,
-           n_probes: int = 5) -> dict[str, Any]:
+           n_probes: int | None = None) -> dict[str, Any]:
     """One runoff: text twin always, image twin when transport for it exists.
     `twins_agree` is None when the image twin did not run — unknown is not
     agreement."""
+    if n_probes is None:
+        from agentic import models as _models
+        n_probes = _models.JUDGE_VOTES
     text = _probe_twin(prompt, judge_fn, n_probes)
     image = None
     if judge_image_fn is not None:
@@ -325,7 +328,7 @@ def runoff(application: str, prompt: str, cand_a: str, cand_b: str,
 
 def runoff_recommendations(probe_recs: list, record: Any, assessment: Any, *,
                            judge_fn: Any, judge_image_fn: Any = None,
-                           n_probes: int = 5) -> dict[str, Any]:
+                           n_probes: int | None = None) -> dict[str, Any]:
     """The runoff over the recommendation probes (full prose — F49 data)."""
     pair = pick_pair(probe_recs, _rec_key)
     if pair is None:
@@ -351,7 +354,7 @@ def runoff_recommendations(probe_recs: list, record: Any, assessment: Any, *,
 
 def runoff_graph_b(probe_graphs: list, record: Any, assessment: Any, *,
                    judge_fn: Any, judge_image_fn: Any = None,
-                   n_probes: int = 5) -> dict[str, Any]:
+                   n_probes: int | None = None) -> dict[str, Any]:
     """The runoff over the Graph B probes (stored whole since day one)."""
     pair = pick_pair(probe_graphs, _graph_key)
     if pair is None:

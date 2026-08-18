@@ -2329,3 +2329,64 @@ def test_no_score_is_presented_as_a_pass_fraction():
                                         "result": _s4_scores()}])))
     for bad in ("of 15 checks", "checks passed", "out of 15", "/15"):
         assert bad not in out
+
+
+# ── the sectioned Stage 4 layout + the judges' bench (2026-08-08) ───────
+
+def _s4_sectioned():
+    ro = {"application": "recommendations", "advisory": True,
+          "prompt_version": "runoff-v1", "n_probes": 3,
+          "candidate_a": "A-text", "candidate_b": "B-text",
+          "text": {"verdict": "answer_a", "votes": 3, "n": 3,
+                   "counts": {"answer_a": 3}, "tie": False, "reasoning": "r"},
+          "image": {"verdict": "answer_b", "votes": 2, "n": 3,
+                    "counts": {"answer_b": 2, "answer_a": 1}, "tie": False,
+                    "reasoning": "r2"},
+          "twins_agree": False,
+          "code_facts": {"invented_ids_a": [], "invented_ids_b": ["ghost_1"]},
+          "verified_by_intervention": None}
+    return {"recommendations": [], "trust": {"score": 0.6, "band": "moderate",
+                                             "contributors": []},
+            "uncertainty": {"n_probes": 5, "score": 0.3, "granular": {},
+                            "candidates": []},
+            "runoff_judge": {"recommendations": ro}}
+
+
+def test_stage4_renders_five_numbered_sections():
+    """Sunny: "stage 4 is getting crowded. We need to divide it into
+    subsections." Five collapsible sections, evidence-ordered."""
+    out = str(stage4_component(derive([{"type": "stage4_result",
+                                        "result": _s4_sectioned()}])))
+    for head in ("1 · THE VERDICT", "2 · THE RECOMMENDATIONS",
+                 "3 · STABILITY", "5 · THE JUDGES' BENCH"):
+        assert head in out, head
+
+
+def test_a_judge_verdict_lives_on_the_bench_and_only_there():
+    """Sunny: "I had a hard time finding runoff judges. It's almost they are
+    hidden. Judges should be visible and in separate cards." One verdict, one
+    home: the bench card carries the detail; the judged panel keeps a pointer
+    chip. Nothing is printed twice (F37, applied to judges)."""
+    out = str(stage4_component(derive([{"type": "stage4_result",
+                                        "result": _s4_sectioned()}])))
+    assert "⚖ RUNOFF · RECOMMENDATIONS" in out
+    assert "advises — never enters a score" in out
+    assert "→ see THE JUDGES' BENCH" in out          # the pointer chip
+    assert out.count("the two candidates") == 1       # detail on bench only
+
+
+def test_twin_disagreement_is_named_not_just_flagged():
+    """The chip names both verdicts so a reader sees the split itself."""
+    out = str(stage4_component(derive([{"type": "stage4_result",
+                                        "result": _s4_sectioned()}])))
+    assert "TWINS DISAGREE" in out
+    assert "text: candidate A" in out and "image: candidate B" in out
+
+
+def test_judge_votes_default_is_three():
+    """5 -> 3 (Sunny): the first full run spent 55 of 59 minutes judging.
+    Env-overridable; the discrimination sets pass explicit counts."""
+    from agentic import models
+    from agentic.judge_card import DEFAULT_JUDGE_PROBES
+    assert models.JUDGE_VOTES == 3
+    assert DEFAULT_JUDGE_PROBES == 3
