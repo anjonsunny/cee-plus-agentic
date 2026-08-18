@@ -68,7 +68,7 @@ from agentic.judge_card import (JUDGE_PROBE_TEMPERATURE, _ollama_judge,
 # Stamped into every emitted verdict. Bump on ANY prompt edit: pairs judged by
 # different prompt versions must be separable forever (JUDGES.md §9.8 — data
 # from a later-fixed judge has to be findable to drop).
-PROMPT_VERSION = "runoff-v1"
+PROMPT_VERSION = "runoff-v2"   # v2: F51 — "invented" defined, reasons do not act
 
 ANSWER_A, ANSWER_B, EQUAL = "answer_a", "answer_b", "equally_good"
 _ALLOWED = (ANSWER_A, ANSWER_B, EQUAL)
@@ -101,12 +101,15 @@ ANSWER B:
 {candidate_b}
 
 An answer COVERS this scene when all three hold:
-  1. every declared danger is acted on by at least one of its actions;
+  1. every declared danger is acted on by at least one of its ACTIONS. A
+     reason that merely mentions a danger does not act on it;
   2. every entity declared at risk is protected by at least one of its
      actions — acting on a danger and protecting someone at risk are both
      legitimate ways to cover something;
-  3. every entity id the answer mentions appears in the scene's entity list
-     above.
+  3. every entity the answer names — in its actions, its reasons, or its
+     causal claims — appears in the scene's entity list above. Anything
+     named that is not in the list counts as INVENTED, whether or not it
+     looks like an id. Naming an invented entity is a failure.
 
 Which answer covers this scene with fewer failures? Judge only against the
 scene and the declarations — never against what you yourself would
@@ -132,7 +135,9 @@ ANSWER B:
 {candidate_b}
 
 An answer is SUPPORTED by this scene when all three hold:
-  1. every entity id it names appears in the scene's entity list above;
+  1. every entity it names appears in the scene's entity list above —
+     anything named that is not in the list counts as INVENTED, whether or
+     not it looks like an id, and naming it is a failure;
   2. every arrow runs FROM an entity whose state makes it dangerous;
   3. every entity whose state makes it dangerous has at least one outgoing
      arrow.
@@ -291,11 +296,17 @@ def _probe_twin(prompt: str, judge_fn: Any, n_probes: int) -> dict[str, Any]:
         texts.append(str(answer))
         readings.append(read_verdict(answer, _ALLOWED))
     out = _vote(readings)
-    # capture §9.3: the judge's REASONING, not just its verdict. One exemplar
-    # per twin — the answer that voted with the majority, verbatim.
+    # capture §9.3: the judge's REASONING, not just its verdict — and ALL of
+    # it, one text per vote. F51 was caught by READING the reasoning: the
+    # judge's rule-3 loophole ("'trees' is not an entity ID") was visible
+    # nowhere else. A majority exemplar alone cannot show whether a reading
+    # like that was unanimous or a 2-1 lean, and the extra texts cost
+    # nothing — they were already generated.
     keep = next((t for t, r in zip(texts, readings)
                  if r == out["verdict"]), texts[0] if texts else "")
     out["reasoning"] = keep[:4000]
+    out["all_reasoning"] = [{"verdict": r, "text": t[:4000]}
+                            for t, r in zip(texts, readings)]
     if errors:
         out["errors"] = errors[:3]
     return out

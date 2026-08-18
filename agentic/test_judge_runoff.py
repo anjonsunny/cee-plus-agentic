@@ -176,3 +176,39 @@ def test_runoff_off_without_a_judge():
     from agentic.recommend import run_stage4
     r = run_stage4(_record(), _asm(), "", query_fn=_script())
     assert r.runoff_judge == {}
+
+
+# ── F51: the loophole, closed and pinned ────────────────────────────────
+
+def test_invented_is_defined_in_both_prompts():
+    """F51, live on A_fire run one: rule 3 said "every entity ID" and the
+    judge argued — correctly, by the letter — that 'trees' is not an id, so
+    naming it broke no rule. It then preferred the candidate code had counted
+    two invented entities against. Code and prompt defined "invented"
+    differently; now the prompt defines it the way the code counts it."""
+    import re
+
+    def flat(t):
+        return re.sub(r"\s+", " ", t)
+    for tpl in (RECS_RUNOFF_PROMPT, GRAPH_RUNOFF_PROMPT):
+        assert "INVENTED" in tpl
+        assert "whether or not it looks like an id" in flat(tpl)
+    assert ("reason that merely mentions a danger does not act on it"
+            in flat(RECS_RUNOFF_PROMPT))
+
+
+def test_prompt_version_bumped_so_v1_pairs_are_separable():
+    from agentic.judge_runoff import PROMPT_VERSION
+    assert PROMPT_VERSION == "runoff-v2"
+
+
+def test_every_votes_reasoning_is_captured():
+    """A majority exemplar cannot show whether a loophole reading was
+    unanimous or a 2-1 lean. All votes ride, verdict-tagged."""
+    seq = iter(["blah A.\nVERDICT: [answer_a]", "blah B.\nVERDICT: [answer_b]",
+                "blah A2.\nVERDICT: [answer_a]"])
+    r = runoff("graph_b", "p", "A", "B", {}, judge_fn=lambda p: next(seq),
+               n_probes=3)
+    ar = r["text"]["all_reasoning"]
+    assert [x["verdict"] for x in ar] == ["answer_a", "answer_b", "answer_a"]
+    assert ar[1]["text"].startswith("blah B")

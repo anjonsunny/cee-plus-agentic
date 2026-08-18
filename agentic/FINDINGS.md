@@ -6,8 +6,8 @@
 |---|---|---|---|
 | A | LANGUAGE GAP — schema can't hear the model's honest English | F8, F11, F12, F10(paved), F45 | 5 |
 | B | INDUCED ERROR — model was right until our machinery pressured it | F1, F2, F5, F10, F25, F27, F50 | 7 |
-| C | OUR RULES COLLIDE — our own rules fighting each other | F3, F9, F24 | 3 |
-| D | JUDGE NOISE / BIAS — ill-posed questions, severity-minimizing | F4(open), F5, F11, F26, F28 | 5 |
+| C | OUR RULES COLLIDE — our own rules fighting each other | F3, F9, F24, F51 | 4 |
+| D | JUDGE NOISE / BIAS — ill-posed questions, severity-minimizing | F4(open), F5, F11, F26, F28, F51 | 6 |
 | E | GENUINE MODEL ERROR — unstable second looks; flat self-confidence; reflection jitter | F7(parts), jitter | ~2 |
 | F | METRIC DEFECT — scoring that hides/distorts the real signal | F15, F24, F25, F29, F45, F46, F47, F48, F49 | 9 |
 
@@ -1400,5 +1400,72 @@ purely a time cost, and worth watching on the six-scene re-run.
 
 **Status.** 681 tests pass (hermetic — they inject scripted answers, so no
 test touches this path). The real verification is Sunny's first live scene.
+
+**Flowchart:** no change.
+
+---
+
+## F51 — the judge found a loophole, not a mistake: our prompt and our code
+## defined "invented" differently
+
+**Categories: D (judge) + C (our rules collide) — but read on: the judge was
+RIGHT by the letter.** First live calibration run of the runoff judge
+(A_fire, ui_2935a643, gemma4:26b, prompt runoff-v1), 2026-08-08.
+
+**What happened.** The recommendation runoff's two candidates: A named only
+real entities but never acted on `smoke_1`; B covered smoke in its reasons
+but named `nearby_structures` and `trees` — entities the scene does not
+have. Code counted 2 invented ids against B and 0 against A. The official
+text twin picked B anyway. The image twin picked A. First twin disagreement
+on record.
+
+**The judge's reasoning — captured, which is the whole point — says exactly
+why:**
+
+> "The mentions of 'trees' and 'nearby_structures' are not entity IDs, so
+> they do not violate Rule 3."
+
+Rule 3 read: *every entity ID the answer mentions appears in the scene's
+entity list.* `trees` carries no `_1`; by the letter, it is not an id, so it
+cannot violate an id rule. The judge applied the rule as written. The code
+counts anything in a quad's `affected_objects` slot as an id claim. **Prompt
+and code defined "invented" differently, and the judge fell through the
+gap** — a lawyer's reading, not a blunder. (Its rule-1 credit for B —
+counting a danger mentioned in a REASON as acted on — was a genuine stretch;
+half loophole, half lean.)
+
+**Why this was caught in one run instead of five.** F26/F28's card judge was
+declared broken through four rewrites before the missing definition was
+found, because only its verdicts were read. This time the REASONING was
+captured next to the verdict and the code facts — Sunny: "we should
+definitely investigate the reasoning from now on." The disagreement between
+judge and code pointed at the pair; the reasoning showed which side's
+definition was defective; it was ours.
+
+**Fixes (prompt version runoff-v1 → runoff-v2; v1 pairs remain separable
+forever):**
+
+1. *Invented, defined:* "every entity the answer names — in its actions, its
+   reasons, or its causal claims — appears in the scene's entity list.
+   Anything named that is not in the list counts as INVENTED, whether or not
+   it looks like an id. Naming an invented entity is a failure." Both
+   prompts.
+2. *Acting, defined:* "every declared danger is acted on by at least one of
+   its ACTIONS. A reason that merely mentions a danger does not act on it."
+3. *All reasoning captured:* every vote's text now rides in the record,
+   verdict-tagged, not just a majority exemplar — a 2-1 loophole lean and a
+   unanimous one are different facts about the judge, and the texts were
+   already generated.
+
+**Also on the record from the same run:** the Graph B runoff behaved
+exactly right — two clean candidates differing mostly in effect wording,
+`equally_good` from both twins, no fake preference manufactured. And
+`action_is_not_an_action` has a live escapee: candidate A's rec 1 action is
+the bare noun "Firefighters", which instructs nobody and passes the
+deliberately-narrow bare-id detector. Known F48 half-gap, now with a
+specimen.
+
+**Status.** 700 tests. The v2 prompt has NOT yet been through a live run;
+the next scene is its first test.
 
 **Flowchart:** no change.
