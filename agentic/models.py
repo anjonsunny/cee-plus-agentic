@@ -31,7 +31,17 @@ HISTORY
   through 2026-08-08   subject qwen2.5vl:7b · judge llama3.1:8b (text-only,
                        no vision twin existed). Every run in
                        exports/agentic_runs/ before this date is that pair.
-  from 2026-08-08      subject qwen3-vl:8b · judge twins gemma4:26b.
+  2026-08-08, hours   subject qwen3-vl:8b was tried and ROLLED BACK the
+                       same day (Sunny). It is a thinking model: every call
+                       carries minutes of reasoning, the first A_fire run
+                       spent ~40 min on assessment probes alone, then
+                       stalled. Right model to measure LATER, wrong model to
+                       calibrate the instrument on — iteration speed wins
+                       while the judges and reflection are being built. The
+                       F50 fix (no response_format) stays: it is the
+                       model-agnostic posture, and qwen2.5vl's prompts
+                       already demand JSON.
+  from 2026-08-08      subject qwen2.5vl:7b (back) · judge twins gemma4:26b.
                        Decided with the registry search of 2026-08-08:
                        no Qwen3.5-VL exists yet, Mistral's 2026 vision
                        models (~120B) do not fit the 48 GB machine, and
@@ -44,7 +54,7 @@ from __future__ import annotations
 import os
 
 SUBJECT_MODEL = os.getenv("SUBJECT_MODEL",
-                          os.getenv("QWEN_MODEL_NAME", "qwen3-vl:8b"))
+                          os.getenv("QWEN_MODEL_NAME", "qwen2.5vl:7b"))
 JUDGE_MODEL = os.getenv("JUDGE_MODEL", "gemma4:26b")
 JUDGE_VISION_MODEL = os.getenv("JUDGE_VISION_MODEL", JUDGE_MODEL)
 DIALOGUE_MODEL = os.getenv("DIALOGUE_MODEL", "qwen2.5:7b")
