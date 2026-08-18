@@ -9,7 +9,7 @@
 | C | OUR RULES COLLIDE — our own rules fighting each other | F3, F9, F24, F51, F52 | 5 |
 | D | JUDGE NOISE / BIAS — ill-posed questions, severity-minimizing | F4(open), F5, F11, F26, F28, F51 | 6 |
 | E | GENUINE MODEL ERROR — unstable second looks; flat self-confidence; reflection jitter | F7(parts), jitter | ~2 |
-| F | METRIC DEFECT — scoring that hides/distorts the real signal | F15, F24, F25, F29, F45, F46, F47, F48, F49 | 9 |
+| F | METRIC DEFECT — scoring that hides/distorts the real signal | F15, F24, F25, F29, F45, F46, F47, F48, F49, F53 | 10 |
 
 **Standing observation (through F12, 4 of 6 scenes):** only ~2 of ~15
 defects were the subject model failing unprompted. The dominant modes
@@ -1532,5 +1532,61 @@ in good standing — its quad names `house_1 · burning`, so suppressing the
 fire should make the alert vanish, and the intervention gate can test that.
 
 **Status.** 702 tests. v3 meets its first live run on the next scene.
+
+**Flowchart:** no change.
+
+---
+
+## F53 — one defect, six severity points: the pile-on that moved a band
+
+**Category: F (metric defect).** C_tanker live (ui_065000dd), 2026-08-09.
+Sunny: "I feel like the trust score was heavily penalized."
+
+**What happened.** Rec 3 had ONE root defect: the model wanted to give
+victim-directed advice ("driver, get to safety"), the quad demands a threat,
+and instead of naming `fire_1` or `spill_1` it self-looped
+`person_1 --increases_risk_to--> person_1`. That single mistake was charged:
+
+```
+conformance          reason blames person_1, an at-risk entity
+conformance          the action names no object_id
+conformance          the reason uses no effect from the list
+internal alignment   sev3  person_1 harms itself            (rec level)
+internal alignment   sev3  at-risk person_1 used as a threat (SET level)
+internal alignment   sev1  reason and quad name different entities
+```
+
+Two severity-3 charges inside ONE report for the same self-loop — filed once
+per-card and once per-set. Internal alignment fell to 0.52, and that double
+charge alone was the difference between bands: recharging once moves the run
+0.483 low -> 0.503 moderate.
+
+**Fix.** When the same entity already carries a rec-level role mix-up, the
+set-level "used as a threat" line is recorded at severity 0 — visible, never
+charged. One failure, one charge (F48's rule, applied inside a report). The
+dedupe is narrow: an at-risk entity used as a threat against a DIFFERENT
+victim has no rec-level twin, and its set-level sev3 stands — pinned by test.
+
+**The calibration principle this run settles (Sunny's question: "how much
+should we adjust penalties that truly find significant errors while bogged
+down with trivial nonconsequential ones?").** Never by lowering penalties
+globally — by making each charge UNIQUE, PRICED, and DECISION-RELEVANT:
+
+1. unique — one root defect charges once per signal (this fix, F48's rule)
+2. priced — by consequence to victims, not by count (F48's tables)
+3. decision-relevant — a finding that changes no reader's next move is
+   recorded at severity 0 or removed (F39's noise triage, the amnesty rows)
+
+The run keeps every penalty it EARNED: spill_1 unaddressed (-0.12), real
+wobble (5/5 distinct candidates), A-vs-B withheld at the gate. "Somewhat
+low" was right; the pile-on was ours.
+
+**Rec 3's deeper story, third sighting:** F3 schema pressure. Victim-directed
+advice has no legal quad shape unless a hazard is named, so the model fills
+the threat slot with whatever is at hand — here, the victim itself. The
+parked hypothesis-entity class ([[invisible-victims-and-threats]]) is the
+systemic cure; until then the charge (once) is correct.
+
+**Status.** 704 tests. Recompute verified against the live run.
 
 **Flowchart:** no change.

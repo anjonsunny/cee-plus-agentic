@@ -490,10 +490,26 @@ def internal_alignment(record: Any, assessment: Any,
         fail("coverage gap", 2,
              f"at-risk {aid} is not addressed by any recommendation",
              signal="conformance", level="set")
+    # F53 (Sunny, C_tanker ui_065000dd): ONE defect, one charge. Rec 3's
+    # self-loop (person_1 -> person_1) was charged sev3 at the rec level
+    # ("person_1 harms itself") AND sev3 here at the set level ("at-risk
+    # person_1 used as a threat") — 6 severity points for one mistake, inside
+    # one report, and it alone moved the run's band from moderate to low.
+    # When the same entity already carries a rec-level role mix-up, the
+    # set-level line is recorded at severity 0 — visible, never charged —
+    # the same one-failure-one-charge rule F48 applies between reports.
+    _mixed_up_at_rec_level = {
+        str(t) for f in fails if f.get("category") == "role mix-up"
+        for t in ([f["detail"].split(":", 1)[1].split(" harms", 1)[0].strip()]
+                  if " harms itself" in f.get("detail", "") else [])}
     for aid in sorted(at_risk_ids & threats_used):
         # F20: the victim named as the hazard — severity 3, same ladder rung
         # as the self-loop above and for the same reason.
-        fail("role mix-up", 3, f"at-risk {aid} used as a threat",
+        dup = aid in _mixed_up_at_rec_level
+        fail("role mix-up", 0 if dup else 3,
+             f"at-risk {aid} used as a threat"
+             + (" (same defect as the rec-level charge — recorded, "
+                "not charged again)" if dup else ""),
              signal="conformance", level="set")
 
     by_cat: dict[str, dict[str, Any]] = {}

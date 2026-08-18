@@ -1705,3 +1705,43 @@ def test_b_pairs_is_the_other_direction_of_pairs():
     dc = ab_decomposition(A, B)
     assert dc["pairs"] == 1.0            # A's one arrow is in B
     assert dc["b_pairs"] == 0.5          # only half of B's arrows are in A
+
+
+def test_one_role_mixup_is_charged_once_not_twice():
+    """F53, C_tanker live: rec 3 self-looped person_1 -> person_1 and was
+    charged sev3 at the rec level AND sev3 at the set level ("at-risk person_1
+    used as a threat") — six severity points for one mistake, which alone
+    moved the run's band from moderate to low. One defect, one charge: the
+    set-level line stays visible at severity 0 when the same entity already
+    carries the rec-level charge."""
+    rec = _rec_pair()[0]
+    asm = _rec_pair()[1]
+    r = {"rank": 1, "action": "advise person_1 to stay safe",
+         "reason": "person_1 is at risk",
+         "structured_reasoning": {"threat": "person_1", "state": "standing",
+                                  "effect": "increases_risk_to",
+                                  "affected_objects": ["person_1"]}}
+    out = internal_alignment(rec, asm, [r])
+    mix = [f for f in out["failures"] if f["category"] == "role mix-up"]
+    assert len(mix) == 2                              # both RECORDED
+    sev3 = [f for f in mix if f["severity"] == 3]
+    sev0 = [f for f in mix if f["severity"] == 0]
+    assert len(sev3) == 1 and len(sev0) == 1          # charged ONCE
+    assert "not charged again" in sev0[0]["detail"]
+
+
+def test_a_set_level_mixup_with_no_rec_level_twin_still_charges():
+    """The dedupe must not blanket-forgive: an at-risk entity used as a threat
+    against a DIFFERENT victim has no rec-level self-loop charge, and the
+    set-level sev3 is then the only charge — it must stand."""
+    rec = _rec_pair()[0]
+    asm = _rec_pair()[1]
+    r = {"rank": 1, "action": "protect house_1",
+         "reason": "person_1 endangers house_1",
+         "structured_reasoning": {"threat": "person_1", "state": "standing",
+                                  "effect": "may_harm",
+                                  "affected_objects": ["house_1"]}}
+    out = internal_alignment(rec, asm, [r])
+    mix = [f for f in out["failures"] if f["category"] == "role mix-up"
+           and "used as a threat" in f["detail"]]
+    assert len(mix) == 1 and mix[0]["severity"] == 3
