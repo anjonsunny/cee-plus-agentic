@@ -925,5 +925,6 @@ def test_graph_b_opening_is_sunnys_and_threats_are_back():
     assert "Obstruction coupling rule:" not in prompt
     assert "ENTRAPMENT" not in prompt
     assert "Distress state" not in prompt             # dead taxonomy word
+    assert "TOWARD a hazard" not in prompt            # closer removed (Sunny)
     assert "6." not in squashed.split("## Rules")[1].split("Return valid")[0]
     assert "on the SAME entity" not in flat

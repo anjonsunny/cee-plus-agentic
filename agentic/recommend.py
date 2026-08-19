@@ -943,9 +943,7 @@ def _graph_b_prompt(record: Any, assessment: Any) -> str:
         "incoming injury\n  edge) and the obstruction cuts off their escape "
         "or their rescue.\n"
         "- the obstruction itself strands the person inside a hazard's reach "
-        "— e.g.,\n  rising water surrounding a family on a roof.\n\n"
-        "Blocking a person's path TOWARD a hazard blocks nothing that "
-        "matters — no\nedge.\n\n")
+        "— e.g.,\n  rising water surrounding a family on a roof.\n\n")
     _body = _body[:_c_start] + _C + _body[_c_end:]
     # Rule 3 (self-reference) is DELETED, not turned into a ban (Sunny: "just
     # remove it and don't talk about it in the prompt") — a ban still teaches
