@@ -959,6 +959,45 @@ def _graph_b_prompt(record: Any, assessment: Any) -> str:
         "water), draw the edges from that cause to each — not\nbetween "
         "them.\n\n")
     _body = _body[:_mh_start] + _MH + _body[_mh_end:]
+    # Output schema (Sunny, approved 2026-08-19): the at_risk "iff" bug fixed
+    # — by its letter it FORBADE flagging exposed normal-state entities,
+    # contradicting the classifier's step 3 (and giving a rule-follower
+    # permission to leave proximity victims unflagged). Hazardous entities
+    # stay never-at_risk: another hazard's edge pointing at them already says
+    # they are endangered. Inferred-entity plumbing cut (the appended policy
+    # always denies it in this pipeline).
+    _os_start = _body.index("## Output schema")
+    _os_end = _body.index("## Rules")
+    _OS = (
+        "## Output schema\n\n"
+        "Return valid JSON with EXACTLY two keys:\n\n"
+        "- causal_graph: object with:\n"
+        "  - nodes: array of objects, one per detected_object passed in:\n"
+        "    - id: object_id, must match detected_objects verbatim\n"
+        "    - label: singular noun\n"
+        "    - state: state of the entity from the vocabulary above\n"
+        "    - hazardous: true iff state is hazard-bearing (the state alone "
+        "is\n      sufficient; outgoing edges are NOT required). At-risk "
+        "states do NOT\n      set hazardous=true.\n"
+        "    - at_risk: true when the state is on the at-risk list, or when "
+        "proximity\n      to a hazard makes the entity vulnerable. A "
+        "hazardous entity is never\n      at_risk — another hazard's edge "
+        "pointing at it already says it is\n      endangered.\n"
+        "  - edges: array of objects, one per causal claim you would make "
+        "about the\n    scene:\n"
+        "    - source: object_id of the threat (must be a node with "
+        "hazardous=true)\n"
+        "    - target: object_id of the affected entity (any node)\n"
+        "    - effect: one of the 8 effect labels above\n"
+        "    - via_state: hazard-bearing state of source, must equal "
+        "source-node's\n      state\n\n"
+        "- suppression_pick: object naming which (threat, state) you would "
+        "suppress\n  first to maximally reduce harm in this scene:\n"
+        "  - threat: object_id\n"
+        "  - state: hazard-bearing state of that object\n"
+        "  - reason: short prose explaining why this is the most causally\n"
+        "    consequential intervention\n\n")
+    _body = _body[:_os_start] + _OS + _body[_os_end:]
     # Rule 3 (self-reference) is DELETED, not turned into a ban (Sunny: "just
     # remove it and don't talk about it in the prompt") — a ban still teaches
     # the concept in order to forbid it, and mentioning a thing invites it

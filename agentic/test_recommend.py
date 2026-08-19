@@ -891,13 +891,13 @@ def test_graph_b_opening_is_sunnys_and_threats_are_back():
     assert "Fluid / gaseous hazards" not in prompt
     assert "run FROM the fluid, not from an entity it has inundated" in flat
     assert "what has already been released may persist" in flat
+    import re
+    squashed = re.sub(r"\s+", " ", prompt)
     # self-loops: not banned, just NEVER MENTIONED (Sunny: "remove it and
     # don't talk about it" — a ban teaches the concept in order to forbid it,
     # and mentioning a thing invites it, F2). Standalone nodes are allowed.
     assert "self-loop" not in flat
     assert "Self-reference" not in flat
-    import re
-    squashed = re.sub(r"\s+", " ", prompt)
     assert "or no edges at all when nothing in the scene is affected" \
         in squashed
     assert "5. Do NOT produce" in flat          # rules renumbered, none lost
@@ -917,7 +917,7 @@ def test_graph_b_opening_is_sunnys_and_threats_are_back():
     # distance Part B (Sunny): purpose first, one rule per hazard type, and
     # the compound-hazard exception that closes the C hole
     assert "never claimed to injure someone it cannot physically reach" \
-        in re.sub(r"\s+", " ", prompt)
+        in squashed
     assert "ignition radius, not contact distance" in flat
     assert "mid-yard is the boundary" not in prompt   # old threshold prose gone
     # distance Part C (Sunny): obstruction edges only when blocking endangers
@@ -930,5 +930,13 @@ def test_graph_b_opening_is_sunnys_and_threats_are_back():
     assert "Mutual-hazard rule" not in prompt
     assert "never use may_spread_to" in flat
     assert "draw the edges from that cause to each" in flat
+    # schema (Sunny): the at_risk "iff" bug fixed — exposed entities flag
+    # true; hazardous entities never do; inferred plumbing cut
+    assert "at_risk: true iff state is at-risk" not in flat
+    assert ("or when proximity to a hazard makes the entity vulnerable"
+            in squashed)
+    assert "another hazard's edge pointing at it" in squashed
+    assert "presumed_<noun>_in_<existing_id>" not in prompt
+    assert '"inferred"' not in prompt and "- inferred:" not in prompt
     assert "6." not in squashed.split("## Rules")[1].split("Return valid")[0]
     assert "on the SAME entity" not in flat
