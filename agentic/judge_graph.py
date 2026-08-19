@@ -279,6 +279,22 @@ def judge_graphs(graph_a: dict, graph_b: dict, decomposition: dict,
             # in their head what Graph A and Graph B are.
             out["victims"]["sets"] = {"graph_a": va, "graph_b": vb}
 
+    # Q2 RETIRED from live runs (Sunny, 2026-08-09). The D_aerial run that
+    # decided it: 7 shared pairs with differing effect words -> 21 judge calls,
+    # ~25 minutes, and every single verdict came back same_response 3/3. F45
+    # had already removed the effect word from scoring because it measures
+    # vocabulary, not grounding — Q2 was spending minutes per pair judging a
+    # distinction the instrument no longer counts. The forest audit (PANELS.md)
+    # had it at ❌ across pathology/trust/uncertainty/intervention before that.
+    # Kept behind GRAPH_JUDGE_Q2=1 for on-demand use; the code and its test
+    # set stay.
+    import os as _os
+    if _os.getenv("GRAPH_JUDGE_Q2", "0") != "1":
+        if on_event:
+            on_event({"type": "graph_judge_ready", "advisory": True,
+                      "asked_victims": out["victims"] is not None,
+                      "n_mechanisms": 0})
+        return out
     A = {(str(e.get("source")), str(e.get("target"))): str(e.get("effect") or "")
          for e in ((graph_a or {}).get("edges") or [])}
     B = {(str(e.get("source")), str(e.get("target"))): str(e.get("effect") or "")

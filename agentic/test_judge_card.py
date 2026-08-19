@@ -410,17 +410,22 @@ def test_q1_only_runs_when_they_agree_on_the_hazard():
 
 
 def test_q2_runs_once_per_shared_pair_with_a_different_effect():
-    from agentic.judge_graph import judge_graphs
-    a = {"edges": [{"source": "t_1", "effect": "exposes", "target": "s_1"},
-                   {"source": "h_1", "effect": "may_harm", "target": "p_1"}]}
-    b = {"edges": [{"source": "t_1", "effect": "may_spread_to", "target": "s_1"},
-                   {"source": "h_1", "effect": "may_harm", "target": "p_1"}]}
-    out = judge_graphs(a, b, {"hazards": 1.0}, "s",
-                       judge_fn=lambda p: "VERDICT: same_response")
-    assert len(out["mechanisms"]) == 1          # the identical pair is skipped
-    assert out["mechanisms"][0]["source"] == "t_1"
-    assert out["mechanisms"][0]["verdict"] == "same_response"
+    import os
+    os.environ["GRAPH_JUDGE_Q2"] = "1"          # retired live; on-demand here
+    try:
+        from agentic.judge_graph import judge_graphs
+        a = {"edges": [{"source": "t_1", "effect": "exposes", "target": "s_1"},
+                       {"source": "h_1", "effect": "may_harm", "target": "p_1"}]}
+        b = {"edges": [{"source": "t_1", "effect": "may_spread_to", "target": "s_1"},
+                       {"source": "h_1", "effect": "may_harm", "target": "p_1"}]}
+        out = judge_graphs(a, b, {"hazards": 1.0}, "s",
+                           judge_fn=lambda p: "VERDICT: same_response")
+        assert len(out["mechanisms"]) == 1          # the identical pair is skipped
+        assert out["mechanisms"][0]["source"] == "t_1"
+        assert out["mechanisms"][0]["verdict"] == "same_response"
 
+    finally:
+        os.environ.pop("GRAPH_JUDGE_Q2", None)
 
 def test_the_graph_judge_is_off_unless_asked_for():
     """The hermetic spine and the twin equivalence tests must stay
