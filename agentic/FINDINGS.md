@@ -9,7 +9,7 @@
 | C | OUR RULES COLLIDE — our own rules fighting each other | F3, F9, F24, F51, F52 | 5 |
 | D | JUDGE NOISE / BIAS — ill-posed questions, severity-minimizing | F4(open), F5, F11, F26, F28, F51 | 6 |
 | E | GENUINE MODEL ERROR — unstable second looks; flat self-confidence; reflection jitter | F7(parts), jitter | ~2 |
-| F | METRIC DEFECT — scoring that hides/distorts the real signal | F15, F24, F25, F29, F45, F46, F47, F48, F49, F53 | 10 |
+| F | METRIC DEFECT — scoring that hides/distorts the real signal | F15, F24, F25, F29, F45, F46, F47, F48, F49, F53, F54 | 11 |
 
 **Standing observation (through F12, 4 of 6 scenes):** only ~2 of ~15
 defects were the subject model failing unprompted. The dominant modes
@@ -1590,3 +1590,70 @@ systemic cure; until then the charge (once) is correct.
 **Status.** 704 tests. Recompute verified against the live run.
 
 **Flowchart:** no change.
+
+---
+
+## F54 — Graph B was handed the hazards and denied the victims
+
+**Category: F (metric defect — an asymmetry that made half the evidence
+cheap).** Found 2026-08-19, from Sunny reading C_tanker's Graph B ("looks so
+erroneous — the person is not at risk at all?").
+
+**The asymmetry.** Graph B's context, in BOTH arms since the beginning
+(frozen Arm A design, faithfully ported):
+
+```
+detected_objects   passed
+threats            passed    ← Stage 2's hazards, with reasons
+at_risk            never passed
+```
+
+So the model was told WHAT harms but never who Stage 2 declared vulnerable —
+while the prompt simultaneously required it to mark exposed people at_risk
+and target them with at least one edge. On C_tanker, twice in a row, Graph
+B's belief contained hazard-to-infrastructure chains and NO PEOPLE among the
+victims. Part of what we were about to file as the model's pathology was our
+interview: hazards seeded, victims earned.
+
+**Sunny's question that settled the design:** "Shouldn't we also not give
+threats — just objects with states — and let the model decide, with clear
+instructions?" The states already carry what the threat list carried (the
+vocabulary maps state -> hazard-bearing deterministically), so the threat
+list was nearly redundant as INPUT while being expensive as SEEDING: every
+"same hazards 1.00" on the A-vs-B panel was partly the model handing back a
+list we gave it.
+
+**Fix.** B's context is now detected_objects only (id, label, state, bbox),
+with an explicit addendum in the agentic slot (main.py untouched): the
+threats list is deliberately withheld; derive sources and targets from the
+states and the vocabularies. One prompt builder serves the canonical call
+and the probes, so both paths changed together.
+
+**What the comparison now measures:**
+
+```
+before   hazards seeded, victims earned    "same hazards 1.00" = cheap
+after    everything earned                 B is a FULL second witness
+```
+
+Plus a free new signal: Stage 2's threat list vs the sources B chooses
+unprompted — two witnesses on WHAT the dangers are, not just who they
+threaten.
+
+**Boundaries this creates (calibration phase, accepted):** subject-side
+change, F2 rule applies — the six scenes' next runs are the regression
+test; gate statistics and hazards-overlap baselines get a before/after
+mark. Expect B's hazard sets to get MESSIER — that is the measurement
+becoming honest, not breakage. If C's no-people signature PERSISTS with
+victims no longer disadvantaged against seeded hazards, the finding about
+the model hardens.
+
+**Still the model's own, from the same C run:** `person_1 --exposes-->
+road_1` — a standing person as a source of harm, illegal under the prompt's
+own rules, caught by conformance, gate withheld A-vs-B. Correctly handled.
+
+**Status.** 707 tests.
+
+**Flowchart:** no box changes — the arrow INTO the Graph B box carries less
+(entities only); if the chart annotates inputs, "objects+threats" becomes
+"objects only, threats withheld".

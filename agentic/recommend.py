@@ -744,21 +744,33 @@ def _graph_b_prompt(record: Any, assessment: Any) -> str:
     import json
 
     from main import GRAPH_B_INFERRED_DENIED, GRAPH_B_PROMPT
+    # F54 (Sunny, 2026-08-19): the threats list is WITHHELD too. It was seeded
+    # into B's context while the at-risk register was not, which made the
+    # hazard half of every A-vs-B agreement cheap ("same hazards 1.00" was
+    # partly the model handing back a list we gave it) and left the victim
+    # half as the only earned evidence. The states already carry what the
+    # threat list carried — the vocabulary maps state -> hazard-bearing
+    # deterministically — so B now derives sources AND targets itself, and
+    # every side of the comparison is a full second witness. Stage-2's threat
+    # list vs B's chosen sources becomes a new two-witness signal for free.
+    # main.py untouched: the frozen prompt is unchanged; this addendum rides
+    # in the same agentic slot as the inferred policy and direction example.
     context = {
         "detected_objects": [
             {"object_id": o.object_id, "label": o.label,
              "state": o.state, "bbox": o.bbox}
             for o in record.detected_objects],
-        "threats": [
-            {"object_id": t.object_id, "state": _state_of(record, t.object_id),
-             "reason": getattr(t, "reason", "")}
-            for t in assessment.threats],
     }
     return (f"{GRAPH_B_PROMPT}\n\n"
             f"{GRAPH_B_DIRECTION_EXAMPLE}\n\n"
             f"Inferred-entity policy:\n{GRAPH_B_INFERRED_DENIED}\n\n"
+            f"IMPORTANT ADDENDUM — threats deliberately withheld: unlike the\n"
+            f"prior-analysis description above, NO threats list is supplied.\n"
+            f"Decide yourself, from each entity's STATE and the vocabularies\n"
+            f"above, which entities are sources of harm and which are at\n"
+            f"risk. Every rule above still applies.\n\n"
             f"Caption:\n{record.caption or 'N/A'}\n\n"
-            f"Prior analysis (detected_objects + threats only — "
+            f"Prior analysis (detected_objects only — threats and "
             f"recommendations withheld):\n{json.dumps(context, indent=2)}")
 
 

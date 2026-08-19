@@ -830,3 +830,19 @@ def test_probe_events_carry_the_full_prose_not_just_the_skeleton():
         assert recs[0]["reason"], "prose reason lost — the capture bug is back"
         q = recs[0]["structured_reasoning"]
         assert q["threat"] == "building_1" and q["state"] == "collapsed"
+
+
+def test_graph_b_context_withholds_threats_too():
+    """F54 (Sunny): "Shouldn't we also not give threats — just objects with
+    states — and let the model decide?" The threat list was seeded into B's
+    context while the at-risk register was not, making the hazard half of
+    every A-vs-B agreement cheap. Now B derives sources AND targets itself:
+    every side of the comparison is earned, and Stage-2-vs-B on WHAT the
+    dangers are becomes a second-witness signal for free."""
+    from agentic.recommend import _graph_b_prompt
+    prompt = _graph_b_prompt(_record(), _asm())
+    assert "threats and recommendations withheld" in prompt
+    assert "threats deliberately withheld" in prompt
+    assert '"threats":' not in prompt          # no seeded threat block
+    # the entities and their states still ride — that is all B needs
+    assert '"detected_objects"' in prompt and '"state"' in prompt
