@@ -823,6 +823,16 @@ def _graph_b_prompt(record: Any, assessment: Any) -> str:
         "hazardous_in_context. `hazardous_in_context` is the last-resort "
         "fallback when\nno specific state applies.\n\n")
     _body = _body[:_s3_start] + _S3 + _body[_s3_end:]
+    # Section 4 (Sunny, approved 2026-08-19): list only. The behavioral-family
+    # definitions were state-CHOOSING guidance (Stage 1's job, same razor as
+    # the collapse tie-breaker), and the flag sentence duplicated an output
+    # rule the schema states authoritatively.
+    _s4_start = _body.index("At-risk states")
+    _s4_end = _body.index("**Living beings only.**")
+    _S4 = ("At-risk states (entity is a TARGET of harm — Distress kind): "
+           "injured, bleeding,\nfleeing, trapped, cowering, drowning, "
+           "suffocating, unconscious.\n\n")
+    _body = _body[:_s4_start] + _S4 + _body[_s4_end:]
     context = {
         "detected_objects": [
             {"object_id": o.object_id, "label": o.label,

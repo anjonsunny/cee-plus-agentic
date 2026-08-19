@@ -876,3 +876,7 @@ def test_graph_b_opening_is_sunnys_and_threats_are_back():
     assert "settled rubble" not in prompt
     assert "hazardous_in_context. `hazardous_in_context` is the last-resort" \
         in prompt.replace("\n", " ")
+    # section 4 (Sunny): list only — no behavioral families, no flag preview
+    assert "Behavioral families" not in prompt
+    assert "they may be the TARGET of edges but" not in prompt
+    assert "suffocating, unconscious." in prompt
