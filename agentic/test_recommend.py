@@ -174,12 +174,18 @@ def test_build_graph_a_empty_affected_objects_warns_no_edge():
 def test_graph_b_prompt_feeds_the_frozen_ids():
     """Graph B is independent of the RECOMMENDATIONS, not of the entities:
     it must be handed the frozen detected_objects (with ids) + threats, or it
-    invents its own entity names (the 'burning_house' bug)."""
+    invents its own entity names (the 'burning_house' bug).
+
+    F54-amended: independence is enforced by ABSENCE — no recommendation
+    text ever enters the context — not by a sentence announcing the absence
+    (Sunny: "if you don't tell about recommendations, how would the model
+    know about the recommendations?")."""
     from agentic.recommend import _graph_b_prompt
     p = _graph_b_prompt(_record(), _asm())
     assert "building_1" in p and "dust_1" in p           # frozen ids present
     assert "detected_objects" in p and "threats" in p
-    assert "recommendations withheld" in p               # still independent of recs
+    # independence by absence: no recommendation content in the context
+    assert "evacuate" not in p.lower()                    # no advice leaked
 
 
 def test_run_graph_b_parses_graph_and_pick():
@@ -832,17 +838,21 @@ def test_probe_events_carry_the_full_prose_not_just_the_skeleton():
         assert q["threat"] == "building_1" and q["state"] == "collapsed"
 
 
-def test_graph_b_context_withholds_threats_too():
-    """F54 (Sunny): "Shouldn't we also not give threats — just objects with
-    states — and let the model decide?" The threat list was seeded into B's
-    context while the at-risk register was not, making the hazard half of
-    every A-vs-B agreement cheap. Now B derives sources AND targets itself:
-    every side of the comparison is earned, and Stage-2-vs-B on WHAT the
-    dangers are becomes a second-witness signal for free."""
+def test_graph_b_opening_is_sunnys_and_threats_are_back():
+    """F54 AMENDED in the section-by-section prompt review (2026-08-19):
+    threats deliberately return — Graph B's job is causal STRUCTURE, not
+    hazard detection — while the at-risk register stays unseeded, so the
+    victim side remains the earned half of A-vs-B. The opening paragraph is
+    Sunny's, approved verbatim: the first prompt text shipped under the
+    inspection rule."""
     from agentic.recommend import _graph_b_prompt
     prompt = _graph_b_prompt(_record(), _asm())
-    assert "threats and recommendations withheld" in prompt
-    assert "threats deliberately withheld" in prompt
-    assert '"threats":' not in prompt          # no seeded threat block
-    # the entities and their states still ride — that is all B needs
-    assert '"detected_objects"' in prompt and '"state"' in prompt
+    assert prompt.startswith("You are extracting the causal graph")
+    assert "from the perspective of an emergency response analyst" in prompt
+    assert '"threats":' in prompt                        # seeded again, chosen
+    assert "at_risk" not in prompt.split("Prior analysis")[1]  # victims earned
+    # the two frozen sentences Sunny cut stay cut
+    assert "Recommendations are deliberately withheld" not in prompt
+    assert "regardless of which a responder would address first" not in prompt
+    # and the frozen body still follows the new opening intact
+    assert "## State vocabulary" in prompt and "## Rules" in prompt

@@ -1657,3 +1657,41 @@ own rules, caught by conformance, gate withheld A-vs-B. Correctly handled.
 **Flowchart:** no box changes — the arrow INTO the Graph B box carries less
 (entities only); if the chart annotates inputs, "objects+threats" becomes
 "objects only, threats withheld".
+
+---
+
+## F54 — AMENDED (2026-08-19, the section-by-section prompt review)
+
+Sunny, reviewing the Graph B opening one section at a time (the first prompt
+under the new inspection rule): **the threats return to the context,
+deliberately.** "We should give the threats. And that's fine."
+
+The design as now settled: **Graph B's job is causal STRUCTURE, not hazard
+detection.** Stage 2 already ruled on what the threats are; B's task is to
+wire them. The at-risk register stays unseeded, so the victim side remains
+the earned, informative half of every A-vs-B comparison — the asymmetry F54
+originally flagged still exists, but it is now a CHOSEN design ("sources
+anchored, wiring and victims earned") rather than an accident. Cost accepted
+with eyes open: "same hazards 1.00" is partly the model echoing our list.
+
+The opening paragraph is Sunny's, approved verbatim, replacing the frozen
+one (main.py untouched — the frozen prompt is sliced at its first section
+header and the new opening prepended). Two frozen sentences cut:
+
+1. "Recommendations are deliberately withheld — derive the causal structure
+   independently..." — Sunny: "if you don't tell about recommendations, how
+   would the model know about the recommendations?" Independence is enforced
+   by ABSENCE, not by a sentence announcing the absence to a reader who
+   would never notice it.
+2. "regardless of which a responder would address first" — carried by
+   "cover every causal pathway you believe holds."
+
+Added: "from the perspective of an emergency response analyst" — the same
+audience the recommend prompt now declares (F52).
+
+The opening's promise ("Below are the detected_objects and threats") and
+rule 1's reference to the threats input are both TRUE again — the two
+stale-text flags from the length audit resolve themselves.
+
+707 tests. The compound-hazard addendum and the C person question remain
+open items of the ongoing section review.
