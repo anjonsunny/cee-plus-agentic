@@ -868,3 +868,11 @@ def test_graph_b_opening_is_sunnys_and_threats_are_back():
     assert "role comes ONLY from its `state` field" in prompt
     i_pre = prompt.index("has two parts: NODES")
     assert i_pre < prompt.index("Hazard-bearing states")   # before section 3
+    # section 3 (Sunny, verbatim): engulfing is out of the list AND its
+    # definition gone — perception already remaps it away, so the word never
+    # arrives; the collapsed-vs-collapsing tie-breaker belongs to Stage 1
+    assert "engulfing" not in prompt
+    assert "`collapsing` vs `collapsed`" not in prompt
+    assert "settled rubble" not in prompt
+    assert "hazardous_in_context. `hazardous_in_context` is the last-resort" \
+        in prompt.replace("\n", " ")
