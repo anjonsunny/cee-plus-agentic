@@ -901,5 +901,8 @@ def test_graph_b_opening_is_sunnys_and_threats_are_back():
     assert "or no edges at all when nothing in the scene is affected" \
         in squashed
     assert "5. Do NOT produce" in flat          # rules renumbered, none lost
+    # harm channels: compressed to the one non-redundant law
+    assert "Independent harm channels" not in prompt
+    assert "one edge PER hazard that reaches it" in flat
     assert "6." not in squashed.split("## Rules")[1].split("Return valid")[0]
     assert "on the SAME entity" not in flat

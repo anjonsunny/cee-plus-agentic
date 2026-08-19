@@ -865,6 +865,18 @@ def _graph_b_prompt(record: Any, assessment: Any) -> str:
         "producer is\noff-frame or unidentifiable, the fluid may stand "
         "alone.\n\n")
     _body = _body[:_fl_start] + _FLUID + _body[_fl_end:]
+    # Harm channels (Sunny, approved 2026-08-19): compressed to its one
+    # non-redundant law — a target collects one edge PER reaching hazard.
+    # "Producer and fluid are separate hazards" was settled by Stage 1
+    # (they arrive as separate objects); "judge independently" is the
+    # classifier's step 3 already.
+    _hc_start = _body.index("**Independent harm channels.**")
+    _hc_end = _body.index("## Effect vocabulary")
+    _HC = ("A target collects one edge PER hazard that reaches it — a person "
+           "near a\nburning house gets edges from BOTH the house and its "
+           "smoke. Each hazard's\nreach is judged independently; they are "
+           "independently suppressible.\n\n")
+    _body = _body[:_hc_start] + _HC + _body[_hc_end:]
     # NO SELF-LOOPS (Sunny, 2026-08-19): the graphs allow standalone nodes —
     # a lone hazard stands alone and claims nothing — so the self-loop was a
     # workaround for a prohibition we do not have. Three frozen passages
