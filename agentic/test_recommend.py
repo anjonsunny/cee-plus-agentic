@@ -867,16 +867,21 @@ def test_graph_b_opening_is_sunnys_and_threats_are_back():
     assert "FROM the entity doing the harm" in prompt
     assert "role comes ONLY from its `state` field" in prompt
     i_pre = prompt.index("has two parts: NODES")
-    assert i_pre < prompt.index("Hazard-bearing states")   # before section 3
-    # section 3 (Sunny, verbatim): engulfing is out of the list AND its
-    # definition gone — perception already remaps it away, so the word never
-    # arrives; the collapsed-vs-collapsing tie-breaker belongs to Stage 1
+    assert i_pre < prompt.index("Hazardous (entity is a SOURCE")  # defs first
+    # sections 3-7 (Sunny, verbatim, the prompt review): engulfing gone
+    # (perception remaps it away), collapse tie-breaker and behavioral
+    # families gone (Stage-1 state-choosing), living-beings carve-out and
+    # proximity clause folded into the per-entity classifier, "Normal states"
+    # list dead with its category, categories named by the schema flags.
     assert "engulfing" not in prompt
     assert "`collapsing` vs `collapsed`" not in prompt
-    assert "settled rubble" not in prompt
-    assert "hazardous_in_context. `hazardous_in_context` is the last-resort" \
-        in prompt.replace("\n", " ")
-    # section 4 (Sunny): list only — no behavioral families, no flag preview
     assert "Behavioral families" not in prompt
-    assert "they may be the TARGET of edges but" not in prompt
-    assert "suffocating, unconscious." in prompt
+    assert "**Living beings only.**" not in prompt
+    assert "Normal-state entities that are nonetheless" not in prompt
+    assert "Normal states:" not in prompt
+    assert "classify it in this order" in prompt
+    assert "deliberate claim that it is safe" in prompt
+    flat = prompt.replace("\n", " ")
+    assert "hazardous_in_context. `hazardous_in_context` is the last-resort" \
+        in flat
+    assert "suffocating, unconscious." in flat

@@ -793,46 +793,51 @@ def _graph_b_prompt(record: Any, assessment: Any) -> str:
         "state acts on\nthe target in this way.\" An edge always runs FROM "
         "the entity doing the harm\nTO the entity receiving it.\n\n"
         "Every entity in the detected_objects input below carries a STATE "
-        "word in its\n`state` field. The three lists that follow decode that "
+        "word in its\n`state` field. The lists that follow decode that "
         "word into the entity's\nrole in the causal graph:\n\n"
-        "  hazard-bearing state  \u2192  the entity may be the SOURCE of "
-        "edges\n"
-        "  at-risk state         \u2192  the entity is a TARGET already in "
-        "distress; never\n                           a source\n"
-        "  normal state          \u2192  the entity is a target only; it is "
-        "at risk exactly\n                           when a hazard's edge "
-        "reaches it\n\n"
+        "  hazardous  \u2192  the entity may be the SOURCE of edges\n"
+        "  at_risk    \u2192  the entity is a TARGET already being harmed; "
+        "never a source\n"
+        "  otherwise  \u2192  a target only; at risk exactly when a "
+        "hazard's edge reaches it\n\n"
         "An entity's role comes ONLY from its `state` field — never from its "
         "label,\nits prominence, or the order it is listed in. Every rule "
-        "later in this prompt\nrefers back to these three lists.")
+        "later in this prompt\nrefers back to these lists.")
     _body = _body.replace(_keep, _keep + "\n\n" + _PREAMBLE, 1)
-    # Section 3 (Sunny, approved verbatim 2026-08-19). The collapsed-vs-
-    # collapsing litigation was Arm A's tie-breaker for a grapher that judged
-    # states from the image; that judgment now happens at Stage 1, where the
-    # reliance belongs. `engulfing` leaves the list AND the definition:
-    # Arm B's perception already remaps engulfing -> hazardous_in_context
-    # ("no one says 'water engulfing a kid'"), so the word never arrives at
-    # this prompt. Residual-shift self-loops survive via rule 5(c).
-    _s3_start = _body.index("Hazard-bearing states")
-    _s3_end = _body.index("At-risk states")
-    _S3 = (
-        "Hazard-bearing states (entity is a SOURCE of harm): burning, burnt, "
-        "collapsed,\ncollapsing, fallen, crushed, flooded, leaking, "
-        "approaching, charging, aiming,\ncoiled, rabid, armed, striking, "
-        "rising, spreading, billowing, seeping,\nescalating, "
-        "hazardous_in_context. `hazardous_in_context` is the last-resort "
-        "fallback when\nno specific state applies.\n\n")
-    _body = _body[:_s3_start] + _S3 + _body[_s3_end:]
-    # Section 4 (Sunny, approved 2026-08-19): list only. The behavioral-family
-    # definitions were state-CHOOSING guidance (Stage 1's job, same razor as
-    # the collapse tie-breaker), and the flag sentence duplicated an output
-    # rule the schema states authoritatively.
-    _s4_start = _body.index("At-risk states")
-    _s4_end = _body.index("**Living beings only.**")
-    _S4 = ("At-risk states (entity is a TARGET of harm — Distress kind): "
-           "injured, bleeding,\nfleeing, trapped, cowering, drowning, "
-           "suffocating, unconscious.\n\n")
-    _body = _body[:_s4_start] + _S4 + _body[_s4_end:]
+    # Sections 3-7 (Sunny, approved verbatim 2026-08-19, prompt review).
+    # One middle block replaces five frozen sections. His rulings, in order:
+    # engulfing is out (perception remaps it away); the collapse tie-breaker
+    # and behavioral families were Stage-1 state-choosing guidance; the
+    # living-beings carve-out and the proximity clause collapsed into a
+    # per-entity CLASSIFIER (the C omission becomes a required decision with
+    # two legal outcomes — draw the edge, or deliberately claim safety); the
+    # "Normal states" list died with its category ("normal" is not a graph
+    # concept — it is everything else); and the categories are NAMED BY THE
+    # SCHEMA FLAGS (hazardous / at_risk) so "state" again means only the
+    # input field.
+    _mid_start = _body.index("Hazard-bearing states")
+    _mid_end = _body.index("**Fluid / gaseous hazards")
+    _MIDDLE = (
+        "Hazardous (entity is a SOURCE of harm): burning, burnt, collapsed,\n"
+        "collapsing, fallen, crushed, flooded, leaking, approaching, "
+        "charging, aiming,\ncoiled, rabid, armed, striking, rising, "
+        "spreading, billowing, seeping,\nescalating, hazardous_in_context. "
+        "`hazardous_in_context` is the last-resort\nfallback when no "
+        "specific state applies.\n\n"
+        "For each entity, read its `state` field and classify it in this "
+        "order:\n\n"
+        "1. hazardous (list above) — the entity is a SOURCE of harm.\n"
+        "2. at_risk (list below) — the entity is ALREADY BEING HARMED. Draw "
+        "the\n   edge from the hazard causing that harm to it.\n"
+        "3. Decide whether an active hazard can reach the entity. If it can, "
+        "the\n   entity is EXPOSED: mark it `at_risk: true` and draw that "
+        "hazard's edge to\n   it. If not, leave it false — a deliberate "
+        "claim that it is safe.\n\n"
+        "At-risk (entity is a TARGET of harm): injured, bleeding, fleeing, "
+        "trapped,\ncowering, drowning, suffocating, unconscious. Any entity "
+        "— person, animal,\nvehicle, or structure — may carry one of these "
+        "when it's not hazardous or\nnot at-risk by proximity.\n\n")
+    _body = _body[:_mid_start] + _MIDDLE + _body[_mid_end:]
     context = {
         "detected_objects": [
             {"object_id": o.object_id, "label": o.label,
