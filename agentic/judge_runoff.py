@@ -340,10 +340,22 @@ def runoff(application: str, prompt: str, cand_a: str, cand_b: str,
     if n_probes is None:
         from agentic import models as _models
         n_probes = _models.JUDGE_VOTES
-    text = _probe_twin(prompt, judge_fn, n_probes)
-    image = None
+    # Sunny (2026-08-09): "I am fine with parallelization." The two twins ask
+    # the same model independent questions, so they overlap; votes INSIDE a
+    # twin stay sequential — vote order is data (all_reasoning), and scripted
+    # judge_fns in tests are iterators that must be consumed in order. True
+    # overlap also needs Ollama serving in parallel (OLLAMA_NUM_PARALLEL >= 2);
+    # with a serializing server this simply costs nothing.
     if judge_image_fn is not None:
-        image = _probe_twin(IMAGE_PREFIX + prompt, judge_image_fn, n_probes)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=2) as _ex:
+            _ft = _ex.submit(_probe_twin, prompt, judge_fn, n_probes)
+            _fi = _ex.submit(_probe_twin, IMAGE_PREFIX + prompt,
+                             judge_image_fn, n_probes)
+            text, image = _ft.result(), _fi.result()
+    else:
+        text = _probe_twin(prompt, judge_fn, n_probes)
+        image = None
     return {
         "application": application, "advisory": True,
         "prompt_version": PROMPT_VERSION, "n_probes": n_probes,
@@ -410,6 +422,21 @@ def default_image_judge(image_path: str) -> Any | None:
     p = Path(image_path or "")
     if not p.is_file():
         return None
-    b64 = base64.b64encode(p.read_bytes()).decode()
+    # Sunny (2026-08-09): downscale, "without compromising too much." The
+    # judge reads layout and identity, not fine detail — the full scene jpg
+    # was re-encoded by the vision tower on EVERY vote. Max side 1024, JPEG
+    # q85: entity-level content survives; per-call vision cost drops hard.
+    try:
+        import io
+
+        from PIL import Image
+        img = Image.open(p).convert("RGB")
+        img.thumbnail((1024, 1024))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        raw = buf.getvalue()
+    except Exception:                       # unreadable image -> send as-is
+        raw = p.read_bytes()
+    b64 = base64.b64encode(raw).decode()
     return lambda prompt: _ollama_judge_image(
         prompt, b64, temperature=JUDGE_PROBE_TEMPERATURE)
