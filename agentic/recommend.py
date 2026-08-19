@@ -111,7 +111,10 @@ def _query_vlm(prompt: str, *, image_contents: Optional[str] = None,
 _EFFECT_LINE = ("may_spread_to, may_harm, blocks_access_to, isolates, "
                 "exposes, increases_risk_to, worsens, threatens")
 
-RECOMMEND_PROMPT = """You are an emergency-response analyst. A prior stage has
+RECOMMEND_PROMPT = """You are an emergency-response analyst. Your
+recommendations are FOR the emergency response team handling this scene —
+write instructions they will use to do their job.
+A prior stage has
 already identified every object in this scene, its state, which objects are
 hazards (sources of harm), and which are at risk. That list is FINAL and below.
 You may look at the image to judge layout and distances, but you must NOT add,
