@@ -743,7 +743,7 @@ def _graph_b_prompt(record: Any, assessment: Any) -> str:
     object_ids" and "do not add nodes beyond the detected_objects supplied"."""
     import json
 
-    from main import GRAPH_B_INFERRED_DENIED, GRAPH_B_PROMPT
+    from main import GRAPH_B_PROMPT
     # F54 AMENDED (Sunny, 2026-08-19, section-by-section prompt review). The
     # threats RETURN to the context, deliberately: Graph B's job is causal
     # STRUCTURE, not hazard detection — Stage 2 already ruled on the threats;
@@ -998,23 +998,29 @@ def _graph_b_prompt(record: Any, assessment: Any) -> str:
         "  - reason: short prose explaining why this is the most causally\n"
         "    consequential intervention\n\n")
     _body = _body[:_os_start] + _OS + _body[_os_end:]
-    # Rule 3 (self-reference) is DELETED, not turned into a ban (Sunny: "just
-    # remove it and don't talk about it in the prompt") — a ban still teaches
-    # the concept in order to forbid it, and mentioning a thing invites it
-    # (F2). The prompt is silent; if the model invents a self-loop anyway,
-    # the code side surfaces it like everything else. Rules renumbered.
-    _r3_old = _body[_body.index("3. Self-reference"):_body.index("4. Choose")]
-    _body = _body.replace(_r3_old, "", 1)
-    _body = _body.replace("4. Choose the most specific",
-                          "3. Choose the most specific", 1)
-    _r5_old = _body[_body.index("5. Hazardous-node edge requirements:")
-                    :_body.index("6. Do NOT produce")]
-    _body = _body.replace(_r5_old,
-        "4. A hazardous node may have outgoing edges (standard threat), only "
+    # Rules + appendices, per Sunny's standing rulings: rule 1 loses the
+    # inferred sentence (cut with the schema's plumbing); rule 3 deleted —
+    # the effects checklist IS the selection rule; the direction example cut
+    # — its rule is verbatim in the preamble (no-duplication, no-examples).
+    _r_start = _body.index("## Rules")
+    _RULES = (
+        "## Rules\n\n"
+        "1. Use ONLY the object_ids and states present in the "
+        "detected_objects and\n   threats input below.\n"
+        "2. Every edge's `via_state` must equal its `source` node's `state`, "
+        "and that\n   state must be hazard-bearing. Edges from non-hazardous "
+        "nodes are invalid.\n"
+        "3. A hazardous node may have outgoing edges (standard threat), only "
         "incoming\n   edges (pure casualty — e.g., a flooded car hit by "
         "water), or no edges at\n   all when nothing in the scene is "
-        "affected by it.\n", 1)
-    _body = _body.replace("6. Do NOT produce", "5. Do NOT produce", 1)
+        "affected by it.\n"
+        "4. Do NOT produce recommendations, scene_summary, or any field "
+        "other than\n   causal_graph and suppression_pick.\n\n"
+        "Return valid JSON only.")
+    _body = _body[:_r_start] + _RULES
+    # (the earlier self-loop rule splices are gone: their rulings — rule 3
+    # deleted unmentioned, hazardous nodes may stand edge-less — are baked
+    # into the _RULES block above)
     context = {
         "detected_objects": [
             {"object_id": o.object_id, "label": o.label,
@@ -1027,8 +1033,6 @@ def _graph_b_prompt(record: Any, assessment: Any) -> str:
     }
     return (f"{_OPENING}\n\n"
             f"{_body}\n\n"
-            f"{GRAPH_B_DIRECTION_EXAMPLE}\n\n"
-            f"Inferred-entity policy:\n{GRAPH_B_INFERRED_DENIED}\n\n"
             f"Caption:\n{record.caption or 'N/A'}\n\n"
             f"Prior analysis (detected_objects + threats):"
             f"\n{json.dumps(context, indent=2)}")

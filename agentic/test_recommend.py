@@ -520,33 +520,27 @@ def test_prompt_still_renders_in_both_o1_arms():
 
 # ── Graph B direction example (the victim-as-source inversion) ───────────
 
-def test_graph_b_prompt_has_direction_example():
-    """B_pool, twice: `child_1 · drowning --may_harm--> pool_1`. The threat
-    reason we hand Graph B ends on the victim, and the model read word order
-    as arrow direction."""
+def test_graph_b_direction_rule_lives_in_the_preamble():
+    """B_pool, twice: the model read word order as arrow direction. The
+    worked example (wire/worker) was cut in Sunny's prompt review — its rule
+    was already stated verbatim in his preamble, which is what the model
+    reads now."""
     from agentic.recommend import _graph_b_prompt
     p = _graph_b_prompt(_record(), _asm())
-    assert "may_harm--> worker" in p
+    assert "FROM the entity doing the harm" in p
+    assert "Direction rule, worked through" not in p
 
 
-def test_graph_b_prompt_stays_neutral():
-    """Iron rule 5: the example must carry no calibration scene and no
-    id-shaped token. Electricity appears in none of the six scenes."""
+def test_graph_b_template_stays_neutral():
+    """Iron rule 5: the TEMPLATE half of the prompt (everything before the
+    caption/context) carries no id-shaped token — scene words arrive only in
+    the injected data."""
     import re
 
-    from main import GRAPH_B_PROMPT
-    from agentic.recommend import GRAPH_B_DIRECTION_EXAMPLE, _graph_b_prompt
-    example = GRAPH_B_DIRECTION_EXAMPLE
-    for scene in ("fire", "pool", "tanker", "spill", "collapse", "park"):
-        assert scene not in example.lower(), f"example names {scene}"
-    assert re.search(r"\b\w+_\d+\b", example) is None
-    # The example must be the only thing we ADD to the frozen block that could
-    # name a scene. The caption and detected_objects legitimately carry scene
-    # words — they are the run's data, not prompt — so the check is scoped to
-    # the block we author.
-    added = _graph_b_prompt(_record(), _asm()).replace(GRAPH_B_PROMPT, "")
-    assert example in added
-    assert "wire --may_harm--> worker" in added
+    from agentic.recommend import _graph_b_prompt
+    p = _graph_b_prompt(_record(), _asm())
+    template = p.split("Caption:")[0]
+    assert re.search(r"\b\w+_\d+\b", template) is None
 
 
 def test_main_untouched():
@@ -900,7 +894,7 @@ def test_graph_b_opening_is_sunnys_and_threats_are_back():
     assert "Self-reference" not in flat
     assert "or no edges at all when nothing in the scene is affected" \
         in squashed
-    assert "5. Do NOT produce" in flat          # rules renumbered, none lost
+    assert "4. Do NOT produce" in flat          # rules renumbered, none lost
     # harm channels: compressed to the one non-redundant law
     assert "Independent harm channels" not in prompt
     assert "one edge PER hazard that reaches it" in flat
@@ -938,5 +932,12 @@ def test_graph_b_opening_is_sunnys_and_threats_are_back():
     assert "another hazard's edge pointing at it" in squashed
     assert "presumed_<noun>_in_<existing_id>" not in prompt
     assert '"inferred"' not in prompt and "- inferred:" not in prompt
-    assert "6." not in squashed.split("## Rules")[1].split("Return valid")[0]
+    # rules + appendices, per the standing rulings
+    assert "presumed_" not in prompt
+    assert "Inferred-entity policy" not in prompt
+    assert "most specific effect label" not in prompt
+    assert "Direction rule, worked through" not in prompt
+    assert prompt.rstrip().split("Prior analysis")[0].strip().endswith(
+        "Return valid JSON only.") or "Caption:" in prompt
+    assert "5." not in squashed.split("## Rules")[1].split("Return valid")[0]
     assert "on the SAME entity" not in flat
