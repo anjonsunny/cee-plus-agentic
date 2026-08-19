@@ -945,6 +945,20 @@ def _graph_b_prompt(record: Any, assessment: Any) -> str:
         "- the obstruction itself strands the person inside a hazard's reach "
         "— e.g.,\n  rising water surrounding a family on a roof.\n\n")
     _body = _body[:_c_start] + _C + _body[_c_end:]
+    # Mutual-hazard (Sunny, approved 2026-08-19): compressed to its two live
+    # laws — no may_spread_to between hazards, and the shared-cause routing.
+    # Everything else duplicated the effects checklist (rules 1-2), the
+    # via_state rule, or was examples (his no-examples ruling).
+    _mh_start = _body.index("**Mutual-hazard rule")
+    _mh_end = _body.index("## Output schema")
+    _MH = (
+        "Between two hazardous entities, never use may_spread_to — "
+        "propagation has\nalready happened; use the checklist above "
+        "(worsens if mutual, otherwise\nincreases_risk_to). If both hazards "
+        "share one visible cause (two buildings\nflooded by the same "
+        "water), draw the edges from that cause to each — not\nbetween "
+        "them.\n\n")
+    _body = _body[:_mh_start] + _MH + _body[_mh_end:]
     # Rule 3 (self-reference) is DELETED, not turned into a ban (Sunny: "just
     # remove it and don't talk about it in the prompt") — a ban still teaches
     # the concept in order to forbid it, and mentioning a thing invites it
