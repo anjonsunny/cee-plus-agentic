@@ -769,6 +769,15 @@ def _graph_b_prompt(record: Any, assessment: Any) -> str:
         "between hazards, exposure, proximity risk. Below are the "
         "detected_objects and threats from a prior analysis of the scene.")
     _body = GRAPH_B_PROMPT[GRAPH_B_PROMPT.index("## State vocabulary"):]
+    # Section 2 (Sunny, prompt review): of the whole instancing paragraph,
+    # "that's it" — only the last sentence does live work here. The ten-node
+    # budgeting and people-counting rules governed Arm A, where the model
+    # built the graph straight from the image; in this pipeline Stage 1 fixes
+    # the entity list before Graph B ever runs, so the cap is upstream.
+    _inst_start = _body.index("Representative instancing:")
+    _keep = "Do not add nodes beyond the detected_objects supplied."
+    _inst_end = _body.index(_keep) + len(_keep)
+    _body = _body[:_inst_start] + _keep + _body[_inst_end:]
     context = {
         "detected_objects": [
             {"object_id": o.object_id, "label": o.label,

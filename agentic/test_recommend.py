@@ -856,3 +856,8 @@ def test_graph_b_opening_is_sunnys_and_threats_are_back():
     assert "regardless of which a responder would address first" not in prompt
     # and the frozen body still follows the new opening intact
     assert "## State vocabulary" in prompt and "## Rules" in prompt
+    # section 2: the instancing paragraph is cut to its one live sentence —
+    # Stage 1 fixes the entity list upstream, so the ten-node budgeting and
+    # people-counting rules had nothing to govern here (Sunny: "That's it.")
+    assert "Representative instancing" not in prompt
+    assert "Do not add nodes beyond the detected_objects supplied." in prompt
