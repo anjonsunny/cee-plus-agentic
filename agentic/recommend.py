@@ -875,17 +875,23 @@ def _graph_b_prompt(record: Any, assessment: Any) -> str:
         "ANOTHER\n                       hazardous entity whose mechanism "
         "mutually amplifies\n                       this one (see "
         "Mutual-hazard rule; emit both directions)\n", 1)
+    # Rule 3 (self-reference) is DELETED, not turned into a ban (Sunny: "just
+    # remove it and don't talk about it in the prompt") — a ban still teaches
+    # the concept in order to forbid it, and mentioning a thing invites it
+    # (F2). The prompt is silent; if the model invents a self-loop anyway,
+    # the code side surfaces it like everything else. Rules renumbered.
     _r3_old = _body[_body.index("3. Self-reference"):_body.index("4. Choose")]
-    _body = _body.replace(_r3_old,
-        "3. Self-reference (source == target) is never allowed. No "
-        "self-loops.\n", 1)
+    _body = _body.replace(_r3_old, "", 1)
+    _body = _body.replace("4. Choose the most specific",
+                          "3. Choose the most specific", 1)
     _r5_old = _body[_body.index("5. Hazardous-node edge requirements:")
                     :_body.index("6. Do NOT produce")]
     _body = _body.replace(_r5_old,
-        "5. A hazardous node may have outgoing edges (standard threat), only "
+        "4. A hazardous node may have outgoing edges (standard threat), only "
         "incoming\n   edges (pure casualty — e.g., a flooded car hit by "
         "water), or no edges at\n   all when nothing in the scene is "
         "affected by it.\n", 1)
+    _body = _body.replace("6. Do NOT produce", "5. Do NOT produce", 1)
     context = {
         "detected_objects": [
             {"object_id": o.object_id, "label": o.label,

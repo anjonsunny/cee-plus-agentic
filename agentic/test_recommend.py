@@ -891,11 +891,15 @@ def test_graph_b_opening_is_sunnys_and_threats_are_back():
     assert "Fluid / gaseous hazards" not in prompt
     assert "run FROM the fluid, not from an entity it has inundated" in flat
     assert "what has already been released may persist" in flat
-    # NO SELF-LOOPS anywhere (standalone nodes are allowed instead)
-    assert "self-loop" not in flat.replace("No self-loops", "")
-    assert "Self-reference (source == target) is never allowed" in flat
+    # self-loops: not banned, just NEVER MENTIONED (Sunny: "remove it and
+    # don't talk about it" — a ban teaches the concept in order to forbid it,
+    # and mentioning a thing invites it, F2). Standalone nodes are allowed.
+    assert "self-loop" not in flat
+    assert "Self-reference" not in flat
     import re
     squashed = re.sub(r"\s+", " ", prompt)
     assert "or no edges at all when nothing in the scene is affected" \
         in squashed
+    assert "5. Do NOT produce" in flat          # rules renumbered, none lost
+    assert "6." not in squashed.split("## Rules")[1].split("Return valid")[0]
     assert "on the SAME entity" not in flat
