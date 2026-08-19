@@ -885,3 +885,17 @@ def test_graph_b_opening_is_sunnys_and_threats_are_back():
     assert "hazardous_in_context. `hazardous_in_context` is the last-resort" \
         in flat
     assert "suffocating, unconscious." in flat
+    # fluid area (Sunny): emission half dead (Stage 1 emits objects), routing
+    # core folded into the effect table; provenance says what suppression
+    # actually buys (the fluid stops being FED; released fluid may persist)
+    assert "Fluid / gaseous hazards" not in prompt
+    assert "run FROM the fluid, not from an entity it has inundated" in flat
+    assert "what has already been released may persist" in flat
+    # NO SELF-LOOPS anywhere (standalone nodes are allowed instead)
+    assert "self-loop" not in flat.replace("No self-loops", "")
+    assert "Self-reference (source == target) is never allowed" in flat
+    import re
+    squashed = re.sub(r"\s+", " ", prompt)
+    assert "or no edges at all when nothing in the scene is affected" \
+        in squashed
+    assert "on the SAME entity" not in flat

@@ -838,6 +838,54 @@ def _graph_b_prompt(record: Any, assessment: Any) -> str:
         "— person, animal,\nvehicle, or structure — may carry one of these "
         "when it's not hazardous or\nnot at-risk by proximity.\n\n")
     _body = _body[:_mid_start] + _MIDDLE + _body[_mid_end:]
+    # Fluid area (Sunny, approved 2026-08-19): old section 7's emission half
+    # was Stage 1's job (objects already arrive); its routing core folds into
+    # the effect table. Provenance keeps the counterfactual plumbing, with
+    # "removing the source removes the fluid" corrected to what suppression
+    # actually buys — the fluid stops being FED; released fluid may persist
+    # (stop the leak, the spill is still on the road).
+    _fl_start = _body.index("**Fluid / gaseous hazards")
+    _fl_end = _body.index("**Independent harm channels.**")
+    _FLUID = (
+        "**Diffuse hazards (water, smoke, gas, dust, spills) — edges keyed "
+        "to the\nTARGET.** The fluid is the source of outward harm: edges to "
+        "people and\nexposed entities run FROM the fluid, not from an entity "
+        "it has inundated.\nA fluid's outgoing edge uses: `increases_risk_to` "
+        "when the target is already\nhazardous (the fluid escalates an "
+        "existing hazard); `may_harm` when the\ntarget is a person or "
+        "animal; `may_spread_to` when the target is intact and\nin the "
+        "trajectory (conversion pending).\n\n"
+        "**Fluid provenance — keep the graph connected.** When the fluid's "
+        "producing\nsource is visible (smoke from a burning house, dust from "
+        "a collapsing\nbuilding, a spill from a leaking tanker), emit "
+        "`source \u2192 fluid` with effect\n`increases_risk_to` — the "
+        "source feeds the fluid: remove the source and the\nfluid stops "
+        "growing, though what has already been released may persist. Do\n"
+        "NOT leave a fluid disconnected from its visible producer. If the "
+        "producer is\noff-frame or unidentifiable, the fluid may stand "
+        "alone.\n\n")
+    _body = _body[:_fl_start] + _FLUID + _body[_fl_end:]
+    # NO SELF-LOOPS (Sunny, 2026-08-19): the graphs allow standalone nodes —
+    # a lone hazard stands alone and claims nothing — so the self-loop was a
+    # workaround for a prohibition we do not have. Three frozen passages
+    # permitted or mandated them; all three amended together.
+    _w_old = _body[_body.index("- worsens"):_body.index("- threatens")]
+    _body = _body.replace(_w_old,
+        "- worsens            — escalates a hazard already present on "
+        "ANOTHER\n                       hazardous entity whose mechanism "
+        "mutually amplifies\n                       this one (see "
+        "Mutual-hazard rule; emit both directions)\n", 1)
+    _r3_old = _body[_body.index("3. Self-reference"):_body.index("4. Choose")]
+    _body = _body.replace(_r3_old,
+        "3. Self-reference (source == target) is never allowed. No "
+        "self-loops.\n", 1)
+    _r5_old = _body[_body.index("5. Hazardous-node edge requirements:")
+                    :_body.index("6. Do NOT produce")]
+    _body = _body.replace(_r5_old,
+        "5. A hazardous node may have outgoing edges (standard threat), only "
+        "incoming\n   edges (pure casualty — e.g., a flooded car hit by "
+        "water), or no edges at\n   all when nothing in the scene is "
+        "affected by it.\n", 1)
     context = {
         "detected_objects": [
             {"object_id": o.object_id, "label": o.label,
