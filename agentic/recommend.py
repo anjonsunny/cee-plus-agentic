@@ -930,6 +930,23 @@ def _graph_b_prompt(record: Any, assessment: Any) -> str:
         "These limits apply to injury edges (may_harm, threatens) only;\n"
         "blocks_access_to and isolates follow path geometry instead. ")
     _body = _body[:_b_start] + _B + _body[_b_end:]
+    # Distance rule Part C (Sunny, approved 2026-08-19): purpose-first
+    # obstruction coupling — an obstruction edge to a person only when the
+    # blocking itself endangers them. "Distress state" (dead taxonomy word)
+    # replaced by "an at-risk state".
+    _c_start = _body.index("Obstruction coupling rule:")
+    _c_end = _body.index("**Mutual-hazard rule")
+    _C = (
+        "Obstruction edges (blocks_access_to, isolates) to a person are "
+        "allowed only\nwhen the blocking itself endangers them:\n\n"
+        "- the person is already endangered (an at-risk state, or an "
+        "incoming injury\n  edge) and the obstruction cuts off their escape "
+        "or their rescue.\n"
+        "- the obstruction itself strands the person inside a hazard's reach "
+        "— e.g.,\n  rising water surrounding a family on a roof.\n\n"
+        "Blocking a person's path TOWARD a hazard blocks nothing that "
+        "matters — no\nedge.\n\n")
+    _body = _body[:_c_start] + _C + _body[_c_end:]
     # Rule 3 (self-reference) is DELETED, not turned into a ban (Sunny: "just
     # remove it and don't talk about it in the prompt") — a ban still teaches
     # the concept in order to forbid it, and mentioning a thing invites it
