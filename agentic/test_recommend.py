@@ -861,3 +861,10 @@ def test_graph_b_opening_is_sunnys_and_threats_are_back():
     # people-counting rules had nothing to govern here (Sunny: "That's it.")
     assert "Representative instancing" not in prompt
     assert "Do not add nodes beyond the detected_objects supplied." in prompt
+    # the preamble (Sunny, verbatim): anatomy defined BEFORE the law refers
+    # to it, and the three state lists announced as one decoder
+    assert "has two parts: NODES" in prompt
+    assert "FROM the entity doing the harm" in prompt
+    assert "role comes ONLY from its `state` field" in prompt
+    i_pre = prompt.index("has two parts: NODES")
+    assert i_pre < prompt.index("Hazard-bearing states")   # before section 3

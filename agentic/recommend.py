@@ -778,6 +778,34 @@ def _graph_b_prompt(record: Any, assessment: Any) -> str:
     _keep = "Do not add nodes beyond the detected_objects supplied."
     _inst_end = _body.index(_keep) + len(_keep)
     _body = _body[:_inst_start] + _keep + _body[_inst_end:]
+    # Sections 3-7 preamble (Sunny, approved verbatim 2026-08-19). Two fixes
+    # from his review: the graph's anatomy was never DEFINED before the law
+    # referenced it (nodes/edges arrived at the output schema, ~70% in — the
+    # rules of a game before the pieces), and the three state lists arrived
+    # unannounced, leaving the reader to reverse-engineer that they are one
+    # decoder. The direction rule ("FROM the entity doing the harm") is
+    # promoted here from the appended worked example, which stays as
+    # reinforcement.
+    _PREAMBLE = (
+        "The causal graph you are extracting has two parts: NODES — one per "
+        "detected\nentity — and EDGES, each a single causal claim of the "
+        "form\n`source --effect--> target`, read as \"the source's hazardous "
+        "state acts on\nthe target in this way.\" An edge always runs FROM "
+        "the entity doing the harm\nTO the entity receiving it.\n\n"
+        "Every entity in the detected_objects input below carries a STATE "
+        "word in its\n`state` field. The three lists that follow decode that "
+        "word into the entity's\nrole in the causal graph:\n\n"
+        "  hazard-bearing state  \u2192  the entity may be the SOURCE of "
+        "edges\n"
+        "  at-risk state         \u2192  the entity is a TARGET already in "
+        "distress; never\n                           a source\n"
+        "  normal state          \u2192  the entity is a target only; it is "
+        "at risk exactly\n                           when a hazard's edge "
+        "reaches it\n\n"
+        "An entity's role comes ONLY from its `state` field — never from its "
+        "label,\nits prominence, or the order it is listed in. Every rule "
+        "later in this prompt\nrefers back to these three lists.")
+    _body = _body.replace(_keep, _keep + "\n\n" + _PREAMBLE, 1)
     context = {
         "detected_objects": [
             {"object_id": o.object_id, "label": o.label,
