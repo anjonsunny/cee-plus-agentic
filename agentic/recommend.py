@@ -903,6 +903,33 @@ def _graph_b_prompt(record: Any, assessment: Any) -> str:
         "may_spread_to\n   (propagation by physical contiguity)\n"
         "7. nothing above fits \u2192 threatens (last resort)\n\n")
     _body = _body[:_ev_start] + _EV + _body[_ev_end:]
+    # Distance rule Part B (Sunny, approved 2026-08-19): purpose stated
+    # first, one rule per hazard type, and the compound-hazard exception
+    # (fuel/gas + ignition = ignition radius) that closes the C hole — the
+    # thresholds ruled a person standing by fuel and fire "safe" three runs
+    # running. Part A (the reach principle) is untouched here.
+    _b_start = _body.index("Reach thresholds (structure-relative")
+    _b_end = _body.index("Obstruction coupling rule:")
+    _B = (
+        "Reach thresholds: hard distance limits per hazard type, so a hazard "
+        "is never\nclaimed to injure someone it cannot physically reach."
+        "\n\n"
+        "- flame/heat: reaches only people within about one structure-height "
+        "of the\n  flaming face; farther than that, no injury edge.\n"
+        "- collapse: reaches only the collapse zone — 1.5 \u00d7 "
+        "structure-height from the\n  compromised face, or farther only "
+        "where thrown debris is visible.\n"
+        "- fallen/static hazards (debris, fallen tree, crushed car): contact "
+        "reach\n  only — touching, within a step, or directly beneath a "
+        "possible shift.\n"
+        "- smoke/dust: reaches the full extent of the visible plume or haze "
+        "— usually\n  the widest reach in the scene.\n"
+        "- exception: a flammable or volatile hazard (leaking fuel, gas) "
+        "with an\n  ignition source nearby reaches everyone in the open "
+        "near either one —\n  ignition radius, not contact distance.\n\n"
+        "These limits apply to injury edges (may_harm, threatens) only;\n"
+        "blocks_access_to and isolates follow path geometry instead. ")
+    _body = _body[:_b_start] + _B + _body[_b_end:]
     # Rule 3 (self-reference) is DELETED, not turned into a ban (Sunny: "just
     # remove it and don't talk about it in the prompt") — a ban still teaches
     # the concept in order to forbid it, and mentioning a thing invites it

@@ -914,5 +914,11 @@ def test_graph_b_opening_is_sunnys_and_threats_are_back():
     assert "conversion pending" not in flat
     assert "harm is happening NOW" not in flat
     assert "harm actualized" not in flat
+    # distance Part B (Sunny): purpose first, one rule per hazard type, and
+    # the compound-hazard exception that closes the C hole
+    assert "never claimed to injure someone it cannot physically reach" \
+        in re.sub(r"\s+", " ", prompt)
+    assert "ignition radius, not contact distance" in flat
+    assert "mid-yard is the boundary" not in prompt   # old threshold prose gone
     assert "6." not in squashed.split("## Rules")[1].split("Return valid")[0]
     assert "on the SAME entity" not in flat
