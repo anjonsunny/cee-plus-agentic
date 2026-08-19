@@ -847,14 +847,9 @@ def _graph_b_prompt(record: Any, assessment: Any) -> str:
     _fl_start = _body.index("**Fluid / gaseous hazards")
     _fl_end = _body.index("**Independent harm channels.**")
     _FLUID = (
-        "**Diffuse hazards (water, smoke, gas, dust, spills) — edges keyed "
-        "to the\nTARGET.** The fluid is the source of outward harm: edges to "
-        "people and\nexposed entities run FROM the fluid, not from an entity "
-        "it has inundated.\nA fluid's outgoing edge uses: `increases_risk_to` "
-        "when the target is already\nhazardous (the fluid escalates an "
-        "existing hazard); `may_harm` when the\ntarget is a person or "
-        "animal; `may_spread_to` when the target is intact and\nin the "
-        "trajectory (conversion pending).\n\n"
+        "**Diffuse hazards (water, smoke, gas, dust, spills).** The fluid is "
+        "the\nsource of outward harm: edges to people and exposed entities "
+        "run FROM the\nfluid, not from an entity it has inundated.\n\n"
         "**Fluid provenance — keep the graph connected.** When the fluid's "
         "producing\nsource is visible (smoke from a burning house, dust from "
         "a collapsing\nbuilding, a spill from a leaking tanker), emit "
@@ -881,12 +876,33 @@ def _graph_b_prompt(record: Any, assessment: Any) -> str:
     # a lone hazard stands alone and claims nothing — so the self-loop was a
     # workaround for a prohibition we do not have. Three frozen passages
     # permitted or mandated them; all three amended together.
-    _w_old = _body[_body.index("- worsens"):_body.index("- threatens")]
-    _body = _body.replace(_w_old,
-        "- worsens            — escalates a hazard already present on "
-        "ANOTHER\n                       hazardous entity whose mechanism "
-        "mutually amplifies\n                       this one (see "
-        "Mutual-hazard rule; emit both directions)\n", 1)
+    # Effect vocabulary (Sunny, approved 2026-08-19): "most specific
+    # applicable" was an adjective with no stated ordering; it becomes an
+    # ordered checklist — first match wins. The mutual and one-way
+    # hazardous-target cases are split (his ruling); the tense clause died
+    # (no consumer reads a tense; the classifier already forces the edge);
+    # the truth-conditions list and the fluid verb table died as duplicates
+    # of the checklist. No examples, deliberately: F2 is the scar, the six
+    # scenes are the calibration set, and the probes will show if any rule
+    # ever earns one.
+    _ev_start = _body.index("## Effect vocabulary")
+    _ev_end = _body.index("**Distance / contiguity rule.**")
+    _EV = (
+        "## Effect vocabulary\n\n"
+        "Each edge carries exactly ONE label. More than one is often true at "
+        "once;\ncheck these in order and take the FIRST that fits:\n\n"
+        "1. the target is already hazardous and the two hazards amplify EACH "
+        "OTHER \u2192\n   worsens, emitted in BOTH directions\n"
+        "2. the target is already hazardous and the escalation runs one way "
+        "\u2192\n   increases_risk_to\n"
+        "3. the harm is a blocked path or a cut-off escape or resource "
+        "\u2192\n   blocks_access_to or isolates\n"
+        "4. a protective barrier is removed \u2192 exposes\n"
+        "5. the target is a person or animal \u2192 may_harm\n"
+        "6. the target is intact and in the hazard's path \u2192 "
+        "may_spread_to\n   (propagation by physical contiguity)\n"
+        "7. nothing above fits \u2192 threatens (last resort)\n\n")
+    _body = _body[:_ev_start] + _EV + _body[_ev_end:]
     # Rule 3 (self-reference) is DELETED, not turned into a ban (Sunny: "just
     # remove it and don't talk about it in the prompt") — a ban still teaches
     # the concept in order to forbid it, and mentioning a thing invites it

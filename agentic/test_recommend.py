@@ -904,5 +904,15 @@ def test_graph_b_opening_is_sunnys_and_threats_are_back():
     # harm channels: compressed to the one non-redundant law
     assert "Independent harm channels" not in prompt
     assert "one edge PER hazard that reaches it" in flat
+    # effect vocabulary: ordered checklist, first match wins (Sunny) — the
+    # truth-conditions list, the fluid verb table, and the tense clause all
+    # died as duplicates or consumerless commentary; no examples (F2)
+    assert "take the FIRST that fits" in flat
+    assert "worsens, emitted in BOTH directions" in flat
+    assert "most specific applicable" not in flat
+    assert "truth conditions" not in flat.lower()
+    assert "conversion pending" not in flat
+    assert "harm is happening NOW" not in flat
+    assert "harm actualized" not in flat
     assert "6." not in squashed.split("## Rules")[1].split("Return valid")[0]
     assert "on the SAME entity" not in flat
