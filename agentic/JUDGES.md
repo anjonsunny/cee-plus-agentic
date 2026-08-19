@@ -86,6 +86,15 @@ Terms used throughout, so nothing means two things:
 **Authority, everywhere:** judges advise, never overwrite. Only reflection
 carries a message, only the model revises. No subjective output enters a score.
 
+**Prompt discipline (Sunny, 2026-08-19):** every NEW prompt — and every edit
+to an existing one — is shown to Sunny verbatim and approved before it ships.
+The length audit that set this rule: the small single-question prompts (one
+job, one anchored definition, 100-450 tokens) are the system's best-behaved
+components; the inherited ~3,000-token Graph B statute book is where directly
+applicable rules get ignored by the 7B reader. Keep every future prompt in
+the first family. Prompt-size optimization of the big inherited prompts
+(scene-conditional clause assembly) is PARKED until the pipeline is complete.
+
 ---
 
 ## 3. The objective advisors
