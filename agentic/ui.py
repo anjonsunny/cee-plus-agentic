@@ -1693,12 +1693,16 @@ def _graph_judge_rows(gj: dict) -> list:
                 f"asked independently, the model BELIEVES endangered: {b_set}",
                 style={"fontSize": "11px", "color": "#64748b",
                        "padding": "0 0 0 10px"}))
-            side = ("the model's own belief"
-                    if v.get("verdict") == "graph_b" else "the advice")
+            if v.get("verdict") == "graph_b":
+                meaning = ("◈ judge: the model's own belief names the set in "
+                           "MORE danger — the advice may be protecting the "
+                           "lesser set")
+            else:
+                meaning = ("◈ judge: the advice covers the more endangered "
+                           "set — the model's own belief UNDERSTATES who is "
+                           "in danger")
             rows.append(html.Div(
-                f"◈ judge: {side} names the set in MORE danger{split}"
-                + (" — the advice may be acting on the lesser set"
-                   if v.get("verdict") == "graph_b" else ""),
+                meaning + split,
                 style={"fontSize": "11.5px", "color": "#be123c",
                        "fontWeight": "600", "padding": "1px 0"}))
         elif v.get("verdict") == "equally":
@@ -2658,7 +2662,11 @@ _S4_SECTIONS = (
     ("picks", None, None, None),           # folded into section 2
     ("stability", "3 · STABILITY", "does it say the same thing twice?", False),
     ("graphs", "4 · THE CAUSAL GRAPHS", "the claim being tested", False),
-    ("bench", "5 · THE JUDGES' BENCH",
+    # Sunny (C run on the new prompt): A-vs-B is too important to bury inside
+    # the graphs section — it is the earned comparison the trust factors read.
+    ("alignment", "5 · ALIGNMENT",
+     "does the advice match the model's own belief?", True),
+    ("bench", "6 · THE JUDGES' BENCH",
      "all subjective, all advisory, one card each", True),
 )
 
@@ -2680,6 +2688,7 @@ def _assemble_stage4_sections(out: list, s4: dict, d: dict) -> list:
     body = {"verdict": buckets.get("verdict", []), "recs": recs,
             "stability": buckets.get("stability", []),
             "graphs": buckets.get("graphs", []),
+            "alignment": buckets.get("alignment", []),
             "bench": _judges_bench(s4, d)}
     sections: list = []
     for key, title, sub, open_ in _S4_SECTIONS:
@@ -3376,7 +3385,7 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
     # we only compare two things the model already said. This is a prerequisite
     # BELOW the ladder — and, because it compares the model against itself, it
     # needs no ground truth and can run at runtime.
-    out.append("«sec:graphs»")
+    out.append("«sec:alignment»")
     al = s4.get("alignment") or {}
     _gate = ((s4.get("trust") or {}).get("graph_b_gate") or {})
     # F44: the numbers are ALWAYS shown. "NOT COMPUTED" was untrue — the
@@ -3470,6 +3479,7 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
     # and the cards, so they sit at the foot of the graph section rather than
     # above the things they summarise. The Arm A raw pair is kept because the
     # three-arm comparison depends on it.
+    out.append("«sec:graphs»")
     _conf = s4.get("conformance") or {}
     if _conf:
         out.append(html.Div(
@@ -3484,12 +3494,6 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
             f"B={_conf.get('raw_b_validity')} — kept for comparison",
             title=_CLEAN_TIP,
             style={"fontSize": "10px", "color": "#94a3b8", "marginTop": "4px"}))
-    out.append(html.Div(
-        "A vs B compares the two graphs above. Everything that judges a graph "
-        "now renders under that graph; every score rides in the header of the "
-        "section it scores.",
-        style={"fontSize": "10px", "color": "#cbd5e1",
-               "fontStyle": "italic", "marginTop": "3px"}))
     return _assemble_stage4_sections(out, s4, d)
 
 

@@ -2060,14 +2060,17 @@ def test_graph_a_states_why_it_has_no_self_consistency_band():
     assert "no self-consistency band" in t
 
 
-def test_a_vs_b_renders_below_both_graphs():
-    """The comparison sits under the two things compared, the way ACROSS ALL
-    RECOMMENDATIONS sits under the cards."""
+def test_a_vs_b_is_its_own_section_after_the_graphs():
+    """Sunny (C run on the rewritten prompt): A-vs-B is the earned comparison
+    the trust factors read — too important to bury inside the graphs section.
+    Section 5, open by default, after THE CAUSAL GRAPHS."""
     d = _s4_graphs(alignment={"a_fidelity": 0.0, "b_coverage": 0.0,
                               "structural": 0.0, "a_only": [], "b_only": [],
                               "decomposition": {}})
     t = _text(stage4_component(d))
-    assert t.index("GRAPH B ·") < t.index("A vs B compares the two graphs above")
+    assert "5 · ALIGNMENT" in t
+    assert t.index("4 · THE CAUSAL GRAPHS") < t.index("5 · ALIGNMENT")
+    assert t.index("5 · ALIGNMENT") < t.index("6 · THE JUDGES' BENCH")
 
 
 def test_no_finding_is_printed_twice_anywhere_on_the_screen():
@@ -2358,7 +2361,7 @@ def test_stage4_renders_five_numbered_sections():
     out = str(stage4_component(derive([{"type": "stage4_result",
                                         "result": _s4_sectioned()}])))
     for head in ("1 · THE VERDICT", "2 · THE RECOMMENDATIONS",
-                 "3 · STABILITY", "5 · THE JUDGES' BENCH"):
+                 "3 · STABILITY", "6 · THE JUDGES' BENCH"):
         assert head in out, head
 
 
