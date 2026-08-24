@@ -494,8 +494,10 @@ def test_prompt_scopes_the_threat_slot_to_declared_threats():
     import agentic.recommend as R
     p = re.sub(r"\s+", " ", R.RECOMMEND_PROMPT)      # the prompt is wrapped
     assert "one of the object_ids on the `threats:` line" in p
-    assert "never its own threat" in p
-    assert "at-risk entity is never the threat" in p
+    # reworded 2026-08-19 (Sunny): the ban now speaks in the quad's own key
+    # names — "must never appear in affected_objects" IS the self-loop ban
+    assert "must never appear in affected_objects" in p
+    assert "an at-risk entity must never be the threat" in p
 
 
 def test_prompt_allows_one_hazard_to_justify_several_actions():

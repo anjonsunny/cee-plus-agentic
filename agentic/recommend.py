@@ -160,18 +160,17 @@ with exactly these keys:
       says are harmed in `affected_objects`. If you cannot fill the four keys
       without changing the claim, the reason was wrong: rewrite the reason.
         - threat: object_id of the SOURCE of harm — one of the object_ids on
-          the `threats:` line above. The quad always describes the DANGER the
-          action responds to, never the action itself, so a rescue still names
-          the hazard the victim is being rescued FROM: "rescue X" is
-          <hazard> -> may_harm -> X. An entity is never its own threat, and an
-          at-risk entity is never the threat — being in danger is not the same
-          as causing it.
-        - state: that threat's hazard-bearing state. It must be one of the
-          state= values listed for that object_id above. 'distress' and
-          'proximity' are at_risk_as ROLES, not states; never use them here.
+          the `threats:` line above. The threat is what the action responds
+          to, never the action itself: "rescue X" names the threat X is
+          rescued FROM. The threat must never appear in affected_objects,
+          and an at-risk entity must never be the threat.
+        - state: that threat's hazard-bearing state, exactly as listed for
+          that object_id above. 'distress' and 'proximity' are roles, not
+          states; never use them here.
         - effect: exactly one of [{effects}]
         - affected_objects: {affected_clause} Plain ids only — never an id
-          with a suffix attached.
+          with a suffix attached. These are the entities the threat harms —
+          the threat itself never among them.
       Together, the action, the reason and the quad must all describe ONE
       causal claim: the reason and the quad each explain, on their own, why
       THAT action on THOSE entities is the right response to THAT danger.
