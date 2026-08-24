@@ -693,11 +693,24 @@ def entities_named_in(text: Any, record: Any) -> set:
     if not t.strip():
         return set()
     out = set(_ID_RE.findall(t.lower()))
+    # C_tanker live (Sunny): "Deploy a rescue team to assist the driver" read
+    # as UNATTRIBUTED because the matcher could not hear "driver" naming
+    # person_1 — while the closed vocabulary has known driver->person since
+    # Stage 1. One synonym map, heard everywhere (the F51 lesson, applied to
+    # our own matcher): for each entity, also try the synonyms that
+    # canonicalise to its label.
+    from agentic.vocabulary import LABEL_SYNONYMS
+    syn_of: dict[str, list] = {}
+    for raw, canon in LABEL_SYNONYMS.items():
+        syn_of.setdefault(canon, []).append(raw)
     for o in (getattr(record, "detected_objects", None) or []):
         oid = str(getattr(o, "object_id", ""))
         if not oid or oid in out:
             continue
-        for key in (getattr(o, "label", ""), getattr(o, "state", "")):
+        label = str(getattr(o, "label", "") or "")
+        keys = [label, str(getattr(o, "state", "") or "")]
+        keys += syn_of.get(label, [])
+        for key in keys:
             key = str(key or "").replace("_", " ").strip()
             if not key:
                 continue
@@ -849,7 +862,14 @@ def explanation_alignment(record: Any, assessment: Any,
                                           at_risk_ids),
                       "acted_on": sorted(acted_on),
                       "acted_on_by_label": sorted(acted_for_mode - acted_on),
-                      "has_quad_threat": bool(q_threat)})
+                      # C_tanker live (Sunny): a victim misfiled in the threat
+                      # slot (person_1 self-loop) counted as testable, and the
+                      # rollup claimed "every recommendation acts on a
+                      # declared hazard" over a rec that rescues the driver.
+                      # Testable = the slot names a DECLARED hazard; you
+                      # cannot suppress a person.
+                      "has_quad_threat": bool(q_threat)
+                      and q_threat in threat_ids})
 
         # ── surface: REASON — the same rules the quad obeys ────────────
         p = parse_reason(r.get("reason"))

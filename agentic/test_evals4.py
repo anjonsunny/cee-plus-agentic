@@ -1745,3 +1745,26 @@ def test_a_set_level_mixup_with_no_rec_level_twin_still_charges():
     mix = [f for f in out["failures"] if f["category"] == "role mix-up"
            and "used as a threat" in f["detail"]]
     assert len(mix) == 1 and mix[0]["severity"] == 3
+
+
+def test_driver_is_heard_as_the_person_and_a_victim_slot_is_not_testable():
+    """C_tanker live (ui_4e9c5cc6, Sunny's catch): the rollup said "every
+    recommendation acts on a declared hazard" while rec 2 rescued the driver.
+    Two defects: the matcher could not hear "driver" naming person_1 (the
+    vocabulary has known driver->person since Stage 1), and a victim misfiled
+    in the quad's threat slot counted as suppression-testable — you cannot
+    suppress a person."""
+    rec = _rec_pair()[0]
+    asm = _rec_pair()[1]
+    from agentic.evals4 import entities_named_in
+    assert "person_1" in entities_named_in(
+        "Deploy a rescue team to assist the driver.", rec)
+    r = {"rank": 1, "action": "Deploy a rescue team to assist the driver.",
+         "reason": "person_1 is exposed",
+         "structured_reasoning": {"threat": "person_1", "state": "standing",
+                                  "effect": "exposes",
+                                  "affected_objects": ["person_1"]}}
+    out = explanation_alignment(rec, asm, [r])
+    m = out["modes"][0]
+    assert m["mode"] == "victim_directed"       # the driver IS the person
+    assert m["has_quad_threat"] is False        # a person is not suppressible
