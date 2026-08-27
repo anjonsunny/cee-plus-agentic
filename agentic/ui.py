@@ -1677,22 +1677,20 @@ def _graph_judge_rows(gj: dict) -> list:
         thin = bool(n) and votes <= (n // 2) + 1 and votes < n
         split = f"  ({votes}/{n})" + ("  · thin, close to a coin flip"
                                       if thin else "")
+        # Sunny: transparent, not vague — what A covers, what B covers, then
+        # the rest. The two set lines print on EVERY verdict branch; "both
+        # sets are equally exposed" with no sets named was a riddle.
+        a_set = ", ".join(vic.get("graph_a") or []) or "—"
+        b_set = ", ".join(vic.get("graph_b") or []) or "—"
+        rows.append(html.Div(
+            f"the ADVICE acts as if endangered: {a_set}",
+            style={"fontSize": "11px", "color": "#64748b",
+                   "padding": "1px 0 0 10px"}))
+        rows.append(html.Div(
+            f"asked independently, the model BELIEVES endangered: {b_set}",
+            style={"fontSize": "11px", "color": "#64748b",
+                   "padding": "0 0 0 10px"}))
         if who:
-            # F53 follow-up (Sunny: "less vague"). The old sentence packed
-            # both sets and both roles into one clause and came out garbled
-            # ("the entities the model protects are endangered are in MORE
-            # danger than the ones the advice believes"). Three lines: what
-            # each account says, then the verdict in plain words.
-            a_set = ", ".join(vic.get("graph_a") or []) or "—"
-            b_set = ", ".join(vic.get("graph_b") or []) or "—"
-            rows.append(html.Div(
-                f"the ADVICE acts as if endangered: {a_set}",
-                style={"fontSize": "11px", "color": "#64748b",
-                       "padding": "1px 0 0 10px"}))
-            rows.append(html.Div(
-                f"asked independently, the model BELIEVES endangered: {b_set}",
-                style={"fontSize": "11px", "color": "#64748b",
-                       "padding": "0 0 0 10px"}))
             if v.get("verdict") == "graph_b":
                 meaning = ("◈ judge: the model's own belief names the set in "
                            "MORE danger — the advice may be protecting the "
@@ -2625,7 +2623,11 @@ def _judges_bench(s4: dict, d: dict) -> list:
         if rows:
             cards.append(_bench_card(
                 "GRAPH JUDGE",
-                "the two questions the A-vs-B arithmetic cannot answer",
+                "the advice implies one set of endangered entities (Graph "
+                "A); the model's independent belief names another (Graph B). "
+                "When they differ: which set faces the graver harm? "
+                "Arithmetic counts the difference; weighing it needs a "
+                "reader.",
                 rows, None,
                 "text-only (twin arrives with the A-vs-B judge build)",
                 wide=True))
