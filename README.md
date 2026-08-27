@@ -39,7 +39,8 @@ The agentic arm processes each scene in stages and self-corrects rather than ans
 
 - **Stage 1 — Perception.** The VLM names entities; a repair loop fixes malformed output (the model may stand its ground); boxes and masks are attached; hazards are derived as states and duplicate detections merged. Nothing is deleted silently, every derivation is recorded with a note and an event.
 - **Stage 2 — Assessment.** One merged judgment (disaster yes/no, type, level, threats, at-risk entities), checked against the ontology and geometry, then re-sampled to measure uncertainty and refined through a reflection loop (capped, evidence-quoted). Judges advise; only the model revises.
-- **Stage 4 — Recommendations (in progress).** The model recommends actions; measured uncertainty re-samples each step to flag recommendations that don't reproduce; a causal graph is built two ways, from code and from the model's own structured declaration, and intervention candidates are selected from both plus direct model asks. A consequence-weighted Trust Score rolls the signals up with Low / Moderate / High bands.
+- **Stage 4 — Recommendations (in progress).** The model recommends actions; measured uncertainty re-samples each step to flag recommendations that don't reproduce; a causal graph is built two ways, from code and from the model's own structured declaration, and intervention candidates are selected from both plus direct model asks. A consequence-weighted Trust Score rolls the signals up with Low / Moderate / High bands, minus deductions from a priced library of singular errors (an invented emergency, a victim left behind, an unaddressed hazard, a non-action).
+- **Judges (advisory only).** Every verdict is advice; none moves a score. Built so far: a card judge (does each explanation actually explain its action?), a runoff judge over disagreeing probe answers (two applications: recommendations and Graph B), and a combined A-vs-B judge (which causal account better describes the scene, and whose endangered set faces the graver harm?). Judges run as twins — the same model answering text-only (official) and image-aware (witness) — and only their agreement or disagreement is displayed. All judge reasoning is captured verbatim, alongside preference pairs and repair pairs, as training data for a future fine-tuned overseer.
 
 Two self-correction loops and a two-route petition (re-look at the image, or re-ask the question once, fresh) drive revision. The whole agentic pipeline runs as byte-identical LangGraph and Python controls and is covered by a hermetic test suite (`pytest agentic/ -q`, no models needed).
 
@@ -98,7 +99,8 @@ A pre-build audit of the imported scoring metrics (finding F15) surfaced four de
 ```bash
 brew install ollama
 ollama serve
-ollama pull qwen2.5vl:7b
+ollama pull qwen2.5vl:7b   # subject
+ollama pull gemma4:26b     # judges (text + image twins)
 
 conda activate clip_dash
 pip install -r requirements.txt
@@ -123,9 +125,12 @@ pytest agentic/ -q
   - `perception.py`, `repair_loop.py`, `vocabulary.py` — Stage 1 (naming, repair, grounding, masks, hazard derivation)
   - `assessment.py`, `uncertainty.py`, `reflection.py`, `petition.py` — Stage 2 (merged judgment, measured uncertainty, reflection, two-route petition)
   - `recommend.py`, `evals4.py`, `graph_s4.py` — Stage 4 (recommendations, consequence-weighted trust, LangGraph twin)
+  - `judge_card.py`, `judge_runoff.py`, `judge_graph.py` — the Stage 4 judges (card, runoff twins, combined A-vs-B)
+  - `errors4.py`, `models.py` — singular-error library priced by consequence; model seats (any subject, any judge)
+  - `JUDGES.md`, `PANELS.md` — the judge spec and the finding-to-objective map
   - `rulebook.py` / `rulebook_rag.py` — one law, two engines: code detects, rulebook text teaches
   - `evals.py`, `geometry.py`, `ui.py`, `dialogue.py` — GT eval, bbox geometry, Dash UI, chat over run records
-  - `FINDINGS.md` — the findings ledger (F1–F15 across six fix categories, A–F)
+  - `FINDINGS.md` — the findings ledger (F1–F54 across six fix categories, A–F)
   - `test_*.py` — hermetic tests, no models needed
 - `experiments/agentic_scenes/` — frozen calibration scenes + verified ground truth
 - `GROUND_TRUTH_PROTOCOL.md` — schema rules and validation conventions
@@ -136,12 +141,12 @@ pytest agentic/ -q
 - **Legacy arm (`main.py`)** — operational, including the intervention gate with six shift signals.
 - **Agentic Stage 1 (Perception)** — operational.
 - **Agentic Stage 2 (Assessment)** — operational; closing formally (the silence test on the safe scene plus scene re-runs).
-- **Agentic Stage 4 (Recommendations)** — Phase 1a/1b built: recommend, measure uncertainty, build Graph A (from code) and Graph B (from the model), pick intervention targets, and roll up a consequence-weighted Trust Score. Python and LangGraph controls are byte-identical; 384 hermetic tests pass.
+- **Agentic Stage 4 (Recommendations)** — Phase 1a/1b built plus the judges' bench: recommend, measure uncertainty, build Graph A (from code) and Graph B (from the model), pick intervention targets, roll up a consequence-weighted Trust Score with the singular-error library, and run the advisory judges (card, runoff twins, combined A-vs-B) with all reasoning captured as training data. Python and LangGraph controls are byte-identical; 714 hermetic tests pass. Calibration on the six scenes is in progress (A fire, C tanker, D aerial done on the current prompts).
 
 Roadmap, in order:
 
-1. **Calibrate Stage 4 on the six scenes** (live, via Ollama). Tune the trust and consequence weights, which are currently priors. This same live pass closes Stage 2.
-2. **Reflection loop for Stage 4** (gated by measured uncertainty). Judges advise (rubric per-recommendation, across-set, and reason-to-quad semantic checks via RAG), reflection carries the message, and only the model revises; petitions are the second self-correction route. A light re-calibration follows, since reflection changes the outputs.
+1. **Calibrate Stage 4 on the six scenes** (live, via Ollama). Tune the trust and consequence weights and calibrate the judges scene by scene. This same live pass closes Stage 2. In progress.
+2. **Reflection loop for Stage 4** (gated by measured uncertainty). The remaining judges land here (pathology detector and judge, then the overseer); judges advise, reflection carries the message, and only the model revises; petitions are the second self-correction route. A light re-calibration follows, since reflection changes the outputs.
 3. **Pathology (S5).** Map the calibrated, reflection-stable signals onto the five named pathologies.
 4. **Intervention gate (S6).** Port the counterfactual gate (declared-vs-operative groundedness, faithfulness) from the legacy arm into the agentic arm, then extend it to multi-step interventions and to video and audio.
 
