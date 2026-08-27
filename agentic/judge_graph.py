@@ -312,3 +312,141 @@ def judge_graphs(graph_a: dict, graph_b: dict, decomposition: dict,
                   "asked_victims": out["victims"] is not None,
                   "n_mechanisms": len(out["mechanisms"])})
     return out
+
+
+# ── The combined A-vs-B judge (one call, two questions; Sunny 2026-08-19) ──
+#
+# Q1 (ACCOUNT) is new: which account better describes the scene — the
+# preference verdict, and the Graph A-vs-B training pair. Q2 (VICTIMS) is the
+# existing victims question, kept in the SAME call so the two verdicts cannot
+# contradict each other across separate contexts (the F41 lesson). The stats
+# are HANDED IN as context: asking a model to recompute what code already
+# knows buys confident contradictions of our own arithmetic.
+
+PROMPT_VERSION = "ab-v1"
+ACCOUNT_A, ACCOUNT_B, EQUAL_GOOD = "account_a", "account_b", "equally_good"
+
+AB_PROMPT = """THE SCENE:
+{scene_block}
+
+Two accounts of this scene were produced by the same model.
+
+ACCOUNT A — implied by its recommendations (each arrow backs an action):
+{graph_a}
+
+ACCOUNT B — its independent causal belief, asked without the recommendations:
+{graph_b}
+
+Arithmetic already computed their overlap; it is context, not a question:
+{stats}
+
+Q1. Which account better describes this scene? Judge only against the scene
+above: real entities, arrows from dangerous states, every danger covered,
+the endangered entities included. If neither is better, say so.
+{victims_q}
+Think it through step by step, citing entity ids. Then end with exactly
+these lines and nothing after them:
+
+ACCOUNT: [account_a | account_b | equally_good]{victims_line}
+"""
+
+VICTIMS_Q = """
+Q2. The two accounts name different endangered entities. Which set faces
+the graver harm if the danger is not dealt with? Weigh how badly each
+entity is affected and whether that harm can be undone.
+"""
+VICTIMS_LINE = "\nVICTIMS: [account_a | account_b | equally]"
+
+
+def _fmt_edges(graph: dict) -> str:
+    seen, lines = set(), []
+    for e in ((graph or {}).get("edges") or []):
+        if not isinstance(e, dict):
+            continue
+        k = (e.get("source"), e.get("effect"), e.get("target"))
+        if k in seen:
+            continue
+        seen.add(k)
+        lines.append(f"  {e.get('source')} --{e.get('effect')}--> "
+                     f"{e.get('target')}")
+    return "\n".join(lines) or "  (no causal links)"
+
+
+def _fmt_stats(dc: dict) -> str:
+    out = []
+    for key, label in (("hazards", "same sources of harm"),
+                       ("victims", "same endangered entities"),
+                       ("pairs", "same source-target arrows")):
+        v = (dc or {}).get(key)
+        if isinstance(v, (int, float)):
+            out.append(f"  {label}: {v:.2f}")
+    return "\n".join(out) or "  (not computed)"
+
+
+def _probe_ab(prompt: str, judge_fn: Any, n_probes: int,
+              ask_victims: bool) -> dict:
+    """n votes on the combined prompt; every vote's reasoning kept (the F51
+    lesson — the loophole was visible nowhere but the reasoning)."""
+    acc, vic, texts = [], [], []
+    for _ in range(max(1, n_probes)):
+        try:
+            answer = judge_fn(prompt)
+        except Exception as exc:
+            answer = f"(judge error: {str(exc)[:60]})"
+        texts.append(str(answer))
+        acc.append(read_verdict(answer, (ACCOUNT_A, ACCOUNT_B, EQUAL_GOOD),
+                                "ACCOUNT"))
+        if ask_victims:
+            vic.append(read_verdict(answer, (ACCOUNT_A, ACCOUNT_B, "equally"),
+                                    "VICTIMS"))
+    out = {"account": _vote(acc)}
+    if ask_victims:
+        out["victims"] = _vote(vic)
+    out["all_reasoning"] = [{"account": a, "text": t[:4000]}
+                            for a, t in zip(acc, texts)]
+    return out
+
+
+def judge_ab(graph_a: dict, graph_b: dict, decomposition: dict,
+             scene_block: str, *, judge_fn: Any = None,
+             judge_image_fn: Any = None, at_risk_ids: Any = None,
+             n_probes: int | None = None) -> dict[str, Any]:
+    """The combined A-vs-B judge, twin-run. OFF unless judge_fn supplied."""
+    if judge_fn is None:
+        return {}
+    if n_probes is None:
+        from agentic import models as _models
+        n_probes = _models.JUDGE_VOTES
+    dc = decomposition or {}
+    # Q2 keeps its designed-case precondition: both exposed sets must contain
+    # a declared at-risk entity, else people-vs-pavement answers itself.
+    def _targets(g):
+        return {str(e.get("target")) for e in ((g or {}).get("edges") or [])
+                if isinstance(e, dict) and e.get("target")}
+    va, vb = _targets(graph_a), _targets(graph_b)
+    ar = {str(x) for x in (at_risk_ids or set())}
+    ask_victims = bool(va ^ vb) and (not ar or bool(va & ar and vb & ar))
+    prompt = AB_PROMPT.format(
+        scene_block=scene_block, graph_a=_fmt_edges(graph_a),
+        graph_b=_fmt_edges(graph_b), stats=_fmt_stats(dc),
+        victims_q=VICTIMS_Q if ask_victims else "",
+        victims_line=VICTIMS_LINE if ask_victims else "")
+    out: dict[str, Any] = {"advisory": True, "prompt_version": PROMPT_VERSION,
+                           "n_probes": n_probes, "asked_victims": ask_victims,
+                           "sets": {"graph_a": sorted(va),
+                                    "graph_b": sorted(vb)}}
+    if judge_image_fn is not None:
+        from concurrent.futures import ThreadPoolExecutor
+        from agentic.judge_runoff import IMAGE_PREFIX
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            ft = ex.submit(_probe_ab, prompt, judge_fn, n_probes, ask_victims)
+            fi = ex.submit(_probe_ab, IMAGE_PREFIX + prompt, judge_image_fn,
+                           n_probes, ask_victims)
+            out["text"], out["image"] = ft.result(), fi.result()
+        out["twins_agree"] = (out["text"]["account"]["verdict"]
+                              == out["image"]["account"]["verdict"])
+    else:
+        out["text"], out["image"] = _probe_ab(prompt, judge_fn, n_probes,
+                                              ask_victims), None
+        out["twins_agree"] = None
+    return out

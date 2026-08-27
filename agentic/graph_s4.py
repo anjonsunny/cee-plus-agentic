@@ -137,6 +137,7 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
         return run_graph_judge(state["record"], state["assessment"],
                                state["graph_a"], state["graph_b"],
                                state.get("alignment") or {},
+                               state.get("image_path", ""),
                                judge_fn=judge_fn, on_event=on_event)
 
     def runoff_judge(state: S4State) -> dict[str, Any]:

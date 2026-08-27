@@ -1522,34 +1522,40 @@ def run_card_judge(record: Any, assessment: Any, recommendations: list[dict],
 
 
 def run_graph_judge(record: Any, assessment: Any, graph_a: dict, graph_b: dict,
-                    alignment: dict, *, judge_fn: Any = None,
-                    on_event: Any = None) -> dict:
-    """F38 step (advisory). Ask an independent judge the two questions the
-    A-vs-B arithmetic cannot answer:
+                    alignment: dict, image_path: str = "", *,
+                    judge_fn: Any = None, on_event: Any = None) -> dict:
+    """The combined A-vs-B judge (Sunny, 2026-08-19) — ONE call, two
+    questions, so the verdicts cannot contradict each other:
 
-      Q1  the graphs agree on the hazard and name different entities harmed —
-          which set is more exposed?
-      Q2  both assert the same pair with a different effect — would a responder
-          DO something different?
+      Q1  ACCOUNT — which account better describes the scene? The preference
+          verdict, and the Graph A-vs-B training pair.
+      Q2  VICTIMS — whose endangered set faces the graver harm? Kept from
+          the old graph judge, same designed-case precondition.
 
-    Everything else about comparing two graphs (conflict, omission, reversed
-    direction, invented entity) is a set operation and stays in code.
-
-    OFF unless judge_fn is supplied. Never returns a score."""
+    Twin-run (text official, image witness); stats handed in as context.
+    Everything else about comparing two graphs is a set operation and stays
+    in code. OFF unless judge_fn is supplied. Never returns a score."""
     if judge_fn is None:
         return {"graph_judge": {}}
-    from agentic.judge_graph import judge_graphs
+    from agentic.judge_graph import judge_ab
+    from agentic.judge_runoff import default_image_judge
     emit = _emitter(on_event)
     _ar = {str(getattr(x, "object_id", "")) for x in
            (getattr(assessment, "at_risk", None) or [])}
-    out = judge_graphs(graph_a, graph_b,
-                       (alignment or {}).get("decomposition") or {},
-                       _scene_block(record, assessment), judge_fn=judge_fn,
-                       at_risk_ids=_ar, on_event=None)
+    out = judge_ab(graph_a, graph_b,
+                   (alignment or {}).get("decomposition") or {},
+                   _scene_block(record, assessment), judge_fn=judge_fn,
+                   judge_image_fn=default_image_judge(image_path),
+                   at_risk_ids=_ar)
     if out:
         emit("graph_judge_ready", advisory=True,
-             asked_victims=out.get("victims") is not None,
-             n_mechanisms=len(out.get("mechanisms") or []))
+             prompt_version=out.get("prompt_version"),
+             account_verdict=out["text"]["account"]["verdict"],
+             account_votes=out["text"]["account"]["votes"],
+             victims_verdict=(out["text"].get("victims") or {}).get("verdict"),
+             twins_agree=out.get("twins_agree"),
+             text_reasoning=(out["text"]["all_reasoning"][0]["text"]
+                             if out["text"].get("all_reasoning") else ""))
     return {"graph_judge": out}
 
 
@@ -1731,8 +1737,8 @@ def run_stage4(record: Any, assessment: Any, image_path: str = "",
                             evals["explanation_alignment"], judge_fn=judge_fn,
                             on_event=on_event)
     gjudged = run_graph_judge(record, assessment, graph_a, graph_b,
-                              evals["alignment"], judge_fn=judge_fn,
-                              on_event=on_event)
+                              evals["alignment"], image_path,
+                              judge_fn=judge_fn, on_event=on_event)
     rjudged = run_runoff_judge(record, assessment,
                                unc.get("probe_recs") or [],
                                (gbu or {}).get("graphs") or [],

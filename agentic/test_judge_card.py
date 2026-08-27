@@ -498,3 +498,94 @@ def test_graph_judge_convenes_when_both_sets_hold_at_risk_entities():
                        at_risk_ids={"person_1", "hazmat_worker_1"})
     assert out.get("victims", {}).get("verdict") == "graph_b"
     assert "victims_note" not in out
+
+
+# ── the combined A-vs-B judge (ab-v1): one call, two questions ──────────
+
+_AB_A = {"edges": [{"source": "fire_1", "effect": "may_harm",
+                    "target": "person_1"}]}
+_AB_B = {"edges": [{"source": "fire_1", "effect": "may_harm",
+                    "target": "person_2"}]}
+
+
+def test_the_ab_judge_is_off_unless_asked_for():
+    from agentic.judge_graph import judge_ab
+    assert judge_ab(_AB_A, _AB_B, {}, "s") == {}
+
+
+def test_the_ab_judge_reads_the_account_verdict_and_keeps_reasoning():
+    from agentic.judge_graph import judge_ab
+    out = judge_ab(_AB_A, _AB_B, {}, "scene",
+                   judge_fn=lambda p: "because B saw more.\n"
+                                      "ACCOUNT: [account_b]",
+                   at_risk_ids={"person_1", "person_2"}, n_probes=3)
+    assert out["advisory"] is True
+    assert out["text"]["account"]["verdict"] == "account_b"
+    assert out["text"]["account"]["votes"] == 3
+    # F51: every probe's prose survives — loopholes live in the reasoning
+    assert len(out["text"]["all_reasoning"]) == 3
+    assert "because B saw more" in out["text"]["all_reasoning"][0]["text"]
+
+
+def test_victims_runs_only_on_its_designed_case():
+    """Both exposed sets must contain a declared at-risk entity, else
+    people-vs-pavement answers itself and the question is skipped."""
+    from agentic.judge_graph import judge_ab
+    fn = lambda p: "ACCOUNT: [equally_good]\nVICTIMS: [account_a]"
+    # designed case: sets differ, both hold an at-risk entity -> asked
+    out = judge_ab(_AB_A, _AB_B, {}, "s", judge_fn=fn,
+                   at_risk_ids={"person_1", "person_2"})
+    assert out["asked_victims"] is True
+    assert out["text"]["victims"]["verdict"] == "account_a"
+    # people-vs-pavement: B's set holds no at-risk entity -> skipped
+    b_pave = {"edges": [{"source": "fire_1", "effect": "may_spread_to",
+                         "target": "structure_1"}]}
+    out = judge_ab(_AB_A, b_pave, {}, "s", judge_fn=fn,
+                   at_risk_ids={"person_1"})
+    assert out["asked_victims"] is False
+    assert "victims" not in out["text"]
+    # identical sets: nothing to weigh
+    out = judge_ab(_AB_A, _AB_A, {}, "s", judge_fn=fn,
+                   at_risk_ids={"person_1"})
+    assert out["asked_victims"] is False
+
+
+def test_the_ab_twins_agree_and_disagree_honestly():
+    from agentic.judge_graph import judge_ab
+    text_fn = lambda p: "ACCOUNT: [account_a]"
+    out = judge_ab(_AB_A, _AB_B, {}, "s", judge_fn=text_fn,
+                   judge_image_fn=lambda p: "ACCOUNT: [account_a]",
+                   at_risk_ids=set(), n_probes=1)
+    assert out["twins_agree"] is True
+    out = judge_ab(_AB_A, _AB_B, {}, "s", judge_fn=text_fn,
+                   judge_image_fn=lambda p: "ACCOUNT: [account_b]",
+                   at_risk_ids=set(), n_probes=1)
+    assert out["twins_agree"] is False
+    assert out["image"]["account"]["verdict"] == "account_b"
+
+
+def test_the_ab_prompt_carries_the_stats_and_both_graphs():
+    """The arithmetic is handed to the judge as context, not recomputed."""
+    from agentic.judge_graph import judge_ab
+    seen = []
+
+    def fn(p):
+        seen.append(p)
+        return "ACCOUNT: [equally_good]"
+
+    judge_ab(_AB_A, _AB_B, {"hazards": 1.0, "victims": 0.0},
+             "the scene block", judge_fn=fn, at_risk_ids=set(), n_probes=1)
+    p = seen[0]
+    assert "the scene block" in p
+    assert "fire_1 --may_harm--> person_1" in p
+    assert "fire_1 --may_harm--> person_2" in p
+
+
+def test_the_ab_prompt_is_neutral():
+    """F2/F52 scars: the template names no scene, ships no example answer,
+    and never says what the right verdict is."""
+    from agentic.judge_graph import AB_PROMPT
+    low = AB_PROMPT.lower()
+    for banned in ("fire_1", "pool", "tanker", "collapse", "for example",
+                   "e.g."):
+        assert banned not in low, banned

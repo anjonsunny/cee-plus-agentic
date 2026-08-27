@@ -1637,6 +1637,114 @@ def _runoff_rows(ro: dict) -> list:
     return rows
 
 
+def _ab_judge_rows(gj: dict) -> list:
+    """The combined A-vs-B judge (ab-v1): ACCOUNT preference + the kept
+    VICTIMS question, one call. Renders the OFFICIAL (text-only) verdicts;
+    the image twin appears only as the agreement chip."""
+    t = gj.get("text") or {}
+    rows: list[Any] = []
+    lab = {"account_a": "the ADVICE's account (Graph A)",
+           "account_b": "the INDEPENDENT belief (Graph B)",
+           "equally_good": "both accounts equally good",
+           "unclear": "no clear verdict"}
+    acc = t.get("account") or {}
+    av = acc.get("verdict")
+    rows.append(html.Div([
+        html.Span("which account better describes the scene: ",
+                  style={"color": "#64748b"}),
+        html.B(lab.get(av, "?")),
+        html.Span(f"  ({acc.get('votes', 0)}/{acc.get('n', 0)})",
+                  style={"color": "#94a3b8"})],
+        style={"fontSize": "11px", "padding": "1px 0"}))
+    if av == "account_b":
+        rows.append(html.Div(
+            "◈ judge: asked independently, the model describes the scene "
+            "BETTER than its advice implies — the advice is working from "
+            "the weaker account",
+            style={"fontSize": "11.5px", "color": "#be123c",
+                   "fontWeight": "600", "padding": "1px 0"}))
+    elif av == "account_a":
+        rows.append(html.Div(
+            "◆ judge: the advice's own account is the stronger one",
+            style={"fontSize": "11.5px", "color": "#7c3aed",
+                   "padding": "1px 0"}))
+    # VICTIMS — same designed case as before; code names both sets on
+    # every branch (nameless verdicts were a riddle).
+    sets = gj.get("sets") or {}
+    a_set = ", ".join(sets.get("graph_a") or []) or "—"
+    b_set = ", ".join(sets.get("graph_b") or []) or "—"
+    vic = t.get("victims") or {}
+    if gj.get("asked_victims") and vic:
+        rows.append(html.Div(
+            f"the ADVICE acts as if endangered: {a_set}",
+            style={"fontSize": "11px", "color": "#64748b",
+                   "padding": "3px 0 0 10px"}))
+        rows.append(html.Div(
+            f"asked independently, the model BELIEVES endangered: {b_set}",
+            style={"fontSize": "11px", "color": "#64748b",
+                   "padding": "0 0 0 10px"}))
+        vv = vic.get("verdict")
+        n, votes = vic.get("n") or 0, vic.get("votes") or 0
+        split = f"  ({votes}/{n})"
+        if vv == "account_b":
+            rows.append(html.Div(
+                "◈ judge: the model's own belief names the set in MORE "
+                "danger — the advice may be protecting the lesser set"
+                + split,
+                style={"fontSize": "11.5px", "color": "#be123c",
+                       "fontWeight": "600", "padding": "1px 0"}))
+        elif vv == "account_a":
+            rows.append(html.Div(
+                "◈ judge: the advice covers the more endangered set — the "
+                "model's own belief UNDERSTATES who is in danger" + split,
+                style={"fontSize": "11.5px", "color": "#be123c",
+                       "fontWeight": "600", "padding": "1px 0"}))
+        elif vv == "equally":
+            rows.append(html.Div(
+                "◆ both sets are equally exposed" + split,
+                style={"fontSize": "11.5px", "color": "#7c3aed",
+                       "padding": "1px 0"}))
+        else:
+            rows.append(html.Div(
+                "◇ the judge could not decide which set is more exposed"
+                + split,
+                style={"fontSize": "11.5px", "color": "#94a3b8",
+                       "padding": "1px 0"}))
+    # F51 lesson: the reasoning is where the loopholes live — show the
+    # first probe's prose, folded.
+    reasons = t.get("all_reasoning") or []
+    if reasons and reasons[0].get("text"):
+        rows.append(html.Details([
+            html.Summary("judge's reasoning (probe 1)",
+                         style={"fontSize": "10px", "color": "#7c3aed",
+                                "cursor": "pointer"}),
+            html.Div(reasons[0]["text"],
+                     style={"fontSize": "10px", "color": "#475569",
+                            "whiteSpace": "pre-wrap",
+                            "maxHeight": "180px", "overflowY": "auto",
+                            "padding": "2px 0 0 8px"})],
+            style={"padding": "2px 0"}))
+    return rows
+
+
+def _ab_twin_chip(gj: dict) -> Any:
+    lab = {"account_a": "account A", "account_b": "account B",
+           "equally_good": "equal", "unclear": "unclear"}
+    t, im = gj.get("text") or {}, gj.get("image")
+    if not im:
+        return html.Span("image twin did not run", style={
+            "fontSize": "9.5px", "color": "#cbd5e1", "fontStyle": "italic"})
+    agree = gj.get("twins_agree")
+    tv = (t.get("account") or {}).get("verdict")
+    iv = (im.get("account") or {}).get("verdict")
+    return html.Span(
+        "✓ TWINS AGREE" if agree else
+        f"⚠ TWINS DISAGREE (text: {lab.get(tv, '?')} · "
+        f"image: {lab.get(iv, '?')})",
+        style={"fontSize": "9.5px", "fontWeight": "800",
+               "color": "#16a34a" if agree else "#b45309"})
+
+
 def _graph_judge_rows(gj: dict) -> list:
     """F38 — the two questions the A-vs-B arithmetic cannot answer.
 
@@ -2615,10 +2723,22 @@ def _judges_bench(s4: dict, d: dict) -> list:
                 wide=True))
             continue
     gj = s4.get("graph_judge") or {}
-    if gj:
-        # F43's decisions travel with the verdict: the original renderer
-        # names both victim sets, keeps the judge's words diagnosis-free,
-        # and marks unclear verdicts apart. The bench reuses it verbatim.
+    if gj.get("text"):
+        # the combined A-vs-B judge (ab-v1): ACCOUNT preference + VICTIMS
+        # in one call, twin-run.
+        cards.append(_bench_card(
+            "A-vs-B JUDGE",
+            "the recommendations imply one causal account of the scene "
+            "(Graph A); asked independently, the model states another "
+            "(Graph B). Which account better describes the scene — and "
+            "when they name different endangered entities, whose set "
+            "faces the graver harm?",
+            _ab_judge_rows(gj), _ab_twin_chip(gj),
+            f"prompt {gj.get('prompt_version', '?')} · "
+            "text twin is OFFICIAL, image twin is the witness",
+            wide=True))
+    elif gj:
+        # legacy records (pre ab-v1): F43's original renderer, verbatim.
         rows = _graph_judge_rows(gj)
         if rows:
             cards.append(_bench_card(
@@ -2643,6 +2763,8 @@ def _judges_bench(s4: dict, d: dict) -> list:
     # bench header: twins + judge time, when the live event stream carried it
     twins = [x.get("twins_agree") for x in ro.values()
              if isinstance(x, dict) and x.get("twins_agree") is not None]
+    if gj.get("twins_agree") is not None:
+        twins.append(gj.get("twins_agree"))
     head_bits = []
     if twins:
         head_bits.append(f"twins: {sum(1 for t in twins if t)} agree / "
