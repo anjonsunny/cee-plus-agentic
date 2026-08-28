@@ -171,6 +171,12 @@ def _hazard_consequence(hid: str, record: Any, assessment: Any,
     return round(max(own, worst), 3)
 
 
+# Actions that protect a victim rather than act on a hazard. Stems, so
+# "evacuate"/"evacuating" both match.
+_PROTECTIVE_VERBS = ("evacuat", "rescue", "relocat", "shelter", "escort",
+                     "safety", "guide", "lead", "carry")
+
+
 def _touched(recommendations: list, record: Any) -> set:
     """Every entity the set of recommendations acts on or speaks about."""
     from agentic.evals4 import entities_named_in
@@ -201,6 +207,7 @@ def singular_errors(record: Any, assessment: Any, recommendations: list,
                for a in (getattr(assessment, "at_risk", None) or [])}
     hazards = {str(getattr(o, "object_id", "")) for o in objs
                if str(getattr(o, "state_kind", "")) == "hazard_bearing"}
+    from agentic.evals4 import entities_named_in
     touched = _touched(recs, record)
     found: list[dict] = []
 
@@ -231,14 +238,55 @@ def singular_errors(record: Any, assessment: Any, recommendations: list,
             f"{len(recs)} recommendation(s) anyway", 1.0, [])
 
     # 3. A declared danger nobody acts on, scaled by who it can reach.
+    #    Sunny (2026-08-28, run ui_7397dae7): a hazard you cannot act on
+    #    directly (smoke, a gas cloud, flood water) is ADDRESSED when the
+    #    advice protects its victims. If every entity the model's own graph
+    #    says the hazard reaches is covered by a PROTECTIVE recommendation
+    #    (evacuate, rescue, shelter...), the charge is waived — recorded at
+    #    deduction 0 with a note, never silently dropped.
     unaddressed = [h for h in hazards if h not in touched]
     if unaddressed:
-        add("hazard_unaddressed",
-            "declared a danger, and no recommendation acts on it: "
-            + ", ".join(sorted(unaddressed)),
-            max(_hazard_consequence(h, record, assessment, graph_b, touched)
-                for h in unaddressed),
-            unaddressed)
+        protected: set = set()
+        prot_rank: dict = {}
+        for r in recs:
+            act = str(r.get("action", "")).lower()
+            if not any(v in act for v in _PROTECTIVE_VERBS):
+                continue
+            q = r.get("structured_reasoning") or {}
+            ents = ({str(v) for v in (q.get("affected_objects") or [])}
+                    | entities_named_in(r.get("action"), record))
+            for v in ents:
+                protected.add(v)
+                prot_rank.setdefault(v, r.get("rank"))
+        still, waived = [], []
+        for h in unaddressed:
+            reaches = {str(e.get("target"))
+                       for e in ((graph_b or {}).get("edges") or [])
+                       if isinstance(e, dict)
+                       and str(e.get("source")) == h and e.get("target")}
+            if reaches and reaches <= protected:
+                waived.append((h, sorted(reaches)))
+            else:
+                still.append(h)
+        for h, vs in waived:
+            recs_used = sorted({prot_rank[v] for v in vs
+                                if prot_rank.get(v) is not None})
+            found.append({
+                "id": "hazard_unaddressed", "waived": True,
+                "detail": f"{h} covered through its victims "
+                          f"({', '.join(vs)}) by rec "
+                          f"{', '.join(str(x) for x in recs_used)}",
+                "entities": [h], "consequence": 0.0,
+                "ceiling": ERROR_CEILINGS["hazard_unaddressed"],
+                "deduction": 0.0})
+        if still:
+            add("hazard_unaddressed",
+                "declared a danger, and no recommendation acts on it: "
+                + ", ".join(sorted(still)),
+                max(_hazard_consequence(h, record, assessment, graph_b,
+                                        touched)
+                    for h in still),
+                still)
 
     # 4. An action field that instructs no one.
     bad = [r.get("rank") for r in recs

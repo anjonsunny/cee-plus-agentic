@@ -123,10 +123,11 @@ def test_an_unaddressed_hazard_is_priced_by_who_it_reaches():
 
 def test_a_hazard_whose_victim_is_already_being_rescued_is_discounted():
     """E_collapse, verbatim. `dust_1` may harm `person_1` — and the run's first
-    recommendation rescues `person_1` from the building. The danger to that
-    person IS being handled; what is left is a second route to the same harm.
-    Without this discount E_collapse fell to 'low', which is wrong: it was the
-    best-reasoned run of the six."""
+    recommendation rescues `person_1` from the building. Sunny (2026-08-28):
+    a hazard you cannot act on directly is ADDRESSED when a protective
+    recommendation covers everyone it reaches — so the charge is WAIVED
+    (deduction 0, note kept), not merely discounted to the hazard's own
+    severity as before."""
     scene = _scene(_obj("building_1", "building", "collapsed", "hazard_bearing"),
                    _obj("dust_1", "dust", "rising", "hazard_bearing"),
                    _obj("person_1", "person", "trapped", "at_risk"))
@@ -140,7 +141,9 @@ def test_a_hazard_whose_victim_is_already_being_rescued_is_discounted():
     r = next(e for e in rescued if e["id"] == "hazard_unaddressed")
     s = next(e for e in stranded if e["id"] == "hazard_unaddressed")
     assert r["deduction"] < s["deduction"]
-    assert r["consequence"] == 0.25          # dust's own severity, the floor
+    assert r.get("waived") is True and r["deduction"] == 0.0
+    assert "covered through its victims" in r["detail"]
+    assert s.get("waived") is None           # cordon protects nobody
 
 
 def test_an_unaddressed_hazard_is_never_free():
@@ -246,3 +249,52 @@ def test_the_narrative_no_longer_claims_a_withheld_signal_passed():
     assert "match the model's own graph" not in t["explanation"]
     assert "NOT checked" in t["explanation"]
     assert "advice backed by belief" in t["explanation"]
+
+
+# ── the waiver's own edges (2026-08-28) ─────────────────────────────────
+
+def test_waiver_needs_a_protective_verb():
+    """Covering the victims with a non-protective action (monitor) does not
+    address the hazard — the charge stands."""
+    scene = _scene(_obj("smoke_1", "smoke", "rising", "hazard_bearing"),
+                   _obj("person_1", "person", "standing", "at_risk"))
+    asm = _asm(at_risk=[("person_1", "proximity")])
+    gb = {"edges": [{"source": "smoke_1", "target": "person_1"}]}
+    out = singular_errors(scene, asm,
+                          [_rec(1, "monitor person_1 closely", "smoke_1",
+                                affected=["person_1"])], gb)
+    charged = [e for e in out if e["id"] == "hazard_unaddressed"
+               and not e.get("waived")]
+    # smoke_1 is touched via the quad threat here, so build the no-quad case
+    out2 = singular_errors(scene, asm,
+                           [_rec(1, "monitor person_1 closely", "",
+                                 affected=["person_1"])], gb)
+    assert any(e["id"] == "hazard_unaddressed" and not e.get("waived")
+               and e["deduction"] > 0 for e in out2)
+
+
+def test_waiver_needs_every_reached_victim_covered():
+    """Evacuating one of the two people smoke reaches is not coverage."""
+    scene = _scene(_obj("smoke_1", "smoke", "rising", "hazard_bearing"),
+                   _obj("person_1", "person", "standing", "at_risk"),
+                   _obj("person_2", "person", "standing", "at_risk"))
+    asm = _asm(at_risk=[("person_1", "proximity"), ("person_2", "proximity")])
+    gb = {"edges": [{"source": "smoke_1", "target": "person_1"},
+                    {"source": "smoke_1", "target": "person_2"}]}
+    out = singular_errors(scene, asm,
+                          [_rec(1, "evacuate person_1", "",
+                                affected=["person_1"])], gb)
+    assert any(e["id"] == "hazard_unaddressed" and not e.get("waived")
+               and e["deduction"] > 0 for e in out)
+
+
+def test_waiver_never_fires_when_graph_b_draws_no_arrow():
+    """No arrow = we do not know who it reaches; 'never free' stands."""
+    scene = _scene(_obj("smoke_1", "smoke", "rising", "hazard_bearing"),
+                   _obj("person_1", "person", "standing", "at_risk"))
+    asm = _asm(at_risk=[("person_1", "proximity")])
+    out = singular_errors(scene, asm,
+                          [_rec(1, "evacuate person_1", "",
+                                affected=["person_1"])], {"edges": []})
+    assert any(e["id"] == "hazard_unaddressed" and not e.get("waived")
+               and e["deduction"] > 0 for e in out)
