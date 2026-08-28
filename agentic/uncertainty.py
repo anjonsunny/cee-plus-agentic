@@ -343,6 +343,19 @@ def measure_recommendations(readings: list[dict[str, Any]],
         threats = membership("threat_ids")
     affected = membership("affected_ids")
 
+    # Sunny (2026-08-28, run ui_3e6c6d2a): the flat mean priced a one-off
+    # stray (an entity a single probe mentioned once) the same as a real
+    # flip in the advice's core. Weight each claim by how many probes
+    # assert it: a majority-backed claim carries full weight — its wobble
+    # is a core wobble — while a 1-of-n stray counts at quarter weight.
+    def _claim_weight(c: int) -> float:
+        return 1.0 if c > n / 2 else max(c / n, 0.25)
+
+    for group in (threats, affected):
+        for g in group.values():
+            c = int(str(g.get("votes", "0/0")).split("/")[0])
+            g["w"] = round(_claim_weight(c), 2)
+
     # effect-choice stability per threat: over the probes where a threat is
     # named, does the model commit to ONE causal mechanism for it? (This is the
     # reason↔quad claim's run-to-run stability — the effect flip we care about.)
@@ -358,7 +371,8 @@ def measure_recommendations(readings: list[dict[str, Any]],
         a = agreement(effs)
         effects[t] = {"u": round(1 - a, 3),
                       "votes": f"{Counter(effs).most_common(1)[0][1]}/{len(effs)}",
-                      "evidence": _split_counter(effs)}
+                      "evidence": _split_counter(effs),
+                      "w": round(_claim_weight(len(effs)), 2)}
 
     mu.granular = {
         "fields": {
@@ -384,11 +398,16 @@ def measure_recommendations(readings: list[dict[str, Any]],
             g["edges"] = [[e[0], e[1], list(e[2])] for e in (r.get("edges") or [])]
     mu.candidates = sorted(groups.values(), key=lambda g: -g["votes"])
 
-    components = ([1 - top_agree, 1 - count_agree]
-                  + [g["u"] for g in threats.values()]
-                  + [g["u"] for g in affected.values()]
-                  + [g["u"] for g in effects.values()])
-    mu.score = round(sum(components) / len(components), 3) if components else 0.0
+    # weighted mean: the two core fields at full weight, every claim at
+    # its vote weight — so "core stable, fringe noisy" stops reading as
+    # flat instability.
+    weighted = ([(1 - top_agree, 1.0), (1 - count_agree, 1.0)]
+                + [(g["u"], g["w"]) for g in threats.values()]
+                + [(g["u"], g["w"]) for g in affected.values()]
+                + [(g["u"], g["w"]) for g in effects.values()])
+    wsum = sum(w for _, w in weighted)
+    mu.score = (round(sum(u * w for u, w in weighted) / wsum, 3)
+                if wsum else 0.0)
 
     # drivers — each unstable piece, with the evidence and what to do
     if top_agree < 1.0:

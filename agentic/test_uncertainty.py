@@ -235,3 +235,35 @@ def test_explainer_prompt_contains_only_driver_material():
     explain(_mu_with_driver(), "Yes · fire · 7", explain_fn=capture)
     assert "scenario_flip" in seen["prompt"]
     assert "do not invent causes" in seen["prompt"]
+
+
+# ── vote-weighted advice score: core wobble ≠ fringe noise (2026-08-28) ──
+
+def _rw_reading(threats, affected, effects=None, top="h_1", n_recs=3):
+    return {"top_threat": top, "n_recs": n_recs, "threat_ids": threats,
+            "affected_ids": affected, "effect_by_threat": effects or {},
+            "edges": []}
+
+
+def test_a_one_off_stray_weighs_a_quarter_of_a_core_claim():
+    """Five probes agree on the whole core; one probe once mentions a stray
+    entity. The flat mean called that flat instability; the weighted mean
+    prices the stray at 0.25."""
+    from agentic.uncertainty import measure_recommendations
+    stable = [_rw_reading(["h_1"], ["p_1"]) for _ in range(4)]
+    with_stray = [_rw_reading(["h_1"], ["p_1", "road_1"])]
+    mu = measure_recommendations(stable + with_stray)
+    g = mu.granular["affected"]
+    assert g["p_1"]["w"] == 1.0 and g["road_1"]["w"] == 0.25
+    # score = (0.8 * 0.25) / (1+1+1+1+0.25) = 0.047 — not 0.16 flat
+    assert mu.score < 0.06
+
+
+def test_a_majority_backed_flip_still_weighs_fully():
+    """The same wobble on a claim MOST probes assert stays a core wobble."""
+    from agentic.uncertainty import measure_recommendations
+    readings = ([_rw_reading(["h_1"], ["p_1"], {"h_1": "may_harm"})] * 3
+                + [_rw_reading(["h_1"], ["p_1"], {"h_1": "exposes"})] * 2)
+    mu = measure_recommendations(readings)
+    assert mu.granular["effects"]["h_1"]["w"] == 1.0
+    assert mu.granular["effects"]["h_1"]["u"] > 0.3
