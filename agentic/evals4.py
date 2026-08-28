@@ -652,7 +652,22 @@ def parse_reason(text: Any) -> dict[str, Any]:
         # underscore is our serialisation of the token, not a word the model
         # owes us in prose: accept either spelling. (F25b — same defect class
         # as the rest of F24: our own spec, two ways, one of them punished.)
-        pat = rf"\b{re.escape(e).replace('_', '[ _]')}\b"
+        #
+        # F25c, the same defect one layer down: English requires the BARE verb
+        # after a modal ("may block access to", never "may blocks access to"),
+        # so six of the eight tokens can never appear verbatim in the plain
+        # prose we asked for -- only may_harm and may_spread_to carry their own
+        # modal and survive. A_fire ui_3e6c6d2a was charged TWICE for one such
+        # sentence: reason_effect_not_in_vocabulary, and then a false
+        # object_mismatch, because an unmatched effect leaves `at` at 0 and the
+        # victim scan sweeps the source clause too. So let the leading verb
+        # drop its "s".
+        head, _sep, tail_tok = e.partition("_")
+        head_pat = (re.escape(head[:-1]) + "s?" if head.endswith("s")
+                    else re.escape(head))
+        tail_pat = ("[ _]" + re.escape(tail_tok).replace("_", "[ _]")
+                    if tail_tok else "")
+        pat = rf"\b{head_pat}{tail_pat}\b"
         hit = re.search(pat, rest, re.I)
         # longest match wins, so 'increases_risk_to' is not read as a shorter
         # sibling of some other effect.
@@ -2114,6 +2129,104 @@ def ab_decomposition(graph_a: dict, graph_b: dict) -> dict[str, Any]:
     else:
         reading = "partial agreement"
     out["reading"] = reading
+    return out
+
+
+def ab_vote_distance(graphs_a: list, graphs_b: list,
+                     record: Any = None, assessment: Any = None
+                     ) -> dict[str, Any]:
+    """Sunny (2026-08-28): smooth out minor differences, surface major
+    consequential ones — without a derivation rule for every byproduct.
+
+    Instead of comparing two frozen id-sets, compare what each side
+    CONSISTENTLY asserts across its probes. Each entity's mass is its vote
+    count (how many probe graphs contain it); victim mass is additionally
+    scaled by _victim_weight, so a person carries ~4x a car. Per role
+    (hazards = edge sources, victims = targets, pairs = arrows) both sides
+    normalize to a distribution and agreement = 1 - total variation
+    distance = sum of min(p, q). A one-probe stray barely moves it; a
+    confidently-held one-sided claim about a person moves it a lot.
+
+    Run A, verbatim: strict victims overlap 0.67 (car_1 only in A);
+    vote-weighted agreement 0.90 — the car disagreement is real but cheap.
+    """
+    from collections import Counter
+
+    from agentic.recommend import bare_id
+    ga = [g for g in (graphs_a or []) if isinstance(g, dict)]
+    gb = [g for g in (graphs_b or []) if isinstance(g, dict)]
+    if not ga or not gb:
+        return {}
+
+    label_of: dict[str, str] = {}
+    if record is not None:
+        for o in getattr(record, "detected_objects", []) or []:
+            label_of[str(getattr(o, "object_id", ""))] = str(
+                getattr(o, "label", ""))
+    kind_of: dict[str, str] = {}
+    if assessment is not None:
+        for a in getattr(assessment, "at_risk", []) or []:
+            kind_of[str(getattr(a, "object_id", ""))] = str(
+                getattr(a, "kind", ""))
+
+    def _vw(vid: str) -> float:
+        from main import _entity_weight_category  # Arm A, frozen
+        label = label_of.get(vid, "")
+        cat = _entity_weight_category(vid) or _entity_weight_category(label)
+        return _victim_weight(vid, label, kind_of.get(vid), cat)
+
+    def _votes(graphs: list, role: str) -> Counter:
+        c: Counter = Counter()
+        for g in graphs:
+            seen = set()
+            for e in (_dedup_edges(g or {}).get("edges") or []):
+                src, tgt = bare_id(e.get("source")), bare_id(e.get("target"))
+                if role == "hazards" and src:
+                    seen.add(src)
+                elif role == "victims" and tgt:
+                    seen.add(tgt)
+                elif role == "pairs" and src and tgt:
+                    seen.add((src, tgt))
+            c.update(seen)
+        return c
+
+    out: dict[str, Any] = {"n_a": len(ga), "n_b": len(gb), "per_entity": {}}
+    for role in ("hazards", "victims", "pairs"):
+        va, vb = _votes(ga, role), _votes(gb, role)
+        if not va and not vb:
+            out[role] = None
+            continue
+
+        def _mass(c: Counter) -> dict:
+            m = {}
+            for k, n in c.items():
+                w = 1.0
+                if role == "victims":
+                    w = _vw(str(k))
+                elif role == "pairs":
+                    w = _vw(str(k[1]))
+                m[k] = n * w
+            return m
+
+        ma, mb = _mass(va), _mass(vb)
+        ta, tb = sum(ma.values()), sum(mb.values())
+        if not ta or not tb:
+            out[role] = 0.0
+            continue
+        keys = set(ma) | set(mb)
+        agree = sum(min(ma.get(k, 0) / ta, mb.get(k, 0) / tb) for k in keys)
+        out[role] = round(agree, 3)
+        if role != "pairs":
+            for k in sorted(keys):
+                out["per_entity"].setdefault(role, {})[str(k)] = {
+                    "a": f"{va.get(k, 0)}/{len(ga)}",
+                    "b": f"{vb.get(k, 0)}/{len(gb)}",
+                    "w": round((_vw(str(k)) if role == "victims" else 1.0), 2)}
+    parts = {r: out.get(r) for r in ("hazards", "victims", "pairs")}
+    if all(v is None for v in parts.values()):
+        return {}
+    out["blend"] = round(sum(AB_ROLE_WEIGHTS[r] * float(v or 0.0)
+                             for r, v in parts.items()), 3)
     return out
 
 

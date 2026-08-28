@@ -1103,6 +1103,36 @@ def test_the_spaced_spelling_still_finds_the_harmed_entities():
     assert p["affected"] == ["person_1", "dog_1"]
 
 
+def test_every_effect_survives_a_modal():
+    """F25c. English requires the BARE verb after a modal: "may block access
+    to", never "may blocks access to". Six of the eight tokens end in "s", so
+    before this fix they could never appear in the plain prose the prompt asks
+    for. Only may_harm and may_spread_to survived, because they carry their own
+    modal."""
+    from agentic.evals4 import _EFFECTS, parse_reason
+    for e in _EFFECTS():
+        words = e.replace("_", " ")
+        bare = words[4:] if e.startswith("may_") else words
+        for phrasing in (f"it may {bare} car_1.",      # modal, bare verb
+                         f"it {words} car_1.",          # spaced, inflected
+                         f"it {e} car_1."):             # our serialisation
+            got = parse_reason(f"Because house_1 is burning, {phrasing}")
+            assert got["effect"] == e, (e, phrasing, got["effect"])
+
+
+def test_a_modal_effect_does_not_drag_the_source_clause_into_the_victims():
+    """F25c, the second charge. An unmatched effect leaves the scan offset at
+    0, so the victim sweep runs over the WHOLE sentence and harvests entities
+    from the source clause. A_fire ui_3e6c6d2a was billed a false
+    object_mismatch this way: smoke_1 is a second SOURCE of harm here, not a
+    victim."""
+    from agentic.evals4 import parse_reason
+    p = parse_reason("Because house_1 is burning and smoke_1 is billowing, "
+                     "it may block access to the car_1.")
+    assert p["effect"] == "blocks_access_to"
+    assert p["affected"] == ["car_1"]
+
+
 def test_a_genuinely_absent_effect_is_still_caught():
     rec, asm = _rec_pair()
     r = {**_rec_ok(),
@@ -1768,3 +1798,51 @@ def test_driver_is_heard_as_the_person_and_a_victim_slot_is_not_testable():
     m = out["modes"][0]
     assert m["mode"] == "victim_directed"       # the driver IS the person
     assert m["has_quad_threat"] is False        # a person is not suppressible
+
+
+# ── vote-weighted A-vs-B distance (2026-08-28): smooth minor, surface major ──
+
+def _vd_graph(*edges):
+    return {"edges": [{"source": s, "effect": "may_harm", "target": t}
+                      for s, t in edges]}
+
+
+def test_vote_distance_smooths_a_property_stray():
+    """Run A's shape: both sides hold person+dog fully; A alone adds the car.
+    Strict overlap said 0.67; the weighted distance prices the car mismatch
+    by its consequence and lands near 0.9."""
+    from agentic.evals4 import ab_vote_distance
+    ga = [_vd_graph(("house_1", "person_1"), ("house_1", "dog_1"),
+                    ("house_1", "car_1"))] * 4 + [
+        _vd_graph(("house_1", "person_1"), ("house_1", "dog_1"))]
+    gb = [_vd_graph(("house_1", "person_1"), ("house_1", "dog_1"))] * 5
+    vd = ab_vote_distance(ga, gb)
+    assert vd["hazards"] == 1.0
+    assert 0.85 <= vd["victims"] <= 0.95
+    assert vd["per_entity"]["victims"]["car_1"]["a"] == "4/5"
+    assert vd["per_entity"]["victims"]["car_1"]["b"] == "0/5"
+
+
+def test_a_one_sided_person_still_costs():
+    """The same mismatch on a PERSON is consequential and must stay
+    expensive — much more than the car above."""
+    from agentic.evals4 import ab_vote_distance
+    ga = [_vd_graph(("fire_1", "person_1"), ("fire_1", "person_2"))] * 5
+    gb = [_vd_graph(("fire_1", "person_1"))] * 5
+    vd = ab_vote_distance(ga, gb)
+    assert vd["victims"] <= 0.6
+
+
+def test_a_one_probe_stray_is_nearly_free():
+    from agentic.evals4 import ab_vote_distance
+    ga = [_vd_graph(("fire_1", "person_1"))] * 4 + [
+        _vd_graph(("fire_1", "person_1"), ("smoke_1", "person_1"))]
+    gb = [_vd_graph(("fire_1", "person_1"))] * 5
+    vd = ab_vote_distance(ga, gb)
+    assert vd["hazards"] >= 0.8 and vd["victims"] == 1.0
+
+
+def test_vote_distance_needs_both_sides():
+    from agentic.evals4 import ab_vote_distance
+    assert ab_vote_distance([], [_vd_graph(("a", "b"))]) == {}
+    assert ab_vote_distance([_vd_graph(("a", "b"))], []) == {}

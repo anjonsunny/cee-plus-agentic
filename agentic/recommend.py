@@ -1461,6 +1461,22 @@ def run_evals(record: Any, assessment: Any, recommendations: list[dict],
     if graphs_a and graphs_b:
         dist = ab_alignment_distribution(graphs_a, graphs_b, canonical=align)
         align = {**align, "distribution": dist}
+        # Sunny (2026-08-28): the trust factors read the vote-weighted
+        # distribution agreement, not the strict set overlap — minor
+        # differences smooth out, consequential ones stay expensive. The
+        # strict values are kept beside them for comparability.
+        from agentic.evals4 import ab_vote_distance
+        vd = ab_vote_distance(graphs_a, graphs_b, record, assessment)
+        if vd.get("blend") is not None:
+            align["advice_backed_by_belief_sets"] = align.get(
+                "advice_backed_by_belief")
+            align["dangers_acted_on_sets"] = align.get("dangers_acted_on")
+            align["advice_backed_by_belief"] = vd["blend"]
+            align["dangers_acted_on"] = vd["blend"]
+            align["vote_distance"] = vd
+            emit("ab_vote_distance_ready", blend=vd["blend"],
+                 hazards=vd.get("hazards"), victims=vd.get("victims"),
+                 pairs=vd.get("pairs"))
         emit("alignment_distribution_ready",
              pairs=dist.get("pairs"),
              structural=dist.get("structural"),

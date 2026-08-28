@@ -9,7 +9,7 @@
 | C | OUR RULES COLLIDE — our own rules fighting each other | F3, F9, F24, F51, F52 | 5 |
 | D | JUDGE NOISE / BIAS — ill-posed questions, severity-minimizing | F4(open), F5, F11, F26, F28, F51 | 6 |
 | E | GENUINE MODEL ERROR — unstable second looks; flat self-confidence; reflection jitter | F7(parts), jitter | ~2 |
-| F | METRIC DEFECT — scoring that hides/distorts the real signal | F15, F24, F25, F29, F45, F46, F47, F48, F49, F53, F54 | 11 |
+| F | METRIC DEFECT — scoring that hides/distorts the real signal | F15, F24, F25, F25c, F29, F45, F46, F47, F48, F49, F53, F54 | 12 |
 
 **Standing observation (through F12, 4 of 6 scenes):** only ~2 of ~15
 defects were the subject model failing unprompted. The dominant modes
@@ -708,6 +708,58 @@ object_id ("Alert emergency services about the burning house"), and card
 **The pattern holds.** Of everything the cards reported on this run,
 almost all was ours; what survived the fixes is small, specific, and
 real.
+
+---
+
+## F25c · The verb that could not be spelled the way we asked
+
+**Run:** `ui_3e6c6d2a` (A_fire, 2026-08-28). Spotted by Sunny reading the
+card panel: `rec 2: the reason harms ['car_1', 'smoke_1'], the quad harms
+['car_1']`. smoke_1 is a second SOURCE of harm in that sentence, not a
+victim.
+
+**The sentence.** "Because house_1 is burning and smoke_1 is billowing, it
+may block access to the car_1."
+
+**The defect, one root, two charges.** F25b taught the matcher that the
+underscore was ours, not the model's. It did not teach it that the VERB is
+ours too. English requires the bare verb after a modal: "may block access
+to", never "may blocks access to". Six of the eight effect tokens end in
+"s" (`blocks_access_to`, `isolates`, `exposes`, `increases_risk_to`,
+`worsens`, `threatens`), so in the plain prose we ask for they can NEVER
+appear verbatim. Only `may_harm` and `may_spread_to` survived, and only
+because they carry their own modal.
+
+That single miss was billed twice:
+
+1. `reason_effect_not_in_vocabulary`, severity 2 — false; the model used a
+   vocabulary effect, in the register we demanded.
+2. `object_mismatch`, severity 2 — false, and worse, because the mechanism
+   is silent: `at` only advances when an effect matches, so an unmatched
+   effect leaves the victim scan starting at position 0. The sweep then
+   runs over the WHOLE sentence and harvests entities out of the source
+   clause. smoke_1 became a victim because the verb had an "s".
+
+Both feed `internal_alignment`, which feeds trust, so this quietly
+depressed the score of any card whose reason used a modal.
+
+**Fix.** `parse_reason` builds the pattern from the token's leading verb
+with an optional trailing "s" (`blocks?[ _]access[ _]to`). The tokens are
+untouched — they are Arm A's ontology and the comparison currency; it is
+the READER that was too narrow. All eight effects now parse in all three
+registers (modal-bare, spaced-inflected, underscored).
+
+**After the fix, same raw answer:** rec 2 parses
+`blocks_access_to --> [car_1]`, both false charges gone. What remains is
+the card judge's `not_causally_aligned` (2/3) on that same card, which is
+REAL: securing a car does not stop a burning house blocking access to it.
+Clearing our own noise left exactly one finding standing, and only the
+semantic tier could see it.
+
+**The pattern, fourth sighting in this family (F24, F25, F25b, F25c).**
+Every one of them is our spec written two ways with one way punished. The
+class is not "the model is sloppy", it is "we specified a register and
+then graded a serialisation."
 
 ---
 
