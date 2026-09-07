@@ -578,8 +578,11 @@ def internal_alignment(record: Any, assessment: Any,
 # "Because {threat} is {state}, it {effect} {affected}." — the reason's fixed
 # template. Parsed, not merely scanned for ids: role inversion is invisible to
 # a set of ids and obvious to a subject/verb/object split.
+# C_tanker ui_9065d062 (Sunny): "Because THE spill_1 is seeping, ..." is the
+# template with an article — the plain-English form the prompt asks for.
+# The regex rejected it on all three cards (F25 family: our spec, punished).
 _REASON_RE = re.compile(
-    r"because\s+(?P<threat>[a-z][a-z0-9_]*_\d+)\s+"
+    r"because\s+(?:the\s+|a\s+|an\s+)?(?P<threat>[a-z][a-z0-9_]*_\d+)\s+"
     r"(?:is|are|has|have)\s+(?P<state>[a-z_][a-z0-9_]*)\b"
     r"(?P<rest>.*)", re.I | re.S)
 

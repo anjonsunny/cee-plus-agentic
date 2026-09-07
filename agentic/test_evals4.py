@@ -1846,3 +1846,16 @@ def test_vote_distance_needs_both_sides():
     from agentic.evals4 import ab_vote_distance
     assert ab_vote_distance([], [_vd_graph(("a", "b"))]) == {}
     assert ab_vote_distance([_vd_graph(("a", "b"))], []) == {}
+
+
+def test_reason_template_accepts_an_article_before_the_id():
+    """C_tanker live: 'Because the spill_1 is seeping, it may harm the road_1'
+    IS the template in plain English. Rejecting the article charged all
+    three cards for obeying the prompt."""
+    from agentic.evals4 import parse_reason
+    p = parse_reason("Because the spill_1 is seeping, it may harm the road_1 "
+                     "and increase the risk to person_1.")
+    assert p["parsed"] and p["threat"] == "spill_1" and p["state"] == "seeping"
+    assert "road_1" in p["affected"] and "person_1" in p["affected"]
+    assert parse_reason("Because a fire_1 is spreading, it may harm "
+                        "tanker_truck_1.")["parsed"]
