@@ -1396,12 +1396,26 @@ def _trust_evidence(signal: str, conformance: dict, internal: dict,
         return (f"same hazards {f(dc.get(hz))}, same victims {f(dc.get(vc))}, "
                 f"same arrows {f(dc.get(pr))} — {tail}")
 
+    # Since the vote-weighted distance (2026-08-28) the SCORE is the blend of
+    # the distribution agreements, so the evidence must quote those — the
+    # strict set overlaps read "same victims 1.00" beside a factor of 0.31
+    # on E_collapse ui_bf524ce6, contradicting the score it explained.
+    vd = alignment.get("vote_distance") if isinstance(alignment, dict) else None
+
+    def _vote(tail):
+        def f(v):
+            return f"{float(v):.2f}" if isinstance(v, (int, float)) else "n/a"
+        return (f"across the re-asks — same hazards {f(vd.get('hazards'))}, "
+                f"same victims {f(vd.get('victims'))}, same arrows "
+                f"{f(vd.get('pairs'))} — {tail}")
+
     if signal == "advice_backed_by_belief":
-        return _ov("hazards", "victims", "pairs",
-                   f"{len(alignment.get('a_only') or [])} asserted-not-believed")
+        tail = f"{len(alignment.get('a_only') or [])} asserted-not-believed"
+        return _vote(tail) if vd else _ov("hazards", "victims", "pairs", tail)
     if signal == "dangers_acted_on":
-        return _ov("b_hazards", "b_victims", "b_pairs",
-                   f"{len(alignment.get('b_only') or [])} seen-but-not-acted")
+        tail = f"{len(alignment.get('b_only') or [])} seen-but-not-acted"
+        return (_vote(tail) if vd
+                else _ov("b_hazards", "b_victims", "b_pairs", tail))
     if signal == "uncertainty":
         return (f"{uncertainty.get('n_probes', 0)} re-asks, score "
                 f"{uncertainty.get('score')}, "
@@ -2135,6 +2149,37 @@ def ab_decomposition(graph_a: dict, graph_b: dict) -> dict[str, Any]:
     return out
 
 
+_JOINED_ID_SEP = re.compile(r"\s*(?:,|&|\band\b|;)\s*", re.I)
+
+
+def split_joined_ids(x: Any) -> list[str]:
+    """'police_officer_1 and police_officer_2' / 'a, b' -> ['police_officer_1',
+    'police_officer_2']. A probe sometimes hands back affected_objects as one
+    joined string; read as one id it became one invented entity (E_collapse
+    ui_bf524ce6, the capture bug noted on the D run)."""
+    raw = str(x or "").strip()
+    if not raw:
+        return []
+    return [t.strip() for t in _JOINED_ID_SEP.split(raw) if t.strip()]
+
+
+def _graph_for_votes(g: dict, record: Any) -> dict:
+    """The comparison copy of one probe graph: joined ids split into one edge
+    each, then invented ids resolved by the same three-rung resolver the
+    strict path uses. The raw graph is never touched (no-erasure)."""
+    edges = []
+    for e in ((g or {}).get("edges") or []):
+        if not isinstance(e, dict):
+            continue
+        for src in split_joined_ids(e.get("source")) or [""]:
+            for tgt in split_joined_ids(e.get("target")) or [""]:
+                edges.append({**e, "source": src, "target": tgt})
+    out = {**(g or {}), "edges": edges}
+    if record is not None:
+        out, _alias = resolve_invented_ids(out, record)
+    return out
+
+
 def ab_vote_distance(graphs_a: list, graphs_b: list,
                      record: Any = None, assessment: Any = None
                      ) -> dict[str, Any]:
@@ -2156,8 +2201,10 @@ def ab_vote_distance(graphs_a: list, graphs_b: list,
     from collections import Counter
 
     from agentic.recommend import bare_id
-    ga = [g for g in (graphs_a or []) if isinstance(g, dict)]
-    gb = [g for g in (graphs_b or []) if isinstance(g, dict)]
+    ga = [_graph_for_votes(g, record) for g in (graphs_a or [])
+          if isinstance(g, dict)]
+    gb = [_graph_for_votes(g, record) for g in (graphs_b or [])
+          if isinstance(g, dict)]
     if not ga or not gb:
         return {}
 

@@ -1859,3 +1859,56 @@ def test_reason_template_accepts_an_article_before_the_id():
     assert "road_1" in p["affected"] and "person_1" in p["affected"]
     assert parse_reason("Because a fire_1 is spreading, it may harm "
                         "tanker_truck_1.")["parsed"]
+
+
+# ── vote distance reads RESOLVED ids (E_collapse ui_bf524ce6) ────────────
+
+def test_joined_ids_are_split_before_voting():
+    from agentic.evals4 import split_joined_ids, ab_vote_distance
+    assert split_joined_ids("police_officer_1 and police_officer_2") == [
+        "police_officer_1", "police_officer_2"]
+    assert split_joined_ids("a_1, b_2") == ["a_1", "b_2"]
+    assert split_joined_ids("person_1") == ["person_1"]
+    ga = [{"edges": [{"source": "dust_1", "effect": "may_harm",
+                      "target": "officer_1 and officer_2"}]}] * 5
+    gb = [{"edges": [{"source": "dust_1", "effect": "may_harm",
+                      "target": "officer_1"},
+                     {"source": "dust_1", "effect": "may_harm",
+                      "target": "officer_2"}]}] * 5
+    vd = ab_vote_distance(ga, gb)
+    assert vd["victims"] == 1.0 and vd["pairs"] == 1.0
+
+
+def test_vote_distance_resolves_invented_ids_like_the_strict_path():
+    """The advice says 'person', the belief says 'person_1' — the same
+    entity; read raw, it was a foreign token carrying A's whole mass."""
+    from agentic.evals4 import ab_vote_distance
+    from agentic.perception import DetectedObject, PerceptionResult
+
+    def _obj(oid, label, state, kind):
+        return DetectedObject(object_id=oid, label=label, family="x",
+                              state=state, state_kind=kind, bbox=[0, 0, 9, 9],
+                              box_source="dino_matched", box_confidence=0.9,
+                              anchor_bbox=[0, 0, 9, 9])
+    rec = PerceptionResult(image_path="/x", image_size=[10, 10],
+                           entity_source="vlm", detected_objects=[
+                               _obj("fire_1", "fire", "spreading",
+                                    "hazard_bearing"),
+                               _obj("person_1", "person", "standing",
+                                    "normal")])
+    ga = [{"edges": [{"source": "fire_1", "effect": "may_harm",
+                      "target": "person"}]}] * 5
+    gb = [{"edges": [{"source": "fire_1", "effect": "may_harm",
+                      "target": "person_1"}]}] * 5
+    assert ab_vote_distance(ga, gb)["victims"] < 0.5          # raw: foreign
+    assert ab_vote_distance(ga, gb, rec)["victims"] == 1.0    # resolved
+
+
+def test_trust_evidence_quotes_the_numbers_the_score_is_made_of():
+    from agentic.evals4 import _trust_evidence
+    al = {"decomposition": {"hazards": 0.67, "victims": 1.0, "pairs": 0.33},
+          "vote_distance": {"hazards": 0.62, "victims": 0.31, "pairs": 0.24},
+          "a_only": [1, 2, 3]}
+    text = _trust_evidence("advice_backed_by_belief", {}, {}, al, {}, {})
+    assert "same victims 0.31" in text and "1.00" not in text
+    assert "3 asserted-not-believed" in text
