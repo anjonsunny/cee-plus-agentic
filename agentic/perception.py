@@ -205,6 +205,24 @@ LABEL_STATE_SYNONYMS: dict[tuple[str, str], str] = {
     ("fire", "active"): "spreading",
     ("smoke", "active"): "billowing",
     ("water", "active"): "rising",
+    # E_collapse ui_99f77336: dust·"cloud" stood through two P3 rounds and
+    # landed kind=unknown — the declared dust hazard vanished from Stage 2
+    # and every Stage 4 check then charged the model for treating dust as
+    # a hazard. "cloud" is what people say about dust and smoke.
+    ("dust", "cloud"): "rising",
+    ("smoke", "cloud"): "billowing",
+    ("gas", "cloud"): "leaking",
+}
+
+# Diffuse hazards are hazard-bearing BY NATURE: a dust cloud, a fuel spill or
+# floodwater has no safe state the model could have meant. When one arrives
+# with a state we cannot read (after every synonym), code gives it the
+# medium's default active state rather than letting it fall to `unknown` —
+# with a note on the object and an event, never silently (Sunny, 2026-09-09:
+# "you should have handled it so that it's not unknown; no routing").
+FLUID_DEFAULT_STATE: dict[str, str] = {
+    "fire": "spreading", "smoke": "billowing", "water": "rising",
+    "dust": "rising", "gas": "leaking", "spill": "seeping",
 }
 
 
@@ -215,6 +233,19 @@ def resolve_state(label: str, state: str) -> str:
     raw = normalize_state(state)
     return LABEL_STATE_SYNONYMS.get((str(label or "").strip().lower(), raw),
                                     raw)
+
+
+def coerce_fluid_state(label: str, resolved: str) -> tuple[str, str]:
+    """(state, note). If a diffuse-hazard label carries a state whose kind is
+    unknown, return the medium's default active state and a note saying so;
+    otherwise the state unchanged and an empty note."""
+    lab = str(label or "").strip().lower()
+    if lab in FLUID_DEFAULT_STATE and state_kind(resolved) == "unknown":
+        default = FLUID_DEFAULT_STATE[lab]
+        return default, (f"coerced:fluid_default: '{resolved}' is not a "
+                         f"vocabulary state for {lab}; a diffuse hazard is "
+                         f"hazard-bearing by nature -> '{default}'")
+    return resolved, ""
 
 
 # ── Duplicate-lifeform merge (E_collapse re-run ui_bcc80931) ─────────────
@@ -843,6 +874,11 @@ def run_perception(
         if not e.get("bbox"):
             unlocalized.append(e["object_id"])
         resolved = resolve_state(e["label"], e.get("state", "unknown"))
+        resolved, coerce_note = coerce_fluid_state(e["label"], resolved)
+        if coerce_note:
+            notes.append(f"{e['object_id']}: {coerce_note}")
+            emit("state_coerced", object_id=e["object_id"], label=e["label"],
+                 was=str(e.get("state", "")), now=resolved)
         objects.append(
             DetectedObject(
                 object_id=e["object_id"],
@@ -850,6 +886,7 @@ def run_perception(
                 family=family_of(e["label"]),
                 state=resolved,
                 state_kind=state_kind(resolved),
+                state_note=coerce_note,
                 description=str(e.get("description", "")),
                 bbox=e.get("bbox"),
                 box_source=e.get("box_source", "none"),

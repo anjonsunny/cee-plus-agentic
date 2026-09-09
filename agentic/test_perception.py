@@ -492,3 +492,44 @@ def test_it_is_accepted_but_never_taught():
     not tell the model that a noun is a legal condition."""
     from agentic.repair_loop import _STATE_WORD_REMINDER
     assert "chemical_spill" not in _STATE_WORD_REMINDER
+
+
+# ── Diffuse hazards never land as `unknown` (E_collapse ui_99f77336) ─────
+
+
+def test_dust_cloud_is_a_known_state_now():
+    assert perception.resolve_state("dust", "cloud") == "rising"
+    assert perception.resolve_state("smoke", "cloud") == "billowing"
+    assert perception.resolve_state("gas", "cloud") == "leaking"
+
+
+def test_a_fluid_with_an_unreadable_state_gets_its_default_in_code():
+    """dust·'cloud' stood through two P3 rounds and fell to unknown, so the
+    declared dust hazard vanished and every Stage 4 check charged the model
+    for treating dust as a hazard. Sunny: handle it in code, no routing."""
+    state, note = perception.coerce_fluid_state("dust", "wafting")
+    assert state == "rising" and "coerced:fluid_default" in note
+    state, note = perception.coerce_fluid_state("spill", "glistening")
+    assert state == "seeping" and note
+    # a readable state is left alone, note empty
+    assert perception.coerce_fluid_state("dust", "rising") == ("rising", "")
+    # a non-fluid label is never coerced — a car in an unknown state stays
+    # unknown for the repair loop to ticket
+    assert perception.coerce_fluid_state("car", "wafting") == ("wafting", "")
+
+
+def test_coerced_fluid_lands_hazard_bearing_with_note_and_event(tmp_path,
+                                                                 fake_models):
+    img_path = tmp_path / "scene.jpg"
+    Image.new("RGB", (300, 200), "gray").save(img_path)
+    entities = [{"label": "dust", "state": "wafting", "bbox": [10, 10, 90, 90]}]
+    seen = []
+    result = perception.run_perception(
+        img_path, entities=entities, with_masks=False,
+        out_dir=tmp_path / "out", on_event=lambda e: seen.append(e))
+    dust = result.detected_objects[0]
+    assert dust.state == "rising" and dust.state_kind == "hazard_bearing"
+    assert "coerced:fluid_default" in dust.state_note
+    assert any("coerced" in n for n in result.notes)
+    assert any(e.get("type") == "state_coerced" and e.get("was") == "wafting"
+               for e in seen)
