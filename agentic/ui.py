@@ -1122,8 +1122,13 @@ def rail_component(d: dict[str, Any]) -> html.Div:
     items = []
     for s in STAGES:
         st = d["stages"][s]
+        # A run that dies mid-stage (run_error) marks that stage "failed";
+        # the rail had no class for it and the whole 15-output render
+        # callback fell over, hiding the very failure it should show
+        # (F_park ui_77404ddb: the subject returned no JSON in Perceive).
         cls = {"pending": "station", "active": "station active",
-               "done": "station done"}[st["status"]]
+               "done": "station done",
+               "failed": "station failed"}.get(st["status"], "station")
         cls += f" st-{s.lower()}"          # per-stage tint (shaded cards)
         secs = f"{st['seconds']:.1f}s" if st.get("seconds") else ""
         # Compact status shown in the collapsed header.
@@ -4757,6 +4762,7 @@ app.index_string = """<!DOCTYPE html>
       border:1px solid var(--line); border-left:5px solid var(--line);
       background:var(--card); box-shadow:var(--shadow); opacity:.62; }
   .station.active, .station.done { opacity:1; }
+  .station.failed { opacity:1; border-color:#dc2626; background:#fef2f2; }
   /* Per-stage tinted, shaded cards */
   .st-perceive.active, .st-perceive.done { background:linear-gradient(135deg,#eff6ff,#ffffff); border-left-color:#3b82f6; }
   .st-repair.active,   .st-repair.done   { background:linear-gradient(135deg,#fffbeb,#ffffff); border-left-color:#f59e0b; }

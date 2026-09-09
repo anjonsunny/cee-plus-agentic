@@ -2393,3 +2393,21 @@ def test_judge_votes_default_is_three():
     from agentic.judge_card import DEFAULT_JUDGE_PROBES
     assert models.JUDGE_VOTES == 3
     assert DEFAULT_JUDGE_PROBES == 3
+
+
+def test_a_run_that_dies_mid_stage_still_renders_the_rail():
+    """F_park ui_77404ddb: run_error during Perceive marked the stage
+    'failed' and the rail raised KeyError, taking every panel down with it.
+    The failure must be shown, not hide the page."""
+    from agentic import ui
+    events = [
+        {"t": 1.0, "type": "run_started", "image_name": "x.jpg"},
+        {"t": 1.1, "type": "stage_started", "stage": "Perceive"},
+        {"t": 2.0, "type": "run_error",
+         "message": "Expecting value: line 1 column 1 (char 0)"},
+    ]
+    d = ui.derive(events)
+    assert d["stages"]["Perceive"]["status"] == "failed"
+    ui.rail_component(d)                       # must not raise
+    for fn in (ui.tickets_component, ui.instruments_component):
+        fn(d)
