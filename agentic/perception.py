@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 
 from agentic import models as _models
 import sys
@@ -477,7 +478,59 @@ def build_perception_prompt() -> str:
     return PERCEPTION_PROMPT_TEMPLATE.format(vocab_block=vocabulary_prompt_block())
 
 
-def _query_vlm_raw(text: str, image_data_url: str) -> list[dict[str, Any]]:
+# F_park 2026-09-10/14: on a crowded scene qwen2.5vl names ~11 people and then
+# CYCLES the same three entities until the context wall (65 objects, 11
+# distinct; one repeated 29 times), so the answer never closes and the run
+# died three times. Guarded in code, not prompt: a token cap so a runaway
+# costs a minute, salvage of every complete entity object from a truncated
+# answer, and exact-repeat cutting — all recorded in notes + one event.
+PERCEPTION_MAX_TOKENS = int(os.getenv("PERCEPTION_MAX_TOKENS", "4000"))
+_ENTITY_OBJ = re.compile(r"\{[^{}]*\"label\"[^{}]*\}")
+
+
+def salvage_entities(content: str) -> tuple[list[dict[str, Any]], str]:
+    """(entities, note). The clean path is json; on a truncated answer every
+    complete entity object is recovered and the note says so."""
+    from main import extract_json_block  # Arm A, frozen (import only)
+    try:
+        return list(extract_json_block(content).get("entities") or []), ""
+    except (ValueError, AttributeError):
+        pass
+    found: list[dict[str, Any]] = []
+    for m in _ENTITY_OBJ.finditer(content or ""):
+        try:
+            o = json.loads(m.group(0))
+        except ValueError:
+            continue
+        if isinstance(o, dict) and o.get("label"):
+            found.append(o)
+    if not found:
+        raise ValueError("perception answer held no readable entity")
+    return found, (f"perception answer was truncated (no closing JSON); "
+                   f"{len(found)} complete entity object(s) salvaged")
+
+
+def cut_repeats(entities: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str]:
+    """Drop EXACT repeats (same label, state, bbox) — a model loop, not two
+    instances (two instances differ in bbox). Note names how many."""
+    seen: set = set()
+    kept: list[dict[str, Any]] = []
+    dropped = 0
+    for e in entities:
+        key = (str(e.get("label", "")).lower(), str(e.get("state", "")).lower(),
+               tuple(e.get("bbox") or ()))
+        if key in seen:
+            dropped += 1
+            continue
+        seen.add(key)
+        kept.append(e)
+    note = (f"the model looped: {dropped} exact repeat(s) of already-named "
+            f"entities dropped, {len(kept)} kept" if dropped else "")
+    return kept, note
+
+
+def _query_vlm_raw(text: str, image_data_url: str,
+                   notes: list[str] | None = None) -> list[dict[str, Any]]:
     """One VLM call (text + image) returning the parsed entity list. Shared
     by the first perception ask and by Loop 1's repair rounds, so both speak
     to the model identically."""
@@ -505,22 +558,28 @@ def _query_vlm_raw(text: str, image_data_url: str) -> list[dict[str, Any]]:
         # on for qwen2.5vl, which otherwise loops on crowded scenes.
         **_models.subject_format_kwargs(),
     }
+    payload["max_tokens"] = PERCEPTION_MAX_TOKENS
     r = requests.post(api_url, headers=headers, json=payload,
                       timeout=int(os.getenv("QWEN_TIMEOUT", "600")))
     r.raise_for_status()
     content = r.json()["choices"][0]["message"]["content"]
     if isinstance(content, list):
         content = "\n".join(p.get("text", "") for p in content if isinstance(p, dict))
-    raw = extract_json_block(content)
-    return list(raw.get("entities") or [])
+    entities, note = salvage_entities(content)
+    entities, loop_note = cut_repeats(entities)
+    for n in (note, loop_note):
+        if n and notes is not None:
+            notes.append(n)
+    return entities
 
 
-def query_vlm_entities(image_data_url: str, caption: str = "") -> list[dict[str, Any]]:
+def query_vlm_entities(image_data_url: str, caption: str = "",
+                       notes: list[str] | None = None) -> list[dict[str, Any]]:
     """Ask the VLM for labels + states + rough anchor boxes."""
     text = build_perception_prompt()
     if caption:
         text += f"\n\nCaption:\n{caption}"
-    return _query_vlm_raw(text, image_data_url)
+    return _query_vlm_raw(text, image_data_url, notes)
 
 
 # ── Grounding DINO candidate detection ──────────────────────────────────
@@ -792,7 +851,11 @@ def run_perception(
         mime = mimetypes.guess_type(str(image_path))[0] or "image/jpeg"
         b64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
         data_url = f"data:{mime};base64,{b64}"
-        entities = query_vlm_entities(data_url, caption)
+        answer_notes: list[str] = []
+        entities = query_vlm_entities(data_url, caption, answer_notes)
+        for n in answer_notes:
+            notes.append(f"perceive: {n}")
+            emit("perception_answer_guarded", note=n)
         source = "vlm"
     else:
         entities = [dict(e) for e in entities]
@@ -810,7 +873,12 @@ def run_perception(
             # Live path: each repair round is one targeted VLM call that
             # includes the image, so the model can re-look while fixing.
             def repair_query_fn(prompt_text: str) -> list[dict[str, Any]]:  # noqa: F811
-                return _query_vlm_raw(prompt_text, data_url)
+                rn: list[str] = []
+                out = _query_vlm_raw(prompt_text, data_url, rn)
+                for n in rn:
+                    notes.append(f"repair: {n}")
+                    emit("perception_answer_guarded", note=n)
+                return out
 
         entities, trace = repair_entities(
             entities, repair_query_fn, caption=caption, on_event=on_event

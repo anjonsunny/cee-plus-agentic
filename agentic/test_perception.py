@@ -533,3 +533,91 @@ def test_coerced_fluid_lands_hazard_bearing_with_note_and_event(tmp_path,
     assert any("coerced" in n for n in result.notes)
     assert any(e.get("type") == "state_coerced" and e.get("was") == "wafting"
                for e in seen)
+
+
+# ── The perception answer guard (F_park 2026-09-10/14) ───────────────────
+
+
+def test_salvage_recovers_complete_entities_from_a_truncated_answer():
+    """The model looped to the context wall and the JSON never closed; every
+    complete entity object is still readable and must be recovered."""
+    body = ('{"entities": [{"label": "person", "state": "standing", '
+            '"description": "a", "bbox": [1, 2, 3, 4]}, {"label": "dog", '
+            '"state": "running", "description": "b", "bbox": [5, 6, 7, 8]}, '
+            '{"label": "person", "state": "stan')
+    ents, note = perception.salvage_entities(body)
+    assert [e["label"] for e in ents] == ["person", "dog"]
+    assert "truncated" in note and "2 complete" in note
+    # clean JSON: no note
+    ents, note = perception.salvage_entities(
+        '{"entities": [{"label": "car", "state": "stationary", "bbox": [0, 0, 1, 1]}]}')
+    assert len(ents) == 1 and note == ""
+
+
+def test_salvage_raises_when_nothing_is_readable():
+    import pytest
+    with pytest.raises(ValueError):
+        perception.salvage_entities("")
+    with pytest.raises(ValueError):
+        perception.salvage_entities("I cannot see any entities in this image.")
+
+
+def test_exact_repeats_are_cut_but_second_instances_are_kept():
+    a = {"label": "person", "state": "standing", "bbox": [1, 2, 3, 4]}
+    b = {"label": "person", "state": "standing", "bbox": [9, 9, 12, 12]}
+    ents, note = perception.cut_repeats([a, b, dict(a), dict(a), dict(b)])
+    assert ents == [a, b]                       # two instances, one each
+    assert "3 exact repeat(s)" in note and "2 kept" in note
+    assert perception.cut_repeats([a, b]) == ([a, b], "")
+
+
+def test_guarded_answer_lands_in_notes_and_one_event(tmp_path, monkeypatch):
+    """The live path: a looping, truncated answer must still produce a
+    record, say so in notes, and emit perception_answer_guarded."""
+    body = ('{"entities": [' + ", ".join(
+        ['{"label": "person", "state": "standing", "description": "x", '
+         '"bbox": [1, 2, 3, 4]}'] * 4) + ', {"label": "person", "sta')
+
+    class _R:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": body}}]}
+
+    import requests
+    monkeypatch.setattr(requests, "post", lambda *a, **k: _R())
+    monkeypatch.setattr(perception, "detect_candidates",
+                        lambda image, entities: {})
+    img_path = tmp_path / "scene.jpg"
+    Image.new("RGB", (300, 200), "gray").save(img_path)
+    seen = []
+    notes: list[str] = []
+    ents = perception.query_vlm_entities("data:image/jpeg;base64,AAAA", "cap",
+                                         notes)
+    assert len(ents) == 1
+    assert any("truncated" in n for n in notes) and any("looped" in n
+                                                         for n in notes)
+
+
+def test_perception_call_carries_the_token_cap(monkeypatch):
+    captured = {}
+
+    class _R:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content":
+                '{"entities": [{"label": "car", "state": "stationary", '
+                '"bbox": [0, 0, 1, 1]}]}'}}]}
+
+    import requests
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured.update(json or {})
+        return _R()
+    monkeypatch.setattr(requests, "post", fake_post)
+    perception._query_vlm_raw("prompt", "data:image/jpeg;base64,AAAA")
+    assert captured["max_tokens"] == perception.PERCEPTION_MAX_TOKENS
+    assert captured.get("response_format") == {"type": "json_object"}
