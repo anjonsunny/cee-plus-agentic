@@ -66,6 +66,30 @@ DIALOGUE_MODEL = os.getenv("DIALOGUE_MODEL", "qwen2.5:7b")
 # resolution for iteration speed during calibration. Env-overridable.
 JUDGE_VOTES = int(os.getenv("JUDGE_VOTES", "3"))
 
+# Whether subject calls send `response_format: json_object`. F50 dropped it
+# for qwen3-vl (a thinking model: the constraint collided with the reasoning
+# phase and the content came back "{}"). But qwen2.5vl NEEDS it: without the
+# constraint, on a crowded scene (F_park, 2026-09-10, three runs) it
+# degenerates inside the first entity into "bbox_2, bbox_3, ... bbox_43"
+# until the 16k context wall and never closes the JSON. Thinking models
+# (a name carrying "qwen3"/"think"/"-r1") go without; everything else gets
+# the constraint. Env-overridable: SUBJECT_JSON_MODE=0|1.
+_THINKING_HINTS = ("qwen3", "think", "-r1", "deepseek")
+
+
+def subject_json_mode(model: str | None = None) -> bool:
+    env = os.getenv("SUBJECT_JSON_MODE")
+    if env is not None:
+        return env.strip().lower() not in ("0", "false", "no", "")
+    name = (model or SUBJECT_MODEL).lower()
+    return not any(h in name for h in _THINKING_HINTS)
+
+
+def subject_format_kwargs(model: str | None = None) -> dict:
+    """The payload keys a subject call adds for its output format."""
+    return ({"response_format": {"type": "json_object"}}
+            if subject_json_mode(model) else {})
+
 
 def stamp() -> dict:
     """The id block every run record and capture record carries."""

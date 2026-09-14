@@ -500,13 +500,10 @@ def _query_vlm_raw(text: str, image_data_url: str) -> list[dict[str, Any]]:
             ],
         }],
         "temperature": 0,
-        # F50: NO response_format. On a thinking model (qwen3-vl) the
-        # json_object constraint collided with the reasoning phase and the
-        # content came back literally "{}" — two tokens, empty. Without the
-        # constraint the thinking lands in a separate field and the content is
-        # clean JSON; extract_json_block already tolerates surrounding prose.
-        # Same lesson as the judges (F26): format constraints suppress the
-        # very output they were meant to shape.
+        # F50 / F_park 2026-09-10: the JSON constraint is a per-subject
+        # seat setting (models.subject_json_mode) — off for thinking models,
+        # on for qwen2.5vl, which otherwise loops on crowded scenes.
+        **_models.subject_format_kwargs(),
     }
     r = requests.post(api_url, headers=headers, json=payload,
                       timeout=int(os.getenv("QWEN_TIMEOUT", "600")))
