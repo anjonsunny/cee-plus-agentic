@@ -173,6 +173,12 @@ def _hazard_consequence(hid: str, record: Any, assessment: Any,
 
 # Actions that protect a victim rather than act on a hazard. Stems, so
 # "evacuate"/"evacuating" both match.
+# Actions that DECLARE an emergency on their own: calling out responders or
+# suppressing a hazard. Stems.
+_EMERGENCY_VERBS = ("evacuat", "rescue", "deploy", "extinguish", "contain",
+                    "alert", "call 911", "emergency", "fire department",
+                    "ambulance", "hazmat", "cordon", "suppress")
+
 _PROTECTIVE_VERBS = ("evacuat", "rescue", "relocat", "shelter", "escort",
                      "safety", "guide", "lead", "carry")
 
@@ -230,12 +236,36 @@ def singular_errors(record: Any, assessment: Any, recommendations: list,
             left)
 
     # 2. Recommendations on a scene the model itself called safe. The silence
-    #    test. No consequence scaling: there is nobody at risk to scale BY, and
-    #    that is exactly the point — the danger is entirely invented.
+    #    test. F_park ui_3d7b4153 (Sunny, 2026-09-14): the model said "No
+    #    disaster" and gave two PRECAUTIONS ("supervise the dog") and the rule
+    #    charged the full ceiling as if it had invented a fire. Priced by
+    #    evidence of an actual emergency: full when a rec's threat carries a
+    #    hazard-bearing state or its action calls for emergency response; a
+    #    quarter when every rec is a precaution on normal-state entities —
+    #    recorded either way, never silent.
     if str(getattr(assessment, "disaster_scenario", "")) == "No" and recs:
-        add("emergency_invented",
-            f"the model called this scene 'No disaster' and then issued "
-            f"{len(recs)} recommendation(s) anyway", 1.0, [])
+        from agentic.perception import state_kind
+        evidence = []
+        for r in recs:
+            q = r.get("structured_reasoning") or {}
+            act = str(r.get("action", "")).lower()
+            if state_kind(str(q.get("state", ""))) == "hazard_bearing":
+                evidence.append(f"rec {r.get('rank')} names a hazard-bearing "
+                                f"state '{q.get('state')}'")
+            elif any(v in act for v in _EMERGENCY_VERBS):
+                evidence.append(f"rec {r.get('rank')} calls for emergency "
+                                f"response")
+        if evidence:
+            add("emergency_invented",
+                f"the model called this scene 'No disaster' and then issued "
+                f"{len(recs)} recommendation(s) anyway — "
+                + "; ".join(evidence), 1.0, [])
+        else:
+            add("emergency_invented",
+                f"the model called this scene 'No disaster' and issued "
+                f"{len(recs)} recommendation(s) — precaution on a safe scene "
+                f"(no hazard-bearing state, no emergency-response action)",
+                0.25, [])
 
     # 3. A declared danger nobody acts on, scaled by who it can reach.
     #    Sunny (2026-08-28, run ui_7397dae7): a hazard you cannot act on

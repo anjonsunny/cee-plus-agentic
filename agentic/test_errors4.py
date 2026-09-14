@@ -298,3 +298,39 @@ def test_waiver_never_fires_when_graph_b_draws_no_arrow():
                                 affected=["person_1"])], {"edges": []})
     assert any(e["id"] == "hazard_unaddressed" and not e.get("waived")
                and e["deduction"] > 0 for e in out)
+
+
+# ── the silence test prices EVIDENCE of an emergency (F_park ui_3d7b4153) ──
+
+def test_a_precaution_on_a_safe_scene_costs_a_quarter():
+    """'Supervise the dog' after 'No disaster' is not an invented fire."""
+    scene = _scene(_obj("dog_1", "dog", "running", "normal"),
+                   _obj("person_1", "person", "standing", "normal"))
+    rec = _rec(1, "supervise the dog_1 near the children", "dog_1",
+               affected=["person_1"])
+    rec["structured_reasoning"]["state"] = "running"     # a normal state
+    errs = singular_errors(scene, _asm(scenario="No", level=0), [rec])
+    e = next(x for x in errs if x["id"] == "emergency_invented")
+    assert e["consequence"] == 0.25
+    assert "precaution on a safe scene" in e["detail"]
+    assert e["deduction"] == round(ERROR_CEILINGS["emergency_invented"] * 0.25, 3)
+
+
+def test_an_emergency_response_on_a_safe_scene_still_costs_the_ceiling():
+    scene = _scene(_obj("dog_1", "dog", "running", "normal"))
+    rec = _rec(1, "deploy a rescue team to the park", "dog_1")
+    rec["structured_reasoning"]["state"] = "running"     # verb alone decides
+    errs = singular_errors(scene, _asm(scenario="No", level=0), [rec])
+    e = next(x for x in errs if x["id"] == "emergency_invented")
+    assert e["consequence"] == 1.0 and "emergency response" in e["detail"]
+
+
+def test_a_hazard_bearing_state_on_a_safe_scene_still_costs_the_ceiling():
+    """The quad says 'burning' on a scene the model called safe — that IS an
+    invented emergency, whatever the action verb."""
+    scene = _scene(_obj("house_1", "house", "intact", "normal"))
+    rec = _rec(1, "watch the house_1", "house_1")
+    rec["structured_reasoning"]["state"] = "burning"
+    errs = singular_errors(scene, _asm(scenario="No", level=0), [rec])
+    e = next(x for x in errs if x["id"] == "emergency_invented")
+    assert e["consequence"] == 1.0 and "hazard-bearing" in e["detail"]
