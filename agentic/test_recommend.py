@@ -959,7 +959,14 @@ def _benign_raw(extra_recs=()):
 def test_prompt_offers_the_benign_entry_and_stays_neutral():
     from agentic.recommend import RECOMMEND_PROMPT
     assert "needs no responder action" in RECOMMEND_PROMPT
-    assert "leave `effect` empty and `affected_objects` empty" in RECOMMEND_PROMPT
+    assert "leave `effect` empty and\n  `affected_objects` empty" in RECOMMEND_PROMPT
+    # F_park ui_d5a6c1f8: "watching is enough" named an answer and the model
+    # wrote "Monitor the dog" (F2 scar); and "never leave a slot empty" sat
+    # two lines above "leave these slots empty". Both gone; the quad demand
+    # is scoped to entries that ACT.
+    assert "watching is enough" not in RECOMMEND_PROMPT
+    assert "Every entry that ACTS needs a real quad" in RECOMMEND_PROMPT
+    assert "Every entry needs a real quad" not in RECOMMEND_PROMPT
     # iron rule 5: no scene, no id-shaped token, no example answer
     import re
     assert not re.search(r"\b[a-z]+_\d+\b", RECOMMEND_PROMPT.split("{scene_block}")[0])

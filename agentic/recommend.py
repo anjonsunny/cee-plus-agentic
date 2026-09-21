@@ -130,17 +130,15 @@ with exactly these keys:
 - uncertainty_notes: array of short strings about what you are unsure of and why.
 - recommendations: array, one entry per ACTION you would take. Two actions may
   rest on the SAME (threat, state) — protecting two people from one hazard is
-  two actions and one hazard. Every entry needs a real quad: if you cannot see
-  which declared threat an action responds to, drop the action rather than
-  writing "N/A" or leaving a slot empty. Do not pad to a fixed
-  count.{empty_clause}
-  If, in your judgement, an entity needs no responder action — nothing to
-  do, or watching is enough — say so as an entry, in your own words, with
-  your reasoning in `reason`. Such an entry's quad names the entity you
-  considered in `threat` (any object_id in the scene) and its state in
-  `state`; leave `effect` empty and `affected_objects` empty, because you
-  are saying it harms nothing. An entry that ACTS keeps the full quad and
-  the reason form below. Each entry:
+  two actions and one hazard. Do not pad to a fixed count.{empty_clause}
+  If, in your judgement, an entity needs no responder action, say so as an
+  entry, in your own words, with your reasoning in `reason`. Such an entry's
+  quad names the entity you considered in `threat` (any object_id in the
+  scene) and its state in `state`; leave `effect` empty and
+  `affected_objects` empty, because you are saying it harms nothing.
+  Every entry that ACTS needs a real quad and the reason form below: if you
+  cannot see which declared threat an action responds to, drop the action
+  rather than writing "N/A" or leaving a slot empty. Each entry:
     - rank: integer (1 = highest priority)
     - action: one specific responder action (no "and"/"then" compounds).
       Whenever your action acts on an entity that IS in the scene list above,
