@@ -372,6 +372,8 @@ def internal_alignment(record: Any, assessment: Any,
     threats_used: set[str] = set()
 
     for r in recommendations:
+        if r.get("benign"):
+            continue                # no causal claim to hold against itself
         rank = r.get("rank")
         q = r.get("structured_reasoning", {}) or {}
         # F16: ids are compared here, so they are normalised here. A stray
@@ -621,6 +623,10 @@ CARD_RULE_META: dict[str, tuple[str, str]] = {
     "remaining_risk_not_a_pair": ("conformance", "card"),
     "remaining_risk_duplicated": ("conformance", "set"),
     "reason_names_label_not_id": ("conformance", "card"),
+    # benign entries (2026-09-21): entity + state named, no claim of harm
+    "benign_entity_not_in_scene": ("conformance", "card"),
+    "benign_state_not_declared": ("conformance", "card"),
+    "benign_clears_a_hazard": ("conformance", "card"),
     # ── conformance: the set as a whole ──
     "rank_not_a_triage": ("conformance", "set"),
     # ── internal alignment: action <-> reason ──
@@ -841,6 +847,28 @@ def explanation_alignment(record: Any, assessment: Any,
         q_effect = str(q.get("effect") or "").strip().lower()
         q_affected = {bare_id(x) for x in (q.get("affected_objects") or [])
                       if bare_id(x)}
+
+        # A BENIGN entry ("this needs no action, because..."): the effect,
+        # affected and "Because X is S" rules do not apply — it makes no
+        # claim of harm. It still must name a real entity in that entity's
+        # own state, and clearing an entity the scene calls hazard-bearing
+        # is charged: the model says a hazard harms nothing.
+        if r.get("benign"):
+            if q_threat not in detected_ids:
+                fail("quad", "benign_entity_not_in_scene", 2,
+                     f"rec {rank}: the benign entry names '{q_threat}', "
+                     f"which is not in the scene", rank)
+            else:
+                own = str(state_of.get(q_threat) or "").strip().lower()
+                if own and q_state != own:
+                    fail("quad", "benign_state_not_declared", 1,
+                         f"rec {rank}: the benign entry says {q_threat} is "
+                         f"'{q_state}'; the scene says '{own}'", rank)
+                if q_threat in threat_ids:
+                    fail("quad", "benign_clears_a_hazard", 3,
+                         f"rec {rank}: says {q_threat} needs no action, but "
+                         f"the scene declares it a hazard", rank)
+            continue
 
         # ── surface: ACTION ────────────────────────────────────────────
         action = str(r.get("action") or "").strip()

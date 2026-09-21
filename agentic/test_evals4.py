@@ -1912,3 +1912,41 @@ def test_trust_evidence_quotes_the_numbers_the_score_is_made_of():
     text = _trust_evidence("advice_backed_by_belief", {}, {}, al, {}, {})
     assert "same victims 0.31" in text and "1.00" not in text
     assert "3 asserted-not-believed" in text
+
+
+# ── card rules on a benign entry (2026-09-21) ────────────────────────────
+
+def _benign_card(entity, state, rank=1):
+    return {"rank": rank, "benign": True, "action": f"No action needed for {entity}.",
+            "reason": "nothing near it can harm anyone",
+            "structured_reasoning": {"threat": entity, "state": state,
+                                     "effect": "N/A", "affected_objects": []},
+            "remaining_risk": "N/A"}
+
+
+def test_benign_entry_skips_harm_rules_but_must_name_a_real_entity():
+    from agentic.evals4 import explanation_alignment
+    from agentic.perception import DetectedObject, PerceptionResult
+    from agentic.assessment import SceneAssessment
+
+    def _obj(oid, label, state, kind):
+        return DetectedObject(object_id=oid, label=label, family="x", state=state,
+                              state_kind=kind, bbox=[0, 0, 9, 9],
+                              box_source="dino_matched", box_confidence=0.9,
+                              anchor_bbox=[0, 0, 9, 9])
+    rec = PerceptionResult(image_path="/x", image_size=[10, 10], entity_source="vlm",
+                           detected_objects=[_obj("dog_1", "dog", "running", "normal"),
+                                             _obj("fire_1", "fire", "spreading",
+                                                  "hazard_bearing")])
+    asm = SceneAssessment(disaster_scenario="Yes", disaster_type="fire",
+                          disaster_level=7, severity_bucket="high",
+                          threats=[{"object_id": "fire_1", "state": "spreading",
+                                    "reason": "r"}], at_risk=[])
+    rules = lambda recs: {f["rule"] if "rule" in f else f["category"]
+                          for f in explanation_alignment(rec, asm, recs)["conformance"]
+                          + explanation_alignment(rec, asm, recs)["internal_alignment"]}
+    clean = rules([_benign_card("dog_1", "running")])
+    assert not any(r.startswith(("reason_", "quad_", "effect_")) for r in clean)
+    assert "benign_entity_not_in_scene" in rules([_benign_card("cat_9", "running")])
+    assert "benign_state_not_declared" in rules([_benign_card("dog_1", "sleeping")])
+    assert "benign_clears_a_hazard" in rules([_benign_card("fire_1", "spreading")])

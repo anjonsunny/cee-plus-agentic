@@ -133,7 +133,14 @@ with exactly these keys:
   two actions and one hazard. Every entry needs a real quad: if you cannot see
   which declared threat an action responds to, drop the action rather than
   writing "N/A" or leaving a slot empty. Do not pad to a fixed
-  count.{empty_clause} Each entry:
+  count.{empty_clause}
+  If, in your judgement, an entity needs no responder action — nothing to
+  do, or watching is enough — say so as an entry, in your own words, with
+  your reasoning in `reason`. Such an entry's quad names the entity you
+  considered in `threat` (any object_id in the scene) and its state in
+  `state`; leave `effect` empty and `affected_objects` empty, because you
+  are saying it harms nothing. An entry that ACTS keeps the full quad and
+  the reason form below. Each entry:
     - rank: integer (1 = highest priority)
     - action: one specific responder action (no "and"/"then" compounds).
       Whenever your action acts on an entity that IS in the scene list above,
@@ -318,6 +325,23 @@ def coerce_quad(value: Any, notes: list[str], rank: Any = None) -> Any:
             "affected_objects": _ids(affected)}
 
 
+def is_benign_quad(q: Any) -> bool:
+    """A BENIGN entry (Sunny, 2026-09-21): the model says an entity needs no
+    responder action. Entity and state are named; effect and affected are
+    empty because it claims no harm. Read on the RAW quad, before Arm A's
+    normalizer turns an empty effect into "N/A"."""
+    if not isinstance(q, dict):
+        return False
+    t = str(q.get("threat") or "").strip()
+    st = str(q.get("state") or "").strip()
+    eff = str(q.get("effect") or "").strip().upper()
+    aff = q.get("affected_objects")
+    aff_empty = (aff is None or aff == [] or aff == "" or
+                 (isinstance(aff, str) and not aff.strip()))
+    return (bool(t) and t.upper() != "N/A" and bool(st) and st.upper() != "N/A"
+            and eff in ("", "N/A") and aff_empty)
+
+
 def _quad_is_empty(q: Any) -> bool:
     if not isinstance(q, dict):
         return True
@@ -376,6 +400,11 @@ def parse_recommend(raw: Any) -> tuple[dict, list[dict], list[dict], list[str]]:
     _in = _recs_in if isinstance(_recs_in, list) else []
     for _i, _out in enumerate(recommendations):
         _src = _in[_i] if _i < len(_in) and isinstance(_in[_i], dict) else {}
+        # the benign tag rides on the normalized rec; the raw quad decides
+        if is_benign_quad(_src.get("structured_reasoning")):
+            _out["benign"] = True
+            notes.append(f"rec_rank_{_out.get('rank')}_benign")
+            continue
         if _src.get("structured_reasoning") and \
                 _quad_is_empty(_out.get("structured_reasoning")):
             notes.append(f"quad_rank_{_out.get('rank')}_LOST_IN_PARSE"
@@ -517,7 +546,7 @@ def _recommend_reading(recommendations: list[dict]) -> dict:
 
     _bare = bare_id          # F16: one normaliser, defined at module level
 
-    ordered = sorted(recs, key=_rank)
+    ordered = sorted((r for r in recs if not r.get("benign")), key=_rank)
     top_threat = ""
     if ordered:
         q0 = ordered[0].get("structured_reasoning", {}) or {}
@@ -528,6 +557,8 @@ def _recommend_reading(recommendations: list[dict]) -> dict:
     edges: list[tuple] = []
     effect_by_threat: dict[str, str] = {}
     for r in recs:
+        if r.get("benign"):
+            continue                    # no claim of harm: nothing to vote on
         q = r.get("structured_reasoning", {}) or {}
         t = _bare(q.get("threat"))
         eff = str(q.get("effect", ""))
@@ -651,6 +682,8 @@ def _sanitize_recs(recommendations: list[dict]) -> list[dict]:
     for r in recommendations or []:
         if not isinstance(r, dict):
             continue
+        if r.get("benign"):
+            continue                    # claims no harm: no edge in Graph A
         q = r.get("structured_reasoning")
         if not isinstance(q, dict):
             out.append(r)

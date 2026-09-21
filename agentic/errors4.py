@@ -188,7 +188,7 @@ def _touched(recommendations: list, record: Any) -> set:
     from agentic.evals4 import entities_named_in
     out: set = set()
     for r in (recommendations or []):
-        if not isinstance(r, dict):
+        if not isinstance(r, dict) or r.get("benign"):
             continue
         q = r.get("structured_reasoning") or {}
         out |= {str(v) for v in (q.get("affected_objects") or []) if str(v)}
@@ -205,7 +205,11 @@ def singular_errors(record: Any, assessment: Any, recommendations: list,
     Each entry: id, a plain sentence naming the entities, the consequence, the
     ceiling, and the resulting deduction. Deterministic — no model, no judge,
     no ground truth."""
-    recs = [r for r in (recommendations or []) if isinstance(r, dict)]
+    # Benign entries ("needs no action, because...") make no claim of harm
+    # and act on nothing: the library reads only the ACTING entries. A run
+    # that is all benign kept its silence — nothing here to charge.
+    recs = [r for r in (recommendations or [])
+            if isinstance(r, dict) and not r.get("benign")]
     objs = list(getattr(record, "detected_objects", None) or [])
     label_of = {str(getattr(o, "object_id", "")): str(getattr(o, "label", ""))
                 for o in objs}

@@ -943,3 +943,52 @@ def test_graph_b_opening_is_sunnys_and_threats_are_back():
         "Return valid JSON only.") or "Caption:" in prompt
     assert "5." not in squashed.split("## Rules")[1].split("Return valid")[0]
     assert "on the SAME entity" not in flat
+
+
+# ── benign entries (Sunny, 2026-09-21): an honest way to say "nothing to do" ──
+
+def _benign_raw(extra_recs=()):
+    return {"scene_summary": "s", "recommendations": [
+        {"rank": 1, "action": "No action needed for dog_1.",
+         "reason": "The dog is playing on open grass; nothing near it can harm anyone.",
+         "structured_reasoning": {"threat": "dog_1", "state": "running",
+                                  "effect": "", "affected_objects": []}},
+        *extra_recs]}
+
+
+def test_prompt_offers_the_benign_entry_and_stays_neutral():
+    from agentic.recommend import RECOMMEND_PROMPT
+    assert "needs no responder action" in RECOMMEND_PROMPT
+    assert "leave `effect` empty and `affected_objects` empty" in RECOMMEND_PROMPT
+    # iron rule 5: no scene, no id-shaped token, no example answer
+    import re
+    assert not re.search(r"\b[a-z]+_\d+\b", RECOMMEND_PROMPT.split("{scene_block}")[0])
+
+
+def test_parser_tags_a_benign_entry_and_keeps_acting_entries_intact():
+    from agentic.recommend import parse_recommend
+    acting = {"rank": 2, "action": "Evacuate person_1 from house_1.",
+              "reason": "Because house_1 is burning, it may_harm person_1.",
+              "structured_reasoning": {"threat": "house_1", "state": "burning",
+                                       "effect": "may_harm",
+                                       "affected_objects": ["person_1"]}}
+    _f, recs, _a, notes = parse_recommend(_benign_raw([acting]))
+    assert recs[0].get("benign") is True and "rec_rank_1_benign" in notes
+    assert recs[1].get("benign") is None
+    assert recs[1]["structured_reasoning"]["effect"] == "may_harm"
+    # a botched acting quad (no threat at all) is NOT benign
+    _f, recs, _a, _n = parse_recommend({"recommendations": [
+        {"rank": 1, "action": "x", "reason": "y",
+         "structured_reasoning": {"threat": "", "state": "", "effect": "",
+                                  "affected_objects": []}}]})
+    assert recs[0].get("benign") is None
+
+
+def test_benign_entries_draw_no_edge_and_cast_no_vote():
+    from agentic.recommend import _sanitize_recs, _recommend_reading
+    benign = {"rank": 1, "benign": True, "action": "no action for dog_1",
+              "structured_reasoning": {"threat": "dog_1", "state": "running",
+                                       "effect": "N/A", "affected_objects": []}}
+    assert _sanitize_recs([benign]) == []
+    reading = _recommend_reading([benign])
+    assert reading["top_threat"] == "" and reading["threat_ids"] == []

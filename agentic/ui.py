@@ -3263,12 +3263,26 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
               for v in ((s4.get("card_judge") or {}).get("verdicts") or [])}
     for r in s4.get("recommendations", []):
         q = r.get("structured_reasoning", {}) or {}
-        quad_row = ([html.Span("quad: ", style={"color": "#94a3b8",
-                                                "fontSize": "11.5px"}),
-                     chipper(q.get("threat", "")),
-                     html.Span(f" —{q.get('effect', '')}→ ",
-                               style={"color": "#7c3aed", "fontSize": "11.5px"})]
-                    + [chipper(t) for t in (q.get("affected_objects") or [])])
+        if r.get("benign"):
+            # a benign entry: the model says this entity needs no action
+            quad_row = [html.Span("BENIGN · no action needed",
+                                  style={"fontSize": "10px", "fontWeight": "800",
+                                         "color": "#15803d", "background": "#f0fdf4",
+                                         "border": "1px solid #86efac",
+                                         "borderRadius": "6px", "padding": "1px 6px",
+                                         "marginRight": "6px"}),
+                        html.Span("considered: ", style={"color": "#94a3b8",
+                                                         "fontSize": "11.5px"}),
+                        chipper(q.get("threat", "")),
+                        html.Span(f" · {q.get('state', '')}",
+                                  style={"color": "#64748b", "fontSize": "11.5px"})]
+        else:
+            quad_row = ([html.Span("quad: ", style={"color": "#94a3b8",
+                                                    "fontSize": "11.5px"}),
+                         chipper(q.get("threat", "")),
+                         html.Span(f" —{q.get('effect', '')}→ ",
+                                   style={"color": "#7c3aed", "fontSize": "11.5px"})]
+                        + [chipper(t) for t in (q.get("affected_objects") or [])])
         out.append(html.Div([
             html.Div([
                 html.Span(f"#{r.get('rank')}", className="phase-num",

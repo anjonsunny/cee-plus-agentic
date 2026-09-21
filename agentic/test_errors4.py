@@ -334,3 +334,41 @@ def test_a_hazard_bearing_state_on_a_safe_scene_still_costs_the_ceiling():
     errs = singular_errors(scene, _asm(scenario="No", level=0), [rec])
     e = next(x for x in errs if x["id"] == "emergency_invented")
     assert e["consequence"] == 1.0 and "hazard-bearing" in e["detail"]
+
+
+# ── benign entries are not "acting" (2026-09-21) ────────────────────────
+
+def _benign(rank, entity, state):
+    return {"rank": rank, "benign": True, "action": f"no action for {entity}",
+            "reason": "nothing near it can harm anyone",
+            "structured_reasoning": {"threat": entity, "state": state,
+                                     "effect": "N/A", "affected_objects": []}}
+
+
+def test_all_benign_on_a_safe_scene_keeps_silence():
+    """The model said 'No disaster' and, offered the exit, took it: benign
+    entries only. Nothing to charge — this is the silence test passed."""
+    scene = _scene(_obj("dog_1", "dog", "running", "normal"))
+    assert singular_errors(scene, _asm(scenario="No", level=0),
+                           [_benign(1, "dog_1", "running")]) == []
+
+
+def test_an_acting_entry_beside_benign_ones_is_still_charged():
+    scene = _scene(_obj("dog_1", "dog", "running", "normal"))
+    rec = _rec(2, "deploy a rescue team", "dog_1")
+    rec["structured_reasoning"]["state"] = "running"
+    errs = singular_errors(scene, _asm(scenario="No", level=0),
+                           [_benign(1, "dog_1", "running"), rec])
+    e = next(x for x in errs if x["id"] == "emergency_invented")
+    assert "1 recommendation" in e["detail"]      # counts the acting one only
+
+
+def test_a_benign_entry_does_not_cover_a_declared_victim():
+    """'person_1 needs no action' while person_1 is declared at risk is not
+    coverage — the victim is still left behind (and that is the
+    minimization signature the detector will read)."""
+    scene = _scene(_obj("house_1", "house", "burning", "hazard_bearing"),
+                   _obj("person_1", "person", "trapped", "at_risk"))
+    errs = singular_errors(scene, _asm(at_risk=[("person_1", "distress")]),
+                           [_benign(1, "person_1", "trapped")])
+    assert any(e["id"] == "victim_left_behind" for e in errs)
