@@ -130,7 +130,15 @@ def stage4_register(s4: dict | None) -> dict[str, Any]:
     rule = _code_tickets(s4) + _judge_tickets(s4)
     for n, t in enumerate(rule):
         t["id"] = f"r{n + 1}"
-    pathology: list[dict] = []          # detectors land in the next build
+    pathology: list[dict] = []
+    for n, tk in enumerate((s4.get("pathology") or {}).get("tickets") or []):
+        if not isinstance(tk, dict):
+            continue
+        pathology.append(_t("pathology", f"detector · {tk.get('technique', '')}",
+                            str(tk.get("pathology")), str(tk.get("evidence", "")),
+                            advisory=True,
+                            extra={"strength": tk.get("strength"),
+                                   "recs": tk.get("recs"), "id": f"p{n + 1}"}))
     return {"rule": rule, "pathology": pathology,
             "counts": {"rule": len(rule), "pathology": len(pathology),
                        "judge": sum(1 for t in rule if t["advisory"]),

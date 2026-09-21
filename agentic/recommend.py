@@ -1699,6 +1699,21 @@ def run_trust(recommendations: list[dict], conformance: dict,
     return {"trust": trust}
 
 
+def run_pathology(record: Any, assessment: Any, recommendations: list[dict],
+                  graph_b: dict | None = None, *, on_event: Any = None) -> dict:
+    """Step 7 — the pathology detectors (pathology4.py). Deterministic, outside
+    any loop, run AFTER trust so nothing here can move a score. One event per
+    ticket, for the flight recorder."""
+    from agentic.pathology4 import detect_pathologies
+    emit = _emitter(on_event)
+    out = detect_pathologies(record, assessment, recommendations, graph_b)
+    for tk in out["tickets"]:
+        emit("pathology_detected", pathology=tk["pathology"],
+             technique=tk["technique"], strength=tk["strength"],
+             recs=tk["recs"], evidence=tk["evidence"])
+    return {"pathology": out}
+
+
 # ── The durable Stage-4 result ──────────────────────────────────────────
 
 class Stage4Result(BaseModel):
@@ -1739,6 +1754,9 @@ class Stage4Result(BaseModel):
     # the raw model answer, kept verbatim as evidence — Any, because a
     # malformed answer (a bare string, a list) must still be preserved.
     raw_answer: Any = None
+    # Stage 4 pathology detectors (pathology4.py): tickets + which detectors
+    # looked. Advisory; computed after trust.
+    pathology: dict = Field(default_factory=dict)
     # The ticket register (register4.py): every code and judge finding as a
     # ticket, stamped OPEN. Derived AFTER validation from the fields above, so
     # both controls get it identically and no score can read it.
@@ -1809,6 +1827,8 @@ def run_stage4(record: Any, assessment: Any, image_path: str = "",
                       graph_b=graph_b,
                       graph_b_internal=evals.get("graph_b_internal"),
                       graph_b_uncertainty=gbu, on_event=on_event)
+    patho = run_pathology(record, assessment, rec["recommendations"], graph_b,
+                          on_event=on_event)
 
     emit("stage_done", stage="recommend")
     return Stage4Result(
@@ -1823,6 +1843,7 @@ def run_stage4(record: Any, assessment: Any, image_path: str = "",
         runoff_judge=rjudged.get("runoff_judge", {}),
         alignment=evals["alignment"], uncertainty=unc["uncertainty"],
         trust=trust["trust"],
+        pathology=patho["pathology"],
         graph_b_uncertainty=gbu,
         graph_b_internal=evals.get("graph_b_internal") or {},
         parse_notes=rec["recommend_notes"],

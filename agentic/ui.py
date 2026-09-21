@@ -2861,7 +2861,10 @@ def _register_panel(s4: dict) -> list:
         "color": "#64748b", "margin": "8px 0 2px"}))
     path = reg.get("pathology") or []
     out += [_ticket(tk) for tk in path] or [
-        html.Div("no pathology detectors yet — next build", className="ticket-empty")]
+        html.Div("no pathology ticket — detectors that looked: "
+                 + ", ".join(((s4 or {}).get("pathology") or {}).get("checked")
+                             or ["(none recorded on this run)"]),
+                 className="ticket-empty")]
     return out
 
 

@@ -32,7 +32,8 @@ from agentic.recommend import (QueryFn, Stage4Result, build_graph_a,
                                pick_targets, run_evals,
                                run_graph_b, run_graph_b_probes,
                                run_recommend, run_recommend_uncertainty,
-                               run_stage4, run_trust, _emitter)
+                               run_stage4, run_trust, run_pathology,
+                               _emitter)
 
 
 class S4State(TypedDict, total=False):
@@ -62,6 +63,7 @@ class S4State(TypedDict, total=False):
     graph_judge: dict       # F38: the graph judge (display-only)
     alignment: dict         # A-vs-B declared-vs-structured (Phase 1b)
     trust: dict             # folded trust score + breakdown (Phase 1b)
+    pathology: dict         # pathology detectors' tickets (advisory)
 
 
 def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
@@ -159,6 +161,11 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
                       on_event=on_event)
         return {"trust": t["trust"]}
 
+    def pathology(state: S4State) -> dict[str, Any]:
+        return run_pathology(state["record"], state["assessment"],
+                             state["recommendations"], state.get("graph_b"),
+                             on_event=on_event)
+
     g = StateGraph(S4State)
     g.add_node("recommend", recommend)
     g.add_node("uncertainty", uncertainty)
@@ -170,6 +177,7 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
     g.add_node("graph_judge", graph_judge)
     g.add_node("runoff_judge", runoff_judge)
     g.add_node("trust", trust)
+    g.add_node("pathology", pathology)
 
     g.add_edge(START, "recommend")
     g.add_edge("recommend", "uncertainty")
@@ -181,7 +189,8 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
     g.add_edge("card_judge", "graph_judge")
     g.add_edge("graph_judge", "runoff_judge")
     g.add_edge("runoff_judge", "trust")
-    g.add_edge("trust", END)
+    g.add_edge("trust", "pathology")
+    g.add_edge("pathology", END)
     return g.compile()
 
 
@@ -221,6 +230,7 @@ def run_s4_graph(record: Any, assessment: Any, image_path: str = "",
         alignment=final.get("alignment", {}),
         uncertainty=final.get("uncertainty", {}),
         trust=final.get("trust", {}),
+        pathology=final.get("pathology", {}) or {},
         graph_b_uncertainty=final.get("graph_b_uncertainty", {}),
         graph_b_internal=final.get("graph_b_internal", {}) or {},
         parse_notes=final.get("recommend_notes", []),
