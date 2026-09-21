@@ -2082,7 +2082,13 @@ def test_no_finding_is_printed_twice_anywhere_on_the_screen():
     import json
     from agentic.ui import stage4_component
     d = json.load(open('exports/agentic_runs/ui_21f1cdad/stage4.json'))
-    t = _text(stage4_component({"stage4": d}))
+    # Section 7, THE REGISTER (2026-09-21), is a deliberate second printing:
+    # the one index of every finding that reflection will read. F37's rule
+    # — a finding renders once under the thing it judges — governs the
+    # panels, so the register is excluded from the count.
+    sections = [s for s in stage4_component({"stage4": d})
+                if "7 · THE REGISTER" not in _text(s)]
+    t = _text(sections)
     # one per graph — two graphs, not four printings
     assert t.count("hazard_flag_state_mismatch") == 2
     # one per card

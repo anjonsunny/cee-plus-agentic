@@ -52,7 +52,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -1706,6 +1706,18 @@ class Stage4Result(BaseModel):
     # the raw model answer, kept verbatim as evidence — Any, because a
     # malformed answer (a bare string, a list) must still be preserved.
     raw_answer: Any = None
+    # The ticket register (register4.py): every code and judge finding as a
+    # ticket, stamped OPEN. Derived AFTER validation from the fields above, so
+    # both controls get it identically and no score can read it.
+    tickets: dict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _fill_tickets(self):
+        if not self.tickets:
+            from agentic.register4 import stage4_register
+            self.tickets = stage4_register(
+                self.model_dump(exclude={"tickets"}))
+        return self
 
 
 # ── Python control: the straight line, in order ─────────────────────────

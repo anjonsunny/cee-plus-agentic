@@ -2797,7 +2797,72 @@ _S4_SECTIONS = (
      "does the advice match the model's own belief?", True),
     ("bench", "6 · THE JUDGES' BENCH",
      "all subjective, all advisory, one card each", True),
+    # Sunny (2026-09-21): judge verdicts that reflection will carry were
+    # visible only on their bench cards; code findings only in their panels.
+    # One register, both sources, Stage 1/2 ticket grammar, all OPEN.
+    ("register", "7 · THE REGISTER",
+     "every open ticket, code and judge — what reflection will read", True),
 )
+
+
+def _register_panel(s4: dict) -> list:
+    """Section 7. Reuses the Stage 1/2 ticket grammar (kind · stamp · body).
+    Old records without a saved register get one computed on the spot —
+    it is a pure function of the record."""
+    reg = (s4 or {}).get("tickets")
+    if not reg:
+        from agentic.register4 import stage4_register
+        reg = stage4_register(s4 or {})
+    stamp = {"open": ("OPEN", "stamp open"), "fixing": ("FIXING…", "stamp fixing"),
+             "fixed": ("FIXED", "stamp fixed"), "stood": ("STOOD ITS GROUND", "stamp stood"),
+             "repaired": ("REPAIRED", "stamp fixed"), "survived": ("SURVIVED", "stamp stood"),
+             "induced": ("INDUCED", "stamp open")}
+
+    def _ticket(tk: dict) -> Any:
+        st = tk.get("status", "open")
+        lab, cls = stamp.get(st, ("OPEN", "stamp open"))
+        head = [html.Span(str(tk.get("kind", "")).replace("_", " "),
+                          className="ticket-kind")]
+        if tk.get("rank") is not None:
+            head.append(html.Span(f"rec {tk['rank']}", className="ticket-label"))
+        head.append(html.Span(
+            ("JUDGE · advisory" if tk.get("advisory") else "CODE")
+            + f" · {tk.get('source', '')}",
+            style={"fontSize": "9.5px", "color": "#7c3aed" if tk.get("advisory")
+                   else "#64748b", "marginLeft": "6px"}))
+        if tk.get("severity") is not None:
+            head.append(html.Span(f"sev {tk['severity']}",
+                                  style={"fontSize": "9.5px", "color": "#94a3b8",
+                                         "marginLeft": "6px"}))
+        head.append(html.Span(lab, className=cls))
+        return html.Details([
+            html.Summary(head),
+            html.Div([html.Div("EVIDENCE", className="speaker rulebook"),
+                      html.Div(str(tk.get("evidence", "")),
+                               className="bubble rulebook-bubble")],
+                     className="ticket-body"),
+        ], className=f"ticket {st}")
+
+    c = reg.get("counts") or {}
+    out: list = [html.Div(
+        f"rule violations: {c.get('rule', 0)} open ({c.get('code', 0)} code, "
+        f"{c.get('judge', 0)} judge)  ·  pathologies: {c.get('pathology', 0)}"
+        "  ·  every ticket is stamped OPEN until the reflection loop exists; "
+        "none moves a score",
+        style={"fontSize": "10.5px", "color": "#64748b", "margin": "0 0 6px 2px"})]
+    out.append(html.Div("RULE VIOLATIONS", style={
+        "fontSize": "10px", "fontWeight": "800", "letterSpacing": ".08em",
+        "color": "#64748b", "margin": "4px 0 2px"}))
+    rule = reg.get("rule") or []
+    out += [_ticket(tk) for tk in rule] or [
+        html.Div("no rule tickets — clean", className="ticket-empty")]
+    out.append(html.Div("PATHOLOGIES", style={
+        "fontSize": "10px", "fontWeight": "800", "letterSpacing": ".08em",
+        "color": "#64748b", "margin": "8px 0 2px"}))
+    path = reg.get("pathology") or []
+    out += [_ticket(tk) for tk in path] or [
+        html.Div("no pathology detectors yet — next build", className="ticket-empty")]
+    return out
 
 
 def _assemble_stage4_sections(out: list, s4: dict, d: dict) -> list:
@@ -2818,7 +2883,8 @@ def _assemble_stage4_sections(out: list, s4: dict, d: dict) -> list:
             "stability": buckets.get("stability", []),
             "graphs": buckets.get("graphs", []),
             "alignment": buckets.get("alignment", []),
-            "bench": _judges_bench(s4, d)}
+            "bench": _judges_bench(s4, d),
+            "register": _register_panel(s4)}
     sections: list = []
     for key, title, sub, open_ in _S4_SECTIONS:
         if title is None or not body.get(key):
