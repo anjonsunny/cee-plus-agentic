@@ -33,7 +33,7 @@ from agentic.recommend import (QueryFn, Stage4Result, build_graph_a,
                                run_graph_b, run_graph_b_probes,
                                run_recommend, run_recommend_uncertainty,
                                run_stage4, run_trust, run_pathology,
-                               _emitter)
+                               run_leading_probe, _emitter)
 
 
 class S4State(TypedDict, total=False):
@@ -64,6 +64,7 @@ class S4State(TypedDict, total=False):
     alignment: dict         # A-vs-B declared-vs-structured (Phase 1b)
     trust: dict             # folded trust score + breakdown (Phase 1b)
     pathology: dict         # pathology detectors' tickets (advisory)
+    leading_probe: dict     # the one answer given under the asker's hint
 
 
 def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
@@ -161,9 +162,16 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
                       on_event=on_event)
         return {"trust": t["trust"]}
 
+    def leading_probe(state: S4State) -> dict[str, Any]:
+        return run_leading_probe(state["record"], state["assessment"],
+                                 query_fn=query_fn, n_probes=n_probes,
+                                 on_event=on_event)
+
     def pathology(state: S4State) -> dict[str, Any]:
         return run_pathology(state["record"], state["assessment"],
                              state["recommendations"], state.get("graph_b"),
+                             probe_recs=state.get("probe_recs") or [],
+                             leading=state.get("leading_probe") or {},
                              on_event=on_event)
 
     g = StateGraph(S4State)
@@ -177,6 +185,7 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
     g.add_node("graph_judge", graph_judge)
     g.add_node("runoff_judge", runoff_judge)
     g.add_node("trust", trust)
+    g.add_node("leading_probe", leading_probe)
     g.add_node("pathology", pathology)
 
     g.add_edge(START, "recommend")
@@ -189,7 +198,8 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
     g.add_edge("card_judge", "graph_judge")
     g.add_edge("graph_judge", "runoff_judge")
     g.add_edge("runoff_judge", "trust")
-    g.add_edge("trust", "pathology")
+    g.add_edge("trust", "leading_probe")
+    g.add_edge("leading_probe", "pathology")
     g.add_edge("pathology", END)
     return g.compile()
 
@@ -231,6 +241,7 @@ def run_s4_graph(record: Any, assessment: Any, image_path: str = "",
         uncertainty=final.get("uncertainty", {}),
         trust=final.get("trust", {}),
         pathology=final.get("pathology", {}) or {},
+        leading_probe=final.get("leading_probe", {}) or {},
         graph_b_uncertainty=final.get("graph_b_uncertainty", {}),
         graph_b_internal=final.get("graph_b_internal", {}) or {},
         parse_notes=final.get("recommend_notes", []),

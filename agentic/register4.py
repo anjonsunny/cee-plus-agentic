@@ -138,7 +138,10 @@ def stage4_register(s4: dict | None) -> dict[str, Any]:
                             str(tk.get("pathology")), str(tk.get("evidence", "")),
                             advisory=True,
                             extra={"strength": tk.get("strength"),
-                                   "recs": tk.get("recs"), "id": f"p{n + 1}"}))
+                                   "recs": tk.get("recs"),
+                                   "direction": tk.get("direction"),
+                                   "findings": tk.get("findings"),
+                                   "id": f"p{n + 1}"}))
     return {"rule": rule, "pathology": pathology,
             "counts": {"rule": len(rule), "pathology": len(pathology),
                        "judge": sum(1 for t in rule if t["advisory"]),

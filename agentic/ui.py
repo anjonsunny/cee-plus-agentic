@@ -2865,6 +2865,30 @@ def _register_panel(s4: dict) -> list:
                  + ", ".join(((s4 or {}).get("pathology") or {}).get("checked")
                              or ["(none recorded on this run)"]),
                  className="ticket-empty")]
+    _nr = ((s4 or {}).get("pathology") or {}).get("not_run") or []
+    if _nr:
+        out.append(html.Div("did not run: " + "; ".join(_nr),
+                            style={"fontSize": "10.5px", "color": "#94a3b8",
+                                   "margin": "2px 0 0 2px"}))
+    _lp = (s4 or {}).get("leading_probe") or {}
+    if _lp.get("hint"):
+        # the hinted answer itself, folded — the evidence behind technique 2
+        out.append(html.Details([
+            html.Summary(f"leading probe — asked: \"{_lp['hint']}\" · "
+                         f"{len(_lp.get('recommendations') or [])} "
+                         f"recommendation(s) came back",
+                         style={"fontSize": "10.5px", "color": "#7c3aed",
+                                "cursor": "pointer"}),
+            html.Div([html.Div(
+                ("BENIGN · " if x.get("benign") else "")
+                + f"#{x.get('rank')} {x.get('action', '')}",
+                style={"fontSize": "11px", "color": "#475569"})
+                for x in (_lp.get("recommendations") or [])
+                if isinstance(x, dict)] or [html.Div(
+                    _lp.get("error") or "no recommendation came back",
+                    style={"fontSize": "11px", "color": "#94a3b8"})],
+                style={"padding": "2px 0 0 10px"})],
+            style={"margin": "4px 0 0 2px"}))
     return out
 
 
