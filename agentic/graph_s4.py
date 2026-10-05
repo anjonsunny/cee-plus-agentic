@@ -189,18 +189,21 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
     g.add_node("pathology", pathology)
 
     g.add_edge(START, "recommend")
+    # Same order as the Python control: the leading probe right after the
+    # neutral re-asks, the pathology detectors right after both graphs and
+    # their probes — both BEFORE the judges, which are most of a run.
     g.add_edge("recommend", "uncertainty")
-    g.add_edge("uncertainty", "graph_a")
+    g.add_edge("uncertainty", "leading_probe")
+    g.add_edge("leading_probe", "graph_a")
     g.add_edge("graph_a", "graph_b")
-    g.add_edge("graph_b", "picks")
+    g.add_edge("graph_b", "pathology")
+    g.add_edge("pathology", "picks")
     g.add_edge("picks", "evals")
     g.add_edge("evals", "card_judge")
     g.add_edge("card_judge", "graph_judge")
     g.add_edge("graph_judge", "runoff_judge")
     g.add_edge("runoff_judge", "trust")
-    g.add_edge("trust", "leading_probe")
-    g.add_edge("leading_probe", "pathology")
-    g.add_edge("pathology", END)
+    g.add_edge("trust", END)
     return g.compile()
 
 

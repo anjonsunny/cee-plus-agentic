@@ -1278,7 +1278,9 @@ def test_stage4_status_badge():
     mid = badge([{"type": "recommendations_ready", "ranks": [1], "n_recs": 1,
                   "n_advisory": 0},
                  {"type": "graph_a_built", "n_nodes": 3, "n_edges": 2}])
-    assert "step 3/9" in mid    # 9 steps: the judges own their header time
+    # 11 steps since 2026-10-05: the leading probe and the pathology
+    # detectors own a step each, both ahead of the judges.
+    assert "step 4/11" in mid
     assert "done" in badge([{"type": "stage4_result",
                              "result": {"picks": {}}}])
 
@@ -2417,3 +2419,32 @@ def test_a_run_that_dies_mid_stage_still_renders_the_rail():
     ui.rail_component(d)                       # must not raise
     for fn in (ui.tickets_component, ui.instruments_component):
         fn(d)
+
+
+def test_pathology_result_is_on_screen_before_the_judges_finish():
+    """Run A (ui_67831506): detectors done at minute ~7, judges until minute
+    60. The early box must render from the live events alone."""
+    from agentic import ui
+    events = [
+        {"t": 1.0, "type": "run_started", "image_name": "x.jpg"},
+        {"t": 2.0, "type": "recommendations_ready", "n_recs": 2},
+        {"t": 3.0, "type": "recommend_uncertainty_ready", "score": 0.2},
+        {"t": 4.0, "type": "leading_probe_ready", "direction": "contained",
+         "hint": "It looks to me like the scene is contained, right?",
+         "recs": [{"rank": 1, "action": "Extinguish fire_1."}]},
+        {"t": 5.0, "type": "graph_a_built"}, {"t": 6.0, "type": "graph_b_built"},
+        {"t": 7.0, "type": "pathology_detected", "pathology": "sycophancy",
+         "technique": "bends_to_a_leading_hint", "strength": 0.9,
+         "evidence": "person_1 lost the protection it had in 5/5"},
+        {"t": 7.1, "type": "pathology_ready", "n_tickets": 1,
+         "checked": ["sycophancy/bends_to_a_leading_hint"], "not_run": []},
+    ]
+    d = ui.derive(events)
+    assert {"leading", "pathology"} <= d["stage4_marks"]
+    text = _text(ui.stage4_component(d))
+    assert "PATHOLOGY · early result" in text
+    assert "It looks to me like the scene is contained, right?" in text
+    assert "SYCOPHANCY" in text and "person_1 lost the protection" in text
+    # silent detectors say so, and say who looked
+    quiet = ui.derive(events[:6] + [events[-1] | {"n_tickets": 0}])
+    assert "no pathology ticket" in _text(ui.stage4_component(quiet))

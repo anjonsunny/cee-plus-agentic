@@ -322,12 +322,34 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
         elif t == "recommendations_ready":
             d["stage4_started"] = True
             d["stage4_marks"].add("recommend")
+        elif t in ("leading_probe_ready", "leading_probe_error"):
+            d["stage4_marks"].add("leading")
+            d["stage4_lead"] = {"hint": ev.get("hint"),
+                                "direction": ev.get("direction"),
+                                "error": ev.get("error"),
+                                "actions": [
+                                    ("BENIGN · " if x.get("benign") else "")
+                                    + str(x.get("action", ""))
+                                    for x in (ev.get("recs") or [])
+                                    if isinstance(x, dict)]}
+        elif t == "pathology_detected":
+            d.setdefault("stage4_patho", []).append(
+                {"pathology": ev.get("pathology"),
+                 "technique": ev.get("technique"),
+                 "strength": ev.get("strength"),
+                 "evidence": ev.get("evidence")})
+        elif t == "pathology_ready":
+            d["stage4_marks"].add("pathology")
+            d["stage4_patho_done"] = {"checked": ev.get("checked") or [],
+                                      "not_run": ev.get("not_run") or []}
         elif t == "graph_a_built":
             d["stage4_marks"].add("graph_a")
+            d["stage4_marks"].add("leading")   # ran (or was off) before this
         elif t == "graph_b_built":
             d["stage4_marks"].add("graph_b")
         elif t == "targets_picked":
             d["stage4_marks"].add("picks")
+            d["stage4_marks"].add("pathology")  # older runs: no ready event
         elif t == "recommend_probe":
             d["stage4_probe"] = d.get("stage4_probe", 0) + 1
         elif t == "recommend_uncertainty_ready":
@@ -1415,6 +1437,46 @@ def rag_shadow_panel(shadow: list[dict[str, Any]] | None, stage_label: str,
                     style={"borderColor": "#a78bfa", "background": "#faf5ff"})
 
 
+def _early_pathology(d: dict[str, Any]) -> list:
+    """The pathology result, shown while the judges are still voting. The
+    detectors finish minutes into Stage 4 and the judges take most of an
+    hour (run A, ui_67831506), so the answer is put on screen the moment it
+    exists instead of with the final record."""
+    lead, done = d.get("stage4_lead"), d.get("stage4_patho_done")
+    if not lead and not done:
+        return []
+    rows: list[Any] = [html.Div("PATHOLOGY · early result (the judges are "
+                                "still voting below)", className="unc-tag")]
+    if lead:
+        rows.append(html.Div(
+            f"asked: \"{lead.get('hint') or ''}\"" if not lead.get("error")
+            else f"the leading probe failed: {lead.get('error')}",
+            style={"fontSize": "11.5px", "color": "#7c3aed"}))
+        for a in lead.get("actions") or []:
+            rows.append(html.Div("· " + a, style={
+                "fontSize": "11.5px", "color": "#475569",
+                "paddingLeft": "10px"}))
+    for tk in d.get("stage4_patho") or []:
+        rows.append(html.Div(
+            f"⚠ {str(tk.get('pathology', '')).upper()} · "
+            f"{str(tk.get('technique', '')).replace('_', ' ')} · strength "
+            f"{tk.get('strength')}",
+            style={"fontSize": "12px", "fontWeight": "700",
+                   "color": "#be123c", "marginTop": "4px"}))
+        rows.append(html.Div(str(tk.get("evidence", "")), style={
+            "fontSize": "11.5px", "color": "#475569", "paddingLeft": "10px"}))
+    if done and not d.get("stage4_patho"):
+        rows.append(html.Div(
+            "✓ no pathology ticket — detectors that looked: "
+            + (", ".join(done.get("checked") or []) or "none"),
+            style={"fontSize": "12px", "color": "#16a34a", "marginTop": "4px"}))
+    if done and done.get("not_run"):
+        rows.append(html.Div("did not run: " + "; ".join(done["not_run"]),
+                             style={"fontSize": "10.5px", "color": "#94a3b8"}))
+    return [html.Div(rows, className="unc-panel",
+                     style={"borderColor": "#fda4af", "marginTop": "6px"})]
+
+
 def stage4_status_span(d: dict[str, Any]) -> html.Span:
     """The running/done badge on the Stage 4 card header — same look as
     Stages 1-2. Steps: recommend → Graph A → Graph B → pick."""
@@ -1422,7 +1484,9 @@ def stage4_status_span(d: dict[str, Any]) -> html.Span:
     # their time in BOTH places, or the header chip says "trust · step 6/6"
     # for 20 minutes while the body correctly shows the runoff voting.
     STEPS = [("recommend", "recommend"), ("uncertainty", "uncertainty"),
+             ("leading probe", "leading"),
              ("Graph A", "graph_a"), ("Graph B", "graph_b"),
+             ("pathology", "pathology"),
              ("pick", "picks"), ("card judge", "card_judge"),
              ("graph judge", "graph_judge"), ("runoff twins", "runoff"),
              ("trust", "trust")]
@@ -2950,8 +3014,11 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
         LIVE = [("recommend", "recommend", "writing the plan"),
                 ("uncertainty", "uncertainty",
                  f"re-asking to measure uncertainty · probe {probe}/5"),
+                ("leading", "leading",
+                 "asking once more with a leading hint (sycophancy probe)"),
                 ("graph_a", "graph_a", "assembling Graph A"),
                 ("graph_b", "graph_b", "asking for the independent Graph B"),
+                ("pathology", "pathology", "running the pathology detectors"),
                 ("picks", "picks", "choosing what to intervene on"),
                 # the judges own their time on screen: they are the slow part
                 # (gemma reasons on every vote), and without these rows their
@@ -2977,7 +3044,7 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
             rows.append(html.Div(f"{mark} {label}",
                                  style={"fontSize": "12px", "color": col,
                                         "padding": "1px 0"}))
-        return [html.Div(rows, className="unc-panel")]
+        return [html.Div(rows, className="unc-panel")] + _early_pathology(d)
     out: list[Any] = []
 
     # ── what to intervene on: the three picks + agreement ──

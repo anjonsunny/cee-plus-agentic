@@ -1752,9 +1752,10 @@ def run_trust(recommendations: list[dict], conformance: dict,
 def run_pathology(record: Any, assessment: Any, recommendations: list[dict],
                   graph_b: dict | None = None, *, probe_recs: list | None = None,
                   leading: dict | None = None, on_event: Any = None) -> dict:
-    """Step 7 — the pathology detectors (pathology4.py). Deterministic, outside
-    any loop, run AFTER trust so nothing here can move a score. One event per
-    ticket, for the flight recorder."""
+    """The pathology detectors (pathology4.py). Deterministic, outside any
+    loop, run as soon as the graphs and their probes exist — before the
+    judges. Nothing downstream reads the result, so it cannot move a score.
+    One event per ticket, for the flight recorder."""
     from agentic.pathology4 import detect_pathologies
     emit = _emitter(on_event)
     out = detect_pathologies(record, assessment, recommendations, graph_b,
@@ -1763,6 +1764,8 @@ def run_pathology(record: Any, assessment: Any, recommendations: list[dict],
         emit("pathology_detected", pathology=tk["pathology"],
              technique=tk["technique"], strength=tk["strength"],
              recs=tk.get("recs"), evidence=tk["evidence"])
+    emit("pathology_ready", n_tickets=len(out["tickets"]),
+         checked=out["checked"], not_run=out["not_run"])
     return {"pathology": out}
 
 
@@ -1846,6 +1849,12 @@ def run_stage4(record: Any, assessment: Any, image_path: str = "",
         n_probes=n_probes,
         canonical_threats=_canonical_threats(rec["recommendations"]),
         on_event=on_event)
+    # The leading probe needs only the recommendations and the neutral
+    # re-asks, both ready here. It sat after trust at first, so run A
+    # (ui_67831506) waited 55 minutes of judging for an answer that was
+    # available at minute 6. No judge output feeds it.
+    lead = run_leading_probe(record, assessment, query_fn=query_fn,
+                             n_probes=n_probes, on_event=on_event)
     graph_a = build_graph_a(record, assessment, rec["recommendations"],
                             on_event=on_event)
     graph_b = run_graph_b(record, assessment, query_fn=query_fn,
@@ -1858,6 +1867,12 @@ def run_stage4(record: Any, assessment: Any, image_path: str = "",
     gbu = measure_graph_b_uncertainty(record, assessment, n_probes,
                                       probe_fn=probe_fn, on_event=on_event)
     graphs_b = gbu.get("graphs") or []
+    # Detectors run as soon as their inputs exist — before the judges, which
+    # are most of a run. Deterministic; nothing downstream reads them, so
+    # they still cannot move a score.
+    patho = run_pathology(record, assessment, rec["recommendations"], graph_b,
+                          probe_recs=unc.get("probe_recs") or [],
+                          leading=lead["leading_probe"], on_event=on_event)
     picks = pick_targets(record, graph_a, graph_b, rec["recommendations"],
                          query_fn=query_fn, on_event=on_event)
     evals = run_evals(record, assessment, rec["recommendations"],
@@ -1881,11 +1896,6 @@ def run_stage4(record: Any, assessment: Any, image_path: str = "",
                       graph_b=graph_b,
                       graph_b_internal=evals.get("graph_b_internal"),
                       graph_b_uncertainty=gbu, on_event=on_event)
-    lead = run_leading_probe(record, assessment, query_fn=query_fn,
-                             n_probes=n_probes, on_event=on_event)
-    patho = run_pathology(record, assessment, rec["recommendations"], graph_b,
-                          probe_recs=unc.get("probe_recs") or [],
-                          leading=lead["leading_probe"], on_event=on_event)
 
     emit("stage_done", stage="recommend")
     return Stage4Result(

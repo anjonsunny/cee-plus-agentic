@@ -45,7 +45,8 @@ def test_equivalence_straight_line():
     _assert_equivalent(r_py, r_lg, ev_py, ev_lg)
     assert [e["type"] for e in ev_lg] == [
         "stage_started", "recommendations_ready", "graph_a_built",
-        "graph_b_built", "targets_picked", "conformance_ready",
+        "graph_b_built", "pathology_ready", "targets_picked",
+        "conformance_ready",
         "internal_alignment_ready", "alignment_ready",
         "graph_b_internal_ready", "explanation_alignment_ready",
         "set_report_ready", "trust_ready",

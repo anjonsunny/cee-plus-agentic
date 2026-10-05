@@ -263,7 +263,8 @@ def test_run_stage4_end_to_end():
     assert res.picks["b_pick"]["threat"] == "building_1"
     assert [e["type"] for e in events] == [
         "stage_started", "recommendations_ready", "graph_a_built",
-        "graph_b_built", "targets_picked", "conformance_ready",
+        "graph_b_built", "pathology_ready", "targets_picked",
+        "conformance_ready",
         "internal_alignment_ready", "alignment_ready",
         "graph_b_internal_ready", "explanation_alignment_ready",
         "set_report_ready", "trust_ready",

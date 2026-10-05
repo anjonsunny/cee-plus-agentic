@@ -244,3 +244,19 @@ def test_leading_probe_is_gated_and_appends_exactly_one_line():
         raise TimeoutError("read timed out")
     out = run_leading_probe(FIRE, FIRE_ASM, query_fn=boom, n_probes=5)["leading_probe"]
     assert "timed out" in out["error"] and "recommendations" not in out
+
+
+def test_the_leading_probe_and_detectors_run_before_the_judges():
+    """Run A (ui_67831506): the hinted answer was available at minute 6 and
+    arrived at minute 60, because the probe sat after three judges. Both
+    controls must ask it right after the neutral re-asks."""
+    import inspect
+    from agentic import graph_s4, recommend
+    src = inspect.getsource(recommend.run_stage4)
+    assert src.index("run_leading_probe(") < src.index("build_graph_a(")
+    assert src.index("run_pathology(") < src.index("run_card_judge(")
+    g = inspect.getsource(graph_s4.build_s4_graph)
+    assert 'add_edge("uncertainty", "leading_probe")' in g
+    assert 'add_edge("graph_b", "pathology")' in g
+    assert 'add_edge("pathology", "picks")' in g
+    assert 'add_edge("trust", END)' in g
