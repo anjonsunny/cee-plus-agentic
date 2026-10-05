@@ -2469,3 +2469,15 @@ def test_stage4_judges_can_be_switched_off_and_the_run_says_so():
                        "result": {"recommendations": []}}])
     assert "the stage 4 judges were switched off" in _text(
         ui.stage4_component(done))
+
+
+def test_re_asks_are_a_per_stage_switch_off_by_default():
+    from agentic import ui
+    assert ui.REASKS == {"s2": False, "s4": False}
+    assert "reasks-mode" in str(ui.app.layout)
+    d = ui.derive([{"t": 1.0, "type": "reasks_setting", "stage2": False,
+                    "stage4": False},
+                   {"t": 2.0, "type": "recommendations_ready", "n_recs": 1}])
+    assert d["reasks"] == {"stage2": False, "stage4": False}
+    assert "uncertainty" in d["stage4_marks"]
+    assert "re-asks switched off for this run" in _text(ui.stage4_component(d))

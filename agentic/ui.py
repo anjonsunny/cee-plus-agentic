@@ -324,6 +324,11 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
         elif t == "recommendations_ready":
             d["stage4_started"] = True
             d["stage4_marks"].add("recommend")
+        elif t == "reasks_setting":
+            d["reasks"] = {"stage2": bool(ev.get("stage2")),
+                           "stage4": bool(ev.get("stage4"))}
+            if not ev.get("stage4"):
+                d["stage4_marks"].add("uncertainty")   # nothing to wait for
         elif t == "stage4_judges_off":
             d["stage4_judges_off"] = True
             d["stage4_marks"] |= {"card_judge", "graph_judge", "runoff"}
@@ -897,7 +902,7 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
             from agentic.graph_live import assess_with_control
             record, result, petitioned = assess_with_control(
                 str(image_path), record, on_event=sink,
-                n_probes=DEFAULT_N_PROBES,
+                n_probes=DEFAULT_N_PROBES if REASKS["s2"] else 0,
                 explain_fn=_ollama_explain,
                 runoff_judge_fn=_judge)
             # Surface the RAG shadow (only populated in rag/both mode): the
@@ -1015,8 +1020,13 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
                 def _s4_probe(prompt, _u=_data_url):
                     return _query_vlm(prompt, image_contents=_u,
                                       temperature=REC_PROBE_TEMPERATURE)
-                _s4_n_probes = int(os.getenv("REC_N_PROBES",
-                                             str(DEFAULT_REC_N_PROBES)))
+                _s4_n_probes = (int(os.getenv("REC_N_PROBES",
+                                              str(DEFAULT_REC_N_PROBES)))
+                                if REASKS["s4"] else 0)
+                # recorded, so a run without re-asks is never read later as
+                # a run whose answers happened to agree
+                sink({"type": "reasks_setting", "stage2": REASKS["s2"],
+                      "stage4": REASKS["s4"]})
                 # F24 — the card judge. ADVISORY and display-only: it never
                 # enters a score, which is exactly why it is safe to leave on
                 # during calibration. A judge that cannot reach its model
@@ -1041,6 +1051,7 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
                                          probe_fn=_s4_probe,
                                          judge_fn=_card_judge,
                                          think_fn=_s4_think,
+                                         pathology_probes=True,
                                          n_probes=_s4_n_probes,
                                          on_event=sink)
                 (run_dir / "stage4.json").write_text(s4.model_dump_json(indent=2))
@@ -3131,6 +3142,9 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
             LIVE = [(k, k2, "switched off for this run"
                      if k in ("card_judge", "graph_judge", "runoff") else lab)
                     for k, k2, lab in LIVE]
+        if d.get("reasks") and not d["reasks"].get("stage4"):
+            LIVE = [(k, k2, "re-asks switched off for this run"
+                     if k == "uncertainty" else lab) for k, k2, lab in LIVE]
         active_used = False
         for key, _k, label in LIVE:
             if key in marks:
@@ -5260,6 +5274,19 @@ app.layout = html.Div([
                              (_models.SUBJECT_MODEL,) + _models.SUBJECT_CHOICES)],
                 className="ctl-toggle"),
         ], className="ctl-group"),
+        # Re-asks per stage (Sunny, 2026-10-05): "I am more interested in
+        # finding pathology. Re-asks can be integrated later per stage."
+        # On the 27B subject each re-ask is ~80 s and the three sets of five
+        # are about half a run. Off by default; the pathology probes run
+        # either way and say when their baseline was a single answer.
+        html.Div([
+            html.Span("re-asks", className="ctl-lbl"),
+            dcc.Checklist(
+                id="reasks-mode", value=[], inline=True,
+                options=[{"label": " stage 2", "value": "s2"},
+                         {"label": " stage 4", "value": "s4"}],
+                className="ctl-toggle"),
+        ], className="ctl-group"),
         html.Div([
             html.Span("stage 4 judges", className="ctl-lbl"),
             dcc.RadioItems(
@@ -5373,10 +5400,11 @@ def cache_upload(contents, filename):
               State("retrieval-mode", "value"),
               State("judges-mode", "value"),
               State("subject-model", "value"),
+              State("reasks-mode", "value"),
               prevent_initial_call=True)
 def start_run(_clicks, replay_path, cached, caption,
               control_mode, retrieval_choice, judges_choice="off",
-              subject_choice=None):
+              subject_choice=None, reasks_choice=None):
     # Apply the on-screen toggles for this run (in-process override).
     from agentic.graph_live import set_control
     from agentic.retrieval import set_retrieval
@@ -5384,6 +5412,8 @@ def start_run(_clicks, replay_path, cached, caption,
     set_retrieval(retrieval_choice)
     S4_JUDGES["on"] = (judges_choice == "on")
     _models.set_subject(subject_choice)
+    REASKS["s2"] = "s2" in (reasks_choice or [])
+    REASKS["s4"] = "s4" in (reasks_choice or [])
     if ctx.triggered_id == "replay" and replay_path:
         return start_replay(replay_path)
     if ctx.triggered_id == "analyze" and cached and cached.get("contents"):
@@ -5400,6 +5430,9 @@ AGENT_LOGS: dict[str, list[dict[str, Any]]] = {}
 
 # The on-screen "stage 4 judges" switch, applied when a run launches.
 S4_JUDGES: dict[str, bool] = {"on": False}
+
+# The on-screen "re-asks" switches, one per stage, applied at launch.
+REASKS: dict[str, bool] = {"s2": False, "s4": False}
 
 
 def _fmt_args(args: dict[str, Any]) -> str:

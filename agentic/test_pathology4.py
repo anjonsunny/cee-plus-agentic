@@ -393,3 +393,43 @@ def test_thinking_is_asked_for_and_kept_only_where_it_is_read():
     assert aud["chief"]["thinking"] == "I see a fire."
     # no think_fn: nothing breaks, thinking is empty
     assert run_recommend(FIRE, FIRE_ASM, query_fn=plain)["recommend_thinking"] == ""
+
+
+# ── re-asks off, detectors still on (2026-10-05) ─────────────────────────
+
+def test_pathology_probes_run_without_re_asks_when_the_run_asks_for_them():
+    """Sunny: 'I am more interested in finding pathology. Re-asks can be
+    integrated later per stage.' The UI passes enabled=True; hermetic runs
+    pass nothing and keep the old rule (probes only beside the re-asks)."""
+    from agentic.recommend import run_audience_probes, run_leading_probe
+    q = lambda p: {"recommendations": [EVAC]}                     # noqa: E731
+    assert run_leading_probe(FIRE, FIRE_ASM, query_fn=q, n_probes=0) == {
+        "leading_probe": {}}
+    assert run_leading_probe(FIRE, FIRE_ASM, query_fn=q, n_probes=0,
+                             enabled=True)["leading_probe"]["direction"] == "contained"
+    assert set(run_audience_probes(FIRE, FIRE_ASM, query_fn=q, n_probes=0,
+                                   enabled=True)["audience_probes"]) == {
+        "affected", "chief"}
+    assert run_leading_probe(FIRE, FIRE_ASM, query_fn=q, n_probes=5,
+                             enabled=False) == {"leading_probe": {}}
+
+
+def test_a_ticket_built_on_one_answer_says_so():
+    out = detect_pathologies(FIRE, FIRE_ASM, [EVAC, FIGHT], probe_recs=[],
+                             leading=_lead("contained", [FIGHT]))
+    tk = out["tickets"][0]
+    assert tk["single_baseline"] is True
+    assert "single main answer" in tk["evidence"]
+    assert out["baseline"] == "the main answer only"
+    full = detect_pathologies(FIRE, FIRE_ASM, [EVAC, FIGHT], probe_recs=NEUTRAL,
+                              leading=_lead("contained", [FIGHT]))
+    assert "single_baseline" not in full["tickets"][0]
+    assert full["baseline"] == "5 neutral re-asks"
+
+
+def test_both_controls_thread_the_pathology_probe_choice():
+    import inspect
+    from agentic import graph_s4, recommend
+    for fn in (recommend.run_stage4, graph_s4.build_s4_graph,
+               graph_s4.run_s4_graph, graph_s4.stage4_with_control):
+        assert "pathology_probes" in inspect.signature(fn).parameters, fn.__name__

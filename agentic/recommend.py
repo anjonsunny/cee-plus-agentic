@@ -680,8 +680,19 @@ LEADING_DIRECTION = {"Yes": "contained", "No": "dangerous"}
 LEADING_PROBE_ON = os.getenv("LEADING_PROBE", "1") == "1"
 
 
+def _probe_enabled(flag_on: bool, n_probes: int, enabled: bool | None) -> bool:
+    """Do the pathology probes run? `enabled` is the run's explicit choice
+    (the UI passes True: Sunny, 2026-10-05, wants the detectors with the
+    re-asks switched off). None keeps the old rule — only alongside the
+    re-asks — which is what every hermetic test relies on."""
+    if not flag_on:
+        return False
+    return n_probes > 0 if enabled is None else bool(enabled)
+
+
 def run_leading_probe(record: Any, assessment: Any, *, query_fn: QueryFn,
                       n_probes: int = 0, think_fn: Any = None,
+                      enabled: bool | None = None,
                       on_event: Any = None) -> dict:
     """Ask the recommend question once more with the asker's hint appended.
     Returns {'leading_probe': {...}} — empty when the probe did not run. The
@@ -689,7 +700,7 @@ def run_leading_probe(record: Any, assessment: Any, *, query_fn: QueryFn,
     for the pathology detector and a preference-pair candidate for capture."""
     emit = _emitter(on_event)
     verdict = str(getattr(assessment, "disaster_scenario", ""))
-    if (not LEADING_PROBE_ON or n_probes <= 0
+    if (not _probe_enabled(LEADING_PROBE_ON, n_probes, enabled)
             or verdict not in LEADING_HINTS):
         return {"leading_probe": {}}
     hint = LEADING_HINTS[verdict]
@@ -738,11 +749,12 @@ AUDIENCE_PROBE_ON = os.getenv("AUDIENCE_PROBE", "1") == "1"
 
 def run_audience_probes(record: Any, assessment: Any, *, query_fn: QueryFn,
                         n_probes: int = 0, think_fn: Any = None,
+                        enabled: bool | None = None,
                         on_event: Any = None) -> dict:
     """Ask the recommend question once per stated reader. Returns
     {'audience_probes': {name: {...}}} — empty when the probes did not run."""
     emit = _emitter(on_event)
-    if not AUDIENCE_PROBE_ON or n_probes <= 0:
+    if not _probe_enabled(AUDIENCE_PROBE_ON, n_probes, enabled):
         return {"audience_probes": {}}
     body = RECOMMEND_PROMPT.format(
         scene_block=_scene_block(record, assessment), effects=_EFFECT_LINE,
@@ -1928,6 +1940,7 @@ def run_stage4(record: Any, assessment: Any, image_path: str = "",
                *, query_fn: QueryFn | None = None,
                probe_fn: QueryFn | None = None, explain_fn: Any = None,
                judge_fn: Any = None, think_fn: Any = None,
+               pathology_probes: bool | None = None,
                n_probes: int = 0, on_event: Any = None) -> Stage4Result:
     """The Phase-1a straight line + measured uncertainty:
     recommend -> probe U -> Graph A -> Graph B -> picks -> evals.
@@ -1950,10 +1963,10 @@ def run_stage4(record: Any, assessment: Any, image_path: str = "",
     # available at minute 6. No judge output feeds it.
     lead = run_leading_probe(record, assessment, query_fn=query_fn,
                              n_probes=n_probes, think_fn=think_fn,
-                             on_event=on_event)
+                             enabled=pathology_probes, on_event=on_event)
     aud = run_audience_probes(record, assessment, query_fn=query_fn,
                               n_probes=n_probes, think_fn=think_fn,
-                              on_event=on_event)
+                              enabled=pathology_probes, on_event=on_event)
     graph_a = build_graph_a(record, assessment, rec["recommendations"],
                             on_event=on_event)
     graph_b = run_graph_b(record, assessment, query_fn=query_fn,

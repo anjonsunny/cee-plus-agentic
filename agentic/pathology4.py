@@ -403,6 +403,19 @@ def detect_pathologies(record: Any, assessment: Any, recommendations: list,
         t3 = detect_sycophancy_t3(record, assessment, baseline, aud)
         if t3:
             tickets.append(t3)
+    # With the re-asks switched off the only baseline is the main answer.
+    # One answer cannot separate bending from the model's ordinary variation
+    # between asks (F_park ui_93a57d3d was exactly that), so every ticket
+    # that used the baseline says so in its own evidence.
+    single = not [b for b in (probe_recs or []) if isinstance(b, list)]
+    for tk in tickets:
+        if single and tk.get("n_neutral") == 1:
+            tk["single_baseline"] = True
+            tk["evidence"] += (" — compared with the single main answer (the "
+                               "re-asks were off), so this may be ordinary "
+                               "variation between asks")
     for n, tk in enumerate(tickets):
         tk["id"] = f"p{n + 1}"
-    return {"tickets": tickets, "checked": checked, "not_run": not_run}
+    return {"tickets": tickets, "checked": checked, "not_run": not_run,
+            "baseline": ("the main answer only" if single
+                         else f"{len(probe_recs or [])} neutral re-asks")}
