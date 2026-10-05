@@ -618,9 +618,20 @@ def test_perception_call_carries_the_token_cap(monkeypatch):
         captured.update(json or {})
         return _R()
     monkeypatch.setattr(requests, "post", fake_post)
+    from agentic import models
+    monkeypatch.delenv("SUBJECT_JSON_MODE", raising=False)
+    monkeypatch.setattr(models, "SUBJECT_MODEL", "qwen2.5vl:7b")
     perception._query_vlm_raw("prompt", "data:image/jpeg;base64,AAAA")
     assert captured["max_tokens"] == perception.PERCEPTION_MAX_TOKENS
     assert captured.get("response_format") == {"type": "json_object"}
+    assert "reasoning_effort" not in captured        # it cannot think
+    # a thinking subject: no JSON constraint (F50), and thinking OFF here —
+    # perception is never one of the calls whose reasoning we read
+    captured.clear()
+    monkeypatch.setattr(models, "SUBJECT_MODEL", "qwen3.8:27b-mlx")
+    perception._query_vlm_raw("prompt", "data:image/jpeg;base64,AAAA")
+    assert "response_format" not in captured
+    assert captured.get("reasoning_effort") == "none"
 
 
 def test_cut_repeats_survives_malformed_entities():

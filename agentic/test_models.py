@@ -31,3 +31,15 @@ def test_every_subject_call_site_uses_the_seat():
         src = pathlib.Path(__file__).with_name(f).read_text()
         assert "subject_format_kwargs()" in src, f
         assert '"response_format"' not in src, f
+
+
+def test_the_subject_seat_can_be_switched_in_process(monkeypatch):
+    """The UI switch: seat a subject for the runs that follow, no restart."""
+    from agentic import models
+    monkeypatch.setattr(models, "SUBJECT_MODEL", "qwen2.5vl:7b")
+    assert models.set_subject("qwen3.8:27b-mlx") == "qwen3.8:27b-mlx"
+    assert models.SUBJECT_MODEL == "qwen3.8:27b-mlx"
+    assert models.stamp()["subject_model"] == "qwen3.8:27b-mlx"
+    assert models.set_subject(None) == "qwen3.8:27b-mlx"     # None: unchanged
+    assert "qwen3.8:27b-mlx" in models.SUBJECT_CHOICES
+    assert "qwen2.5vl:7b" in models.SUBJECT_CHOICES

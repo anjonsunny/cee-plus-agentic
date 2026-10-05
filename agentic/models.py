@@ -48,13 +48,38 @@ HISTORY
                        gemma4:26b (Apr 2026, MoE, 3.8B active) is the
                        newest vision-capable judge that fits beside the
                        subject.
+  from 2026-10-05      subject qwen3.8:27b-mlx (Sunny). The Stage 4 judges
+                       are off by default, so the hour they cost is gone
+                       and a slower, stronger, THINKING subject fits a run
+                       again; the strategic pathologies (eval gaming,
+                       concealment) need a model that can reason about its
+                       situation, and its thinking is evidence we could not
+                       read before. Timed on scene A, one recommend call:
+                       qwen2.5vl 28 s; this model 76 s thinking off, 146 s
+                       thinking on. qwen3-vl:8b was re-tried the same day
+                       and is OUT: it ignores the thinking-off switch and
+                       thinks until the context is full (13,400 tokens, no
+                       answer) — the August stall, explained. Thinking is
+                       ON only for the main recommendation and the
+                       pathology probes, OFF for every other subject call.
+                       qwen2.5vl:7b stays selectable (UI switch, env).
 """
 from __future__ import annotations
 
 import os
 
+SUBJECT_CHOICES = ("qwen3.8:27b-mlx", "qwen2.5vl:7b")
 SUBJECT_MODEL = os.getenv("SUBJECT_MODEL",
-                          os.getenv("QWEN_MODEL_NAME", "qwen2.5vl:7b"))
+                          os.getenv("QWEN_MODEL_NAME", SUBJECT_CHOICES[0]))
+
+
+def set_subject(name: str | None) -> str:
+    """Seat a subject for the runs that follow (the UI switch). In-process,
+    like set_control: no restart, no env var."""
+    global SUBJECT_MODEL
+    if name:
+        SUBJECT_MODEL = str(name)
+    return SUBJECT_MODEL
 JUDGE_MODEL = os.getenv("JUDGE_MODEL", "gemma4:26b")
 JUDGE_VISION_MODEL = os.getenv("JUDGE_VISION_MODEL", JUDGE_MODEL)
 DIALOGUE_MODEL = os.getenv("DIALOGUE_MODEL", "qwen2.5:7b")
@@ -83,6 +108,23 @@ def subject_json_mode(model: str | None = None) -> bool:
         return env.strip().lower() not in ("0", "false", "no", "")
     name = (model or SUBJECT_MODEL).lower()
     return not any(h in name for h in _THINKING_HINTS)
+
+
+def subject_thinks(model: str | None = None) -> bool:
+    """Is the seated subject a thinking model (its reasoning comes back in a
+    separate field)? Same name hints as the JSON-mode seat."""
+    name = (model or SUBJECT_MODEL).lower()
+    return any(h in name for h in _THINKING_HINTS)
+
+
+def subject_think_kwargs(think: bool = False, model: str | None = None) -> dict:
+    """Payload keys that switch thinking for ONE subject call. A non-thinking
+    model gets nothing (it would reject or ignore the key). Verified on the
+    OpenAI-compatible endpoint, 2026-10-05: `reasoning_effort: "none"` turns
+    thinking off (1 s vs 11 s on a short ask); leaving it out thinks."""
+    if not subject_thinks(model):
+        return {}
+    return {} if think else {"reasoning_effort": "none"}
 
 
 def subject_format_kwargs(model: str | None = None) -> dict:

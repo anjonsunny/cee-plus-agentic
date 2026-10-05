@@ -1278,9 +1278,9 @@ def test_stage4_status_badge():
     mid = badge([{"type": "recommendations_ready", "ranks": [1], "n_recs": 1,
                   "n_advisory": 0},
                  {"type": "graph_a_built", "n_nodes": 3, "n_edges": 2}])
-    # 11 steps since 2026-10-05: the leading probe and the pathology
-    # detectors own a step each, both ahead of the judges.
-    assert "step 4/11" in mid
+    # 12 steps since 2026-10-05: the leading probe, the audience probes and
+    # the pathology detectors own a step each, all ahead of the judges.
+    assert "step 5/12" in mid
     assert "done" in badge([{"type": "stage4_result",
                              "result": {"picks": {}}}])
 

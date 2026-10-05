@@ -33,7 +33,8 @@ from agentic.recommend import (QueryFn, Stage4Result, build_graph_a,
                                run_graph_b, run_graph_b_probes,
                                run_recommend, run_recommend_uncertainty,
                                run_stage4, run_trust, run_pathology,
-                               run_leading_probe, _emitter)
+                               run_leading_probe, run_audience_probes,
+                               _emitter)
 
 
 class S4State(TypedDict, total=False):
@@ -65,10 +66,13 @@ class S4State(TypedDict, total=False):
     trust: dict             # folded trust score + breakdown (Phase 1b)
     pathology: dict         # pathology detectors' tickets (advisory)
     leading_probe: dict     # the one answer given under the asker's hint
+    audience_probes: dict   # one answer per stated reader of the plan
+    recommend_thinking: str  # the subject's reasoning behind the main answer
 
 
 def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
                    explain_fn: Any = None, judge_fn: Any = None,
+                   think_fn: Any = None,
                    n_probes: int = 0, on_event: Any = None):
     """Compile the Stage-4 spine. Model config (query_fn, probe_fn, n_probes,
     on_event) is baked into the node closures, so the state only carries data —
@@ -76,7 +80,8 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
 
     def recommend(state: S4State) -> dict[str, Any]:
         out = run_recommend(state["record"], state["assessment"],
-                            query_fn=query_fn, on_event=on_event)
+                            query_fn=query_fn, think_fn=think_fn,
+                            on_event=on_event)
         return out
 
     def uncertainty(state: S4State) -> dict[str, Any]:
@@ -165,13 +170,19 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
     def leading_probe(state: S4State) -> dict[str, Any]:
         return run_leading_probe(state["record"], state["assessment"],
                                  query_fn=query_fn, n_probes=n_probes,
-                                 on_event=on_event)
+                                 think_fn=think_fn, on_event=on_event)
+
+    def audience_probes(state: S4State) -> dict[str, Any]:
+        return run_audience_probes(state["record"], state["assessment"],
+                                   query_fn=query_fn, n_probes=n_probes,
+                                   think_fn=think_fn, on_event=on_event)
 
     def pathology(state: S4State) -> dict[str, Any]:
         return run_pathology(state["record"], state["assessment"],
                              state["recommendations"], state.get("graph_b"),
                              probe_recs=state.get("probe_recs") or [],
                              leading=state.get("leading_probe") or {},
+                             audience=state.get("audience_probes") or {},
                              on_event=on_event)
 
     g = StateGraph(S4State)
@@ -186,6 +197,7 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
     g.add_node("runoff_judge", runoff_judge)
     g.add_node("trust", trust)
     g.add_node("leading_probe", leading_probe)
+    g.add_node("audience_probes", audience_probes)
     g.add_node("pathology", pathology)
 
     g.add_edge(START, "recommend")
@@ -194,7 +206,8 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
     # their probes — both BEFORE the judges, which are most of a run.
     g.add_edge("recommend", "uncertainty")
     g.add_edge("uncertainty", "leading_probe")
-    g.add_edge("leading_probe", "graph_a")
+    g.add_edge("leading_probe", "audience_probes")
+    g.add_edge("audience_probes", "graph_a")
     g.add_edge("graph_a", "graph_b")
     g.add_edge("graph_b", "pathology")
     g.add_edge("pathology", "picks")
@@ -210,7 +223,7 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
 def run_s4_graph(record: Any, assessment: Any, image_path: str = "",
                  *, query_fn: QueryFn | None = None,
                  probe_fn: QueryFn | None = None, explain_fn: Any = None,
-                 judge_fn: Any = None,
+                 judge_fn: Any = None, think_fn: Any = None,
                  n_probes: int = 0, on_event: Any = None) -> Stage4Result:
     """LangGraph twin of run_stage4 — identical positional signature and return
     type. Assembles the same Stage4Result from the final state, and emits the
@@ -221,6 +234,7 @@ def run_s4_graph(record: Any, assessment: Any, image_path: str = "",
 
     graph = build_s4_graph(query_fn=query_fn, probe_fn=probe_fn,
                            explain_fn=explain_fn, judge_fn=judge_fn,
+                           think_fn=think_fn,
                            n_probes=n_probes, on_event=on_event)
     final: S4State = graph.invoke({"record": record, "assessment": assessment,
                                    "image_path": image_path})
@@ -245,6 +259,8 @@ def run_s4_graph(record: Any, assessment: Any, image_path: str = "",
         trust=final.get("trust", {}),
         pathology=final.get("pathology", {}) or {},
         leading_probe=final.get("leading_probe", {}) or {},
+        audience_probes=final.get("audience_probes", {}) or {},
+        recommend_thinking=final.get("recommend_thinking", "") or "",
         graph_b_uncertainty=final.get("graph_b_uncertainty", {}),
         graph_b_internal=final.get("graph_b_internal", {}) or {},
         parse_notes=final.get("recommend_notes", []),
@@ -254,7 +270,8 @@ def run_s4_graph(record: Any, assessment: Any, image_path: str = "",
 def stage4_with_control(record: Any, assessment: Any, image_path: str = "",
                         *, query_fn: QueryFn | None = None,
                         probe_fn: QueryFn | None = None, explain_fn: Any = None,
-                        judge_fn: Any = None, n_probes: int = 0,
+                        judge_fn: Any = None, think_fn: Any = None,
+                        n_probes: int = 0,
                         on_event: Any = None) -> Stage4Result:
     """Dispatch the Stage-4 spine by the pipeline control flag. Identical
     contract on both branches — the whole point of the equivalence tests."""
@@ -262,10 +279,12 @@ def stage4_with_control(record: Any, assessment: Any, image_path: str = "",
         return run_s4_graph(record, assessment, image_path,
                             query_fn=query_fn, probe_fn=probe_fn,
                             explain_fn=explain_fn, judge_fn=judge_fn,
+                            think_fn=think_fn,
                             n_probes=n_probes, on_event=on_event)
     return run_stage4(record, assessment, image_path,
                      query_fn=query_fn, probe_fn=probe_fn,
                      explain_fn=explain_fn, judge_fn=judge_fn,
+                     think_fn=think_fn,
                      n_probes=n_probes, on_event=on_event)
 
 

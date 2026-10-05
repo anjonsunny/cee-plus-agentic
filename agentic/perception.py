@@ -564,6 +564,9 @@ def _query_vlm_raw(text: str, image_data_url: str,
         # seat setting (models.subject_json_mode) — off for thinking models,
         # on for qwen2.5vl, which otherwise loops on crowded scenes.
         **_models.subject_format_kwargs(),
+        # a thinking subject thinks only where its thinking is read (the
+        # Stage 4 recommendation and the pathology probes) — never here
+        **_models.subject_think_kwargs(False),
     }
     payload["max_tokens"] = PERCEPTION_MAX_TOKENS
     r = requests.post(api_url, headers=headers, json=payload,

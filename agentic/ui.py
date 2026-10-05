@@ -56,6 +56,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from agentic import models as _models  # noqa: E402  (the model seats)
+
 # Preload shared heavy libraries in the MAIN thread, before any background
 # pipeline thread exists. Dash's JSON encoder touches pandas.NaT while
 # serializing responses; if a worker thread is importing the ML stack
@@ -335,6 +337,19 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
                                     + str(x.get("action", ""))
                                     for x in (ev.get("recs") or [])
                                     if isinstance(x, dict)]}
+        elif t in ("audience_probe_ready", "audience_probe_error"):
+            d.setdefault("stage4_audience", {})[str(ev.get("audience"))] = {
+                "reader": ev.get("reader") or ev.get("audience"),
+                "line": ev.get("line"), "error": ev.get("error"),
+                "actions": [("BENIGN · " if x.get("benign") else "")
+                            + str(x.get("action", ""))
+                            for x in (ev.get("recs") or [])
+                            if isinstance(x, dict)]}
+            if len(d["stage4_audience"]) >= 2:
+                d["stage4_marks"].add("audience")
+        elif t == "subject_thinking":
+            d.setdefault("stage4_thinking", {})[str(ev.get("step"))] = str(
+                ev.get("text") or "")
         elif t == "pathology_detected":
             d.setdefault("stage4_patho", []).append(
                 {"pathology": ev.get("pathology"),
@@ -348,6 +363,7 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
         elif t == "graph_a_built":
             d["stage4_marks"].add("graph_a")
             d["stage4_marks"].add("leading")   # ran (or was off) before this
+            d["stage4_marks"].add("audience")
         elif t == "graph_b_built":
             d["stage4_marks"].add("graph_b")
         elif t == "targets_picked":
@@ -985,6 +1001,16 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
                 def _s4_query(prompt, _u=_data_url):
                     return _query_vlm(prompt, image_contents=_u, temperature=0.0)
 
+                # thinking ON, and returned, for the calls whose reasoning
+                # we read: the main recommendation and the pathology probes.
+                # A subject that cannot think gets no think_fn at all.
+                def _s4_think(prompt, _u=_data_url):
+                    return _query_vlm(prompt, image_contents=_u,
+                                      temperature=0.0, think=True,
+                                      with_thinking=True)
+                if not _models.subject_thinks():
+                    _s4_think = None
+
                 # probe re-asks: same image, raised temperature (channel-2 U)
                 def _s4_probe(prompt, _u=_data_url):
                     return _query_vlm(prompt, image_contents=_u,
@@ -1014,6 +1040,7 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
                                          str(image_path), query_fn=_s4_query,
                                          probe_fn=_s4_probe,
                                          judge_fn=_card_judge,
+                                         think_fn=_s4_think,
                                          n_probes=_s4_n_probes,
                                          on_event=sink)
                 (run_dir / "stage4.json").write_text(s4.model_dump_json(indent=2))
@@ -1444,13 +1471,32 @@ def rag_shadow_panel(shadow: list[dict[str, Any]] | None, stage_label: str,
                     style={"borderColor": "#a78bfa", "background": "#faf5ff"})
 
 
+def _thinking_fold(text: str, label: str = "the model's thinking") -> list:
+    """The subject's own reasoning, verbatim, folded. Shown wherever an
+    answer is shown, so thinking, action and disclosure can be read side by
+    side (Sunny, 2026-10-05). Empty for a subject that does not think."""
+    if not text:
+        return []
+    return [html.Details([
+        html.Summary(f"{label} ({len(text):,} characters)",
+                     style={"fontSize": "10.5px", "color": "#0369a1",
+                            "cursor": "pointer"}),
+        html.Div(text, style={"fontSize": "11px", "color": "#334155",
+                              "whiteSpace": "pre-wrap", "maxHeight": "320px",
+                              "overflowY": "auto", "padding": "4px 0 0 10px",
+                              "borderLeft": "2px solid #bae6fd",
+                              "marginTop": "2px"})],
+        style={"margin": "2px 0"})]
+
+
 def _early_pathology(d: dict[str, Any]) -> list:
     """The pathology result, shown while the judges are still voting. The
     detectors finish minutes into Stage 4 and the judges take most of an
     hour (run A, ui_67831506), so the answer is put on screen the moment it
     exists instead of with the final record."""
     lead, done = d.get("stage4_lead"), d.get("stage4_patho_done")
-    if not lead and not done:
+    aud, think = d.get("stage4_audience") or {}, d.get("stage4_thinking") or {}
+    if not lead and not done and not aud:
         return []
     rows: list[Any] = [html.Div("PATHOLOGY · early result (the judges are "
                                 "still voting below)", className="unc-tag")]
@@ -1463,6 +1509,19 @@ def _early_pathology(d: dict[str, Any]) -> list:
             rows.append(html.Div("· " + a, style={
                 "fontSize": "11.5px", "color": "#475569",
                 "paddingLeft": "10px"}))
+        rows += _thinking_fold(think.get("leading_probe", ""))
+    for name, one in aud.items():
+        rows.append(html.Div(
+            f"reader: {one.get('reader')}" if not one.get("error")
+            else f"the audience probe for {one.get('reader')} failed: "
+                 f"{one.get('error')}",
+            style={"fontSize": "11.5px", "color": "#7c3aed",
+                   "marginTop": "4px"}))
+        for a in one.get("actions") or []:
+            rows.append(html.Div("· " + a, style={
+                "fontSize": "11.5px", "color": "#475569",
+                "paddingLeft": "10px"}))
+        rows += _thinking_fold(think.get(f"audience_probe:{name}", ""))
     for tk in d.get("stage4_patho") or []:
         rows.append(html.Div(
             f"⚠ {str(tk.get('pathology', '')).upper()} · "
@@ -1491,7 +1550,7 @@ def stage4_status_span(d: dict[str, Any]) -> html.Span:
     # their time in BOTH places, or the header chip says "trust · step 6/6"
     # for 20 minutes while the body correctly shows the runoff voting.
     STEPS = [("recommend", "recommend"), ("uncertainty", "uncertainty"),
-             ("leading probe", "leading"),
+             ("leading probe", "leading"), ("audience probes", "audience"),
              ("Graph A", "graph_a"), ("Graph B", "graph_b"),
              ("pathology", "pathology"),
              ("pick", "picks"), ("card judge", "card_judge"),
@@ -2959,8 +3018,31 @@ def _register_panel(s4: dict) -> list:
                 for x in (_lp.get("recommendations") or [])
                 if isinstance(x, dict)] or [html.Div(
                     _lp.get("error") or "no recommendation came back",
-                    style={"fontSize": "11px", "color": "#94a3b8"})],
+                    style={"fontSize": "11px", "color": "#94a3b8"})]
+                + _thinking_fold(_lp.get("thinking") or ""),
                 style={"padding": "2px 0 0 10px"})],
+            style={"margin": "4px 0 0 2px"}))
+    for _name, _ap in ((s4 or {}).get("audience_probes") or {}).items():
+        if not isinstance(_ap, dict) or not _ap.get("line"):
+            continue
+        out.append(html.Details([
+            html.Summary(f"audience probe — reader: {_ap.get('reader', _name)} · "
+                         f"{len(_ap.get('recommendations') or [])} "
+                         f"recommendation(s) came back",
+                         style={"fontSize": "10.5px", "color": "#7c3aed",
+                                "cursor": "pointer"}),
+            html.Div([html.Div(f"first line of the prompt: \"{_ap['line']}\"",
+                               style={"fontSize": "10.5px", "color": "#94a3b8"})]
+                     + ([html.Div(
+                         ("BENIGN · " if x.get("benign") else "")
+                         + f"#{x.get('rank')} {x.get('action', '')}",
+                         style={"fontSize": "11px", "color": "#475569"})
+                         for x in (_ap.get("recommendations") or [])
+                         if isinstance(x, dict)] or [html.Div(
+                             _ap.get("error") or "no recommendation came back",
+                             style={"fontSize": "11px", "color": "#94a3b8"})])
+                     + _thinking_fold(_ap.get("thinking") or ""),
+                     style={"padding": "2px 0 0 10px"})],
             style={"margin": "4px 0 0 2px"}))
     return out
 
@@ -3025,6 +3107,9 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                  f"re-asking to measure uncertainty · probe {probe}/5"),
                 ("leading", "leading",
                  "asking once more with a leading hint (sycophancy probe)"),
+                ("audience", "audience",
+                 "asking once per stated reader (audience probes) · "
+                 f"{len(d.get('stage4_audience') or {})}/2"),
                 ("graph_a", "graph_a", "assembling Graph A"),
                 ("graph_b", "graph_b", "asking for the independent Graph B"),
                 ("pathology", "pathology", "running the pathology detectors"),
@@ -3345,6 +3430,10 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
     # finding and no number appears twice on one screen.
 
     out.append("«sec:recs»")
+    # the subject's reasoning behind this answer, when it is a thinking model
+    out.extend(_thinking_fold(s4.get("recommend_thinking") or "",
+                              "the model's thinking behind these "
+                              "recommendations"))
     # ── recommendations (the model's output, under test) ──
     #
     # F24: each card carries its OWN verdict in a footer. Before this, the
@@ -5159,6 +5248,18 @@ app.layout = html.Div([
         # and trust in minutes. Default OFF (Sunny, later the same day):
         # the judges mainly serve reflection, which is deferred, so a normal
         # run skips them; switch on for a run that needs the bench.
+        # The subject seat (2026-10-05). The 27B thinks (its reasoning is
+        # kept as evidence) and is ~3x slower per call; the 7B is the fast
+        # one every earlier run used. Applied when a run launches.
+        html.Div([
+            html.Span("subject", className="ctl-lbl"),
+            dcc.RadioItems(
+                id="subject-model", value=_models.SUBJECT_MODEL, inline=True,
+                options=[{"label": n, "value": n}
+                         for n in dict.fromkeys(
+                             (_models.SUBJECT_MODEL,) + _models.SUBJECT_CHOICES)],
+                className="ctl-toggle"),
+        ], className="ctl-group"),
         html.Div([
             html.Span("stage 4 judges", className="ctl-lbl"),
             dcc.RadioItems(
@@ -5271,15 +5372,18 @@ def cache_upload(contents, filename):
               State("control-mode", "value"),
               State("retrieval-mode", "value"),
               State("judges-mode", "value"),
+              State("subject-model", "value"),
               prevent_initial_call=True)
 def start_run(_clicks, replay_path, cached, caption,
-              control_mode, retrieval_choice, judges_choice="off"):
+              control_mode, retrieval_choice, judges_choice="off",
+              subject_choice=None):
     # Apply the on-screen toggles for this run (in-process override).
     from agentic.graph_live import set_control
     from agentic.retrieval import set_retrieval
     set_control(control_mode)
     set_retrieval(retrieval_choice)
     S4_JUDGES["on"] = (judges_choice == "on")
+    _models.set_subject(subject_choice)
     if ctx.triggered_id == "replay" and replay_path:
         return start_replay(replay_path)
     if ctx.triggered_id == "analyze" and cached and cached.get("contents"):
