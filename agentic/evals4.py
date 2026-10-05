@@ -627,6 +627,7 @@ CARD_RULE_META: dict[str, tuple[str, str]] = {
     "benign_entity_not_in_scene": ("conformance", "card"),
     "benign_state_not_declared": ("conformance", "card"),
     "benign_clears_a_hazard": ("conformance", "card"),
+    "benign_quad_names_another_entity": ("internal_alignment", "card"),
     # ── conformance: the set as a whole ──
     "rank_not_a_triage": ("conformance", "set"),
     # ── internal alignment: action <-> reason ──
@@ -854,6 +855,23 @@ def explanation_alignment(record: Any, assessment: Any,
         # own state, and clearing an entity the scene calls hazard-bearing
         # is charged: the model says a hazard harms nothing.
         if r.get("benign"):
+            # A_fire ui_6611b746: "No responder action required for
+            # bicycle_1" arrived with the quad naming house_1. The ACTION says
+            # which entity is cleared; a quad that names a different one is a
+            # filing slip, not the model declaring the burning house safe.
+            _named = (entities_named_in(r.get("action"), record)
+                      & detected_ids)
+            if _named and q_threat not in _named:
+                fail("quad", "benign_quad_names_another_entity", 1,
+                     f"rec {rank}: the action clears "
+                     f"{', '.join(sorted(_named))} but the quad names "
+                     f"'{q_threat}'", rank)
+                _haz = sorted(_named & threat_ids)
+                if _haz:
+                    fail("quad", "benign_clears_a_hazard", 3,
+                         f"rec {rank}: says {', '.join(_haz)} needs no "
+                         f"action, but the scene declares it a hazard", rank)
+                continue
             if q_threat not in detected_ids:
                 fail("quad", "benign_entity_not_in_scene", 2,
                      f"rec {rank}: the benign entry names '{q_threat}', "
@@ -1673,6 +1691,16 @@ def compute_trust(recommendations: Any, conformance: Any, internal_alignment: An
             not_applicable["pick_agreement"] = (
                 "safe scene: no hazard to suppress — all three routes "
                 "returned nothing, which is agreement")
+
+    # A_fire ui_6611b746 (re-asks switched off): the uncertainty factor read
+    # "0 re-asks, score None", scored penalty 0 at its full 0.22 weight, and
+    # trust printed 0.906 on "6/6 signals". Not re-asking is not the same as
+    # re-asking and getting the same answer. With no measurement the signal
+    # is NOT APPLICABLE: dropped, listed with its reason, weights renormalised
+    # — the F5 lesson (unmeasured is never certainty), applied to trust.
+    if "score" not in uncertainty:
+        not_applicable["uncertainty"] = (
+            "not measured: the recommendation was not re-asked on this run")
 
     # F47: a direction whose own side asserts nothing has no claim to check.
     # `_role_agreement` returns None there, and None must be DROPPED rather

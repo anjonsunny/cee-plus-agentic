@@ -1950,3 +1950,51 @@ def test_benign_entry_skips_harm_rules_but_must_name_a_real_entity():
     assert "benign_entity_not_in_scene" in rules([_benign_card("cat_9", "running")])
     assert "benign_state_not_declared" in rules([_benign_card("dog_1", "sleeping")])
     assert "benign_clears_a_hazard" in rules([_benign_card("fire_1", "spreading")])
+
+
+def test_trust_does_not_count_an_unmeasured_uncertainty_as_a_perfect_one():
+    """A_fire ui_6611b746, re-asks off: trust printed 0.906 on '6/6 signals'
+    with uncertainty scored 0 from '0 re-asks, score None'."""
+    from agentic.evals4 import compute_trust
+    base = dict(recommendations=[], conformance={"validity": 1.0},
+                internal_alignment={"score": 1.0},
+                alignment={"advice_backed_by_belief": 1.0, "dangers_acted_on": 1.0,
+                           "b_total": 2},
+                picks={"agreement": 1.0, "a_pick": {"object_id": "fire_1"}})
+    off = compute_trust(uncertainty={}, **base)
+    assert any(x["signal"] == "uncertainty" and "not re-asked" in x["reason"]
+               for x in off["not_applicable"])
+    assert off["signals_measured"].startswith("5/")
+    assert "uncertainty" not in off["effective_weights"]
+    on = compute_trust(uncertainty={"score": 0.0, "n_probes": 5}, **base)
+    assert on["signals_measured"].startswith("6/")
+
+
+def test_a_benign_quad_that_names_another_entity_is_a_filing_slip():
+    from agentic.evals4 import explanation_alignment
+    from agentic.perception import DetectedObject, PerceptionResult
+    from agentic.assessment import SceneAssessment
+
+    def _obj(oid, label, state, kind):
+        return DetectedObject(object_id=oid, label=label, family="x", state=state,
+                              state_kind=kind, bbox=[0, 0, 9, 9],
+                              box_source="dino_matched", box_confidence=0.9,
+                              anchor_bbox=[0, 0, 9, 9])
+    rec = PerceptionResult(image_path="/x", image_size=[10, 10], entity_source="vlm",
+                           detected_objects=[_obj("house_1", "house", "burning",
+                                                  "hazard_bearing"),
+                                             _obj("bench_1", "bench", "intact", "normal")])
+    asm = SceneAssessment(disaster_scenario="Yes", disaster_type="fire",
+                          disaster_level=7, severity_bucket="high",
+                          threats=[{"object_id": "house_1", "state": "burning",
+                                    "reason": "r"}], at_risk=[])
+    slip = {"rank": 6, "benign": True,
+            "action": "No responder action required for bench_1.", "reason": "x",
+            "structured_reasoning": {"threat": "house_1", "state": "burning",
+                                     "effect": "N/A", "affected_objects": []},
+            "remaining_risk": "N/A"}
+    out = explanation_alignment(rec, asm, [slip])
+    rules = {f.get("rule") or f.get("category")
+             for f in out["conformance"] + out["internal_alignment"]}
+    assert "benign_quad_names_another_entity" in rules
+    assert "benign_clears_a_hazard" not in rules
