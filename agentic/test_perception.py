@@ -621,3 +621,13 @@ def test_perception_call_carries_the_token_cap(monkeypatch):
     perception._query_vlm_raw("prompt", "data:image/jpeg;base64,AAAA")
     assert captured["max_tokens"] == perception.PERCEPTION_MAX_TOKENS
     assert captured.get("response_format") == {"type": "json_object"}
+
+
+def test_cut_repeats_survives_malformed_entities():
+    """A_fire ui_eb1b3b16: a nested bbox made the dedupe key unhashable and
+    killed the run in the repair round."""
+    nested = {"label": "person", "state": "standing", "bbox": [[1, 2], [3, 4]]}
+    odd = [nested, dict(nested), "not a dict", {"label": ["x"], "bbox": None},
+           {"label": "car", "state": "stationary", "bbox": {"x": 1}}]
+    kept, note = perception.cut_repeats(odd)
+    assert len(kept) == 4 and "1 exact repeat" in note

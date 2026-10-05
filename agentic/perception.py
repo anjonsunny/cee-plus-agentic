@@ -517,8 +517,15 @@ def cut_repeats(entities: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], s
     kept: list[dict[str, Any]] = []
     dropped = 0
     for e in entities:
+        if not isinstance(e, dict):
+            kept.append(e)              # not ours to judge; the repair loop's
+            continue
+        # A_fire ui_eb1b3b16: a repair answer came back with a NESTED bbox
+        # ([[x1, y1], [x2, y2]]); tuple() of it holds lists and cannot be a
+        # set key, and the whole run died. Raw model output at a boundary:
+        # key on the text of the value, whatever shape it has.
         key = (str(e.get("label", "")).lower(), str(e.get("state", "")).lower(),
-               tuple(e.get("bbox") or ()))
+               json.dumps(e.get("bbox"), sort_keys=True, default=str))
         if key in seen:
             dropped += 1
             continue
