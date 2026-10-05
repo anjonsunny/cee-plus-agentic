@@ -322,6 +322,9 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
         elif t == "recommendations_ready":
             d["stage4_started"] = True
             d["stage4_marks"].add("recommend")
+        elif t == "stage4_judges_off":
+            d["stage4_judges_off"] = True
+            d["stage4_marks"] |= {"card_judge", "graph_judge", "runoff"}
         elif t in ("leading_probe_ready", "leading_probe_error"):
             d["stage4_marks"].add("leading")
             d["stage4_lead"] = {"hint": ev.get("hint"),
@@ -1001,8 +1004,12 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
                             p, temperature=JUDGE_PROBE_TEMPERATURE)
                 except Exception:
                     _card_judge = None
-                if os.getenv("S4_CARD_JUDGE", "1") != "1":
+                if os.getenv("S4_CARD_JUDGE", "1") != "1" or not S4_JUDGES["on"]:
                     _card_judge = None
+                if _card_judge is None:
+                    # recorded, so a run without judges can never be read
+                    # later as a run whose judges found nothing
+                    sink({"type": "stage4_judges_off"})
                 s4 = stage4_with_control(record, result.assessment,
                                          str(image_path), query_fn=_s4_query,
                                          probe_fn=_s4_probe,
@@ -2827,7 +2834,9 @@ def _judges_bench(s4: dict, d: dict) -> list:
     if ro.get("graph_b"):
         cards.append(_runoff_bench_card(ro["graph_b"], "GRAPH B"))
     if not cards:
-        return [html.Div("no judge ran on this run",
+        return [html.Div("no judge ran on this run"
+                         + (" — the stage 4 judges were switched off"
+                            if d.get("stage4_judges_off") else ""),
                          className="ticket-empty")]
     # bench header: twins + judge time, when the live event stream carried it
     twins = [x.get("twins_agree") for x in ro.values()
@@ -3033,6 +3042,10 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                  f"(the slowest step — text + image, per vote)"),
                 ("trust", "trust", "folding the trust score")]
         rows: list[Any] = [html.Div("STAGE 4 · running…", className="unc-tag")]
+        if d.get("stage4_judges_off"):
+            LIVE = [(k, k2, "switched off for this run"
+                     if k in ("card_judge", "graph_judge", "runoff") else lab)
+                    for k, k2, lab in LIVE]
         active_used = False
         for key, _k, label in LIVE:
             if key in marks:
@@ -5140,6 +5153,19 @@ app.layout = html.Div([
                          {"label": "LangGraph", "value": "langgraph"}],
                 className="ctl-toggle"),
         ], className="ctl-group"),
+        # Sunny (2026-10-05): the three Stage 4 judges are ~85% of a run
+        # (run A: 55 of 62 minutes). They are advisory — no score reads
+        # them — so they can be switched off per run to see the detectors
+        # and trust in minutes. Default stays ON: a run is complete unless
+        # someone chooses otherwise.
+        html.Div([
+            html.Span("stage 4 judges", className="ctl-lbl"),
+            dcc.RadioItems(
+                id="judges-mode", value="on", inline=True,
+                options=[{"label": "on", "value": "on"},
+                         {"label": "off (fast)", "value": "off"}],
+                className="ctl-toggle"),
+        ], className="ctl-group"),
         html.Div([
             html.Span("rule lookup", className="ctl-lbl"),
             dcc.RadioItems(
@@ -5243,14 +5269,16 @@ def cache_upload(contents, filename):
               State("upload-cache", "data"), State("caption", "value"),
               State("control-mode", "value"),
               State("retrieval-mode", "value"),
+              State("judges-mode", "value"),
               prevent_initial_call=True)
 def start_run(_clicks, replay_path, cached, caption,
-              control_mode, retrieval_choice):
+              control_mode, retrieval_choice, judges_choice="on"):
     # Apply the on-screen toggles for this run (in-process override).
     from agentic.graph_live import set_control
     from agentic.retrieval import set_retrieval
     set_control(control_mode)
     set_retrieval(retrieval_choice)
+    S4_JUDGES["on"] = (judges_choice != "off")
     if ctx.triggered_id == "replay" and replay_path:
         return start_replay(replay_path)
     if ctx.triggered_id == "analyze" and cached and cached.get("contents"):
@@ -5264,6 +5292,9 @@ def start_run(_clicks, replay_path, cached, caption,
 # Per-page-load agent transcripts, keyed by thread id. Each turn:
 # {"q", "steps": [trajectory events], "a": answer|None, "pending": bool}.
 AGENT_LOGS: dict[str, list[dict[str, Any]]] = {}
+
+# The on-screen "stage 4 judges" switch, applied when a run launches.
+S4_JUDGES: dict[str, bool] = {"on": True}
 
 
 def _fmt_args(args: dict[str, Any]) -> str:

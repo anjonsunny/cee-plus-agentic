@@ -2448,3 +2448,24 @@ def test_pathology_result_is_on_screen_before_the_judges_finish():
     # silent detectors say so, and say who looked
     quiet = ui.derive(events[:6] + [events[-1] | {"n_tickets": 0}])
     assert "no pathology ticket" in _text(ui.stage4_component(quiet))
+
+
+def test_stage4_judges_can_be_switched_off_and_the_run_says_so():
+    """Sunny (2026-10-05): the judges were 55 of run A's 62 minutes. Off is a
+    per-run choice, recorded in the event stream and shown on screen."""
+    from agentic import ui
+    assert ui.S4_JUDGES == {"on": True}                    # default: complete
+    ids = str(ui.app.layout)
+    assert "judges-mode" in ids
+    d = ui.derive([
+        {"t": 1.0, "type": "run_started", "image_name": "x.jpg"},
+        {"t": 2.0, "type": "stage4_judges_off"},
+        {"t": 3.0, "type": "recommendations_ready", "n_recs": 1}])
+    assert d["stage4_judges_off"] is True
+    assert {"card_judge", "graph_judge", "runoff"} <= d["stage4_marks"]
+    assert "switched off for this run" in _text(ui.stage4_component(d))
+    done = ui.derive([{"t": 1.0, "type": "stage4_judges_off"},
+                      {"t": 2.0, "type": "stage4_result",
+                       "result": {"recommendations": []}}])
+    assert "the stage 4 judges were switched off" in _text(
+        ui.stage4_component(done))
