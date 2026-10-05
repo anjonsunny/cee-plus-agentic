@@ -2454,7 +2454,7 @@ def test_stage4_judges_can_be_switched_off_and_the_run_says_so():
     """Sunny (2026-10-05): the judges were 55 of run A's 62 minutes. Off is a
     per-run choice, recorded in the event stream and shown on screen."""
     from agentic import ui
-    assert ui.S4_JUDGES == {"on": True}                    # default: complete
+    assert ui.S4_JUDGES == {"on": False}       # default: off (fast runs)
     ids = str(ui.app.layout)
     assert "judges-mode" in ids
     d = ui.derive([

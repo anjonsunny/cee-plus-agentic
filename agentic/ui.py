@@ -5156,14 +5156,15 @@ app.layout = html.Div([
         # Sunny (2026-10-05): the three Stage 4 judges are ~85% of a run
         # (run A: 55 of 62 minutes). They are advisory — no score reads
         # them — so they can be switched off per run to see the detectors
-        # and trust in minutes. Default stays ON: a run is complete unless
-        # someone chooses otherwise.
+        # and trust in minutes. Default OFF (Sunny, later the same day):
+        # the judges mainly serve reflection, which is deferred, so a normal
+        # run skips them; switch on for a run that needs the bench.
         html.Div([
             html.Span("stage 4 judges", className="ctl-lbl"),
             dcc.RadioItems(
-                id="judges-mode", value="on", inline=True,
-                options=[{"label": "on", "value": "on"},
-                         {"label": "off (fast)", "value": "off"}],
+                id="judges-mode", value="off", inline=True,
+                options=[{"label": "off (fast)", "value": "off"},
+                         {"label": "on (~1 hour)", "value": "on"}],
                 className="ctl-toggle"),
         ], className="ctl-group"),
         html.Div([
@@ -5272,13 +5273,13 @@ def cache_upload(contents, filename):
               State("judges-mode", "value"),
               prevent_initial_call=True)
 def start_run(_clicks, replay_path, cached, caption,
-              control_mode, retrieval_choice, judges_choice="on"):
+              control_mode, retrieval_choice, judges_choice="off"):
     # Apply the on-screen toggles for this run (in-process override).
     from agentic.graph_live import set_control
     from agentic.retrieval import set_retrieval
     set_control(control_mode)
     set_retrieval(retrieval_choice)
-    S4_JUDGES["on"] = (judges_choice != "off")
+    S4_JUDGES["on"] = (judges_choice == "on")
     if ctx.triggered_id == "replay" and replay_path:
         return start_replay(replay_path)
     if ctx.triggered_id == "analyze" and cached and cached.get("contents"):
@@ -5294,7 +5295,7 @@ def start_run(_clicks, replay_path, cached, caption,
 AGENT_LOGS: dict[str, list[dict[str, Any]]] = {}
 
 # The on-screen "stage 4 judges" switch, applied when a run launches.
-S4_JUDGES: dict[str, bool] = {"on": True}
+S4_JUDGES: dict[str, bool] = {"on": False}
 
 
 def _fmt_args(args: dict[str, Any]) -> str:
