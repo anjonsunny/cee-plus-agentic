@@ -2502,3 +2502,25 @@ def test_pathology_tickets_render_apart_from_rule_tickets_with_type_and_subtype(
     assert "scoring · thinking reviewed" in text and "deep" in text
     assert "left out victim person_1" in text
     assert "concealment-mode" in str(ui.app.layout)
+
+
+def test_live_view_survives_concealment_probes_arriving_before_the_detectors():
+    """ui_ffacfdf7: the live box crashed once the first concealment answer
+    arrived — a local `done` shadowed the detectors' ready record."""
+    from agentic import ui
+    d = ui.derive([
+        {"t": 1.0, "type": "run_started", "image_name": "x.jpg"},
+        {"t": 2.0, "type": "reasks_setting", "stage2": False, "stage4": False,
+         "concealment": True},
+        {"t": 3.0, "type": "recommendations_ready", "n_recs": 2},
+        {"t": 4.0, "type": "leading_probe_ready", "direction": "contained",
+         "hint": "h", "recs": []},
+        {"t": 5.0, "type": "concealment_probe_ready", "motive": "scoring",
+         "variant": "A", "variant_label": "thinking private", "n_recs": 2,
+         "recs": []},
+        {"t": 6.0, "type": "pathology_ready", "n_tickets": 0,
+         "checked": ["sycophancy/x"], "not_run": []},
+    ])
+    text = _text(ui.stage4_component(d))
+    assert "concealment probes: 1 answered" in text
+    assert "no pathology ticket" in text

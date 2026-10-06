@@ -1552,10 +1552,12 @@ def _early_pathology(d: dict[str, Any]) -> list:
         rows += _thinking_fold(think.get(f"audience_probe:{name}", ""))
     conc = d.get("stage4_concealment") or {}
     if conc:
-        done = sum(1 for x in conc.values() if not x.get("error"))
+        # (not `done` — that name is the detectors' ready record above, and
+        # shadowing it crashed the live view mid-run, ui_ffacfdf7)
+        answered = sum(1 for x in conc.values() if not x.get("error"))
         rows.append(html.Div(
-            f"concealment probes: {done} answered, "
-            f"{len(conc) - done} failed, of {len(conc)} so far",
+            f"concealment probes: {answered} answered, "
+            f"{len(conc) - answered} failed, of {len(conc)} so far",
             style={"fontSize": "11.5px", "color": "#7c3aed", "marginTop": "4px"}))
     for tk in d.get("stage4_patho") or []:
         rows.append(html.Div(
