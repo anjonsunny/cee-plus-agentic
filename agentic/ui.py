@@ -1518,66 +1518,79 @@ def _thinking_fold(text: str, label: str = "the model's thinking") -> list:
 
 
 def _early_pathology(d: dict[str, Any]) -> list:
-    """The pathology result, shown while the judges are still voting. The
-    detectors finish minutes into Stage 4 and the judges take most of an
-    hour (run A, ui_67831506), so the answer is put on screen the moment it
-    exists instead of with the final record."""
+    """The pathology result, shown while the judges are still voting.
+    Sunny (2026-10-06): tickets only — one line each, click for more. The
+    probe answers and the model's thinking sit under one closed fold."""
     lead, done = d.get("stage4_lead"), d.get("stage4_patho_done")
     aud, think = d.get("stage4_audience") or {}, d.get("stage4_thinking") or {}
-    if not lead and not done and not aud:
+    conc = d.get("stage4_concealment") or {}
+    if not lead and not done and not aud and not conc:
         return []
-    rows: list[Any] = [html.Div("PATHOLOGY · early result (the judges are "
-                                "still voting below)", className="unc-tag")]
+    rows: list[Any] = [html.Div("PATHOLOGY · early result", className="unc-tag")]
+    for tk in d.get("stage4_patho") or []:
+        head = (f"⚠ {str(tk.get('pathology', '')).upper()} · "
+                f"{tk.get('subtype') or str(tk.get('technique', '')).replace('_', ' ')}"
+                + (f" · {tk['kind']}" if tk.get("kind") else "")
+                + f" · strength {tk.get('strength')}")
+        rows.append(html.Details([
+            html.Summary(head, style={"fontSize": "12px", "fontWeight": "700",
+                                      "color": "#be123c", "cursor": "pointer"}),
+            html.Div([html.Div(str(tk.get("summary") or ""),
+                               style={"fontSize": "11.5px", "color": "#1f2937"}),
+                      html.Div(str(tk.get("evidence") or ""),
+                               style={"fontSize": "11px", "color": "#475569",
+                                      "marginTop": "2px"})],
+                     style={"padding": "2px 0 0 10px"})],
+            style={"margin": "2px 0"}))
+    if done and not d.get("stage4_patho"):
+        rows.append(html.Div("✓ no pathology ticket",
+                             style={"fontSize": "12px", "color": "#16a34a"}))
+    elif not done:
+        n = (1 if lead else 0) + len(aud) + len(conc)
+        rows.append(html.Div(f"⟳ {n} probe answer(s) in, detectors not run yet",
+                             style={"fontSize": "11px", "color": "#94a3b8"}))
+    # everything else — what was asked, what came back, the thinking, who
+    # looked — under one closed fold
+    detail: list[Any] = []
     if lead:
-        rows.append(html.Div(
-            f"asked: \"{lead.get('hint') or ''}\"" if not lead.get("error")
+        detail.append(html.Div(
+            f"hint: \"{lead.get('hint') or ''}\"" if not lead.get("error")
             else f"the leading probe failed: {lead.get('error')}",
-            style={"fontSize": "11.5px", "color": "#7c3aed"}))
-        for a in lead.get("actions") or []:
-            rows.append(html.Div("· " + a, style={
-                "fontSize": "11.5px", "color": "#475569",
-                "paddingLeft": "10px"}))
-        rows += _thinking_fold(think.get("leading_probe", ""))
+            style={"fontSize": "11px", "color": "#7c3aed"}))
+        detail += [html.Div("· " + a, style={"fontSize": "11px", "color": "#475569",
+                                             "paddingLeft": "10px"})
+                   for a in (lead.get("actions") or [])]
+        detail += _thinking_fold(think.get("leading_probe", ""))
     for name, one in aud.items():
-        rows.append(html.Div(
+        detail.append(html.Div(
             f"reader: {one.get('reader')}" if not one.get("error")
             else f"the audience probe for {one.get('reader')} failed: "
                  f"{one.get('error')}",
-            style={"fontSize": "11.5px", "color": "#7c3aed",
-                   "marginTop": "4px"}))
-        for a in one.get("actions") or []:
-            rows.append(html.Div("· " + a, style={
-                "fontSize": "11.5px", "color": "#475569",
-                "paddingLeft": "10px"}))
-        rows += _thinking_fold(think.get(f"audience_probe:{name}", ""))
-    conc = d.get("stage4_concealment") or {}
+            style={"fontSize": "11px", "color": "#7c3aed", "marginTop": "4px"}))
+        detail += [html.Div("· " + a, style={"fontSize": "11px", "color": "#475569",
+                                             "paddingLeft": "10px"})
+                   for a in (one.get("actions") or [])]
+        detail += _thinking_fold(think.get(f"audience_probe:{name}", ""))
     if conc:
-        # (not `done` — that name is the detectors' ready record above, and
-        # shadowing it crashed the live view mid-run, ui_ffacfdf7)
         answered = sum(1 for x in conc.values() if not x.get("error"))
-        rows.append(html.Div(
+        detail.append(html.Div(
             f"concealment probes: {answered} answered, "
             f"{len(conc) - answered} failed, of {len(conc)} so far",
-            style={"fontSize": "11.5px", "color": "#7c3aed", "marginTop": "4px"}))
-    for tk in d.get("stage4_patho") or []:
-        rows.append(html.Div(
-            f"⚠ {str(tk.get('pathology', '')).upper()} · "
-            f"{tk.get('subtype') or str(tk.get('technique', '')).replace('_', ' ')}"
-            + (f" · {tk['kind']}" if tk.get("kind") else "")
-            + f" · strength {tk.get('strength')}",
-            style={"fontSize": "12px", "fontWeight": "700",
-                   "color": "#be123c", "marginTop": "4px"}))
-        rows.append(html.Div(str(tk.get("summary") or tk.get("evidence", "")),
-                             style={"fontSize": "11.5px", "color": "#475569",
-                                    "paddingLeft": "10px"}))
-    if done and not d.get("stage4_patho"):
-        rows.append(html.Div(
-            "✓ no pathology ticket — detectors that looked: "
-            + (", ".join(done.get("checked") or []) or "none"),
-            style={"fontSize": "12px", "color": "#16a34a", "marginTop": "4px"}))
-    if done and done.get("not_run"):
-        rows.append(html.Div("did not run: " + "; ".join(done["not_run"]),
-                             style={"fontSize": "10.5px", "color": "#94a3b8"}))
+            style={"fontSize": "11px", "color": "#7c3aed", "marginTop": "4px"}))
+    if done:
+        detail.append(html.Div(
+            "detectors that looked: " + (", ".join(done.get("checked") or []) or "none"),
+            style={"fontSize": "10.5px", "color": "#94a3b8", "marginTop": "4px"}))
+        if done.get("not_run"):
+            detail.append(html.Div("did not run: " + "; ".join(done["not_run"]),
+                                   style={"fontSize": "10.5px", "color": "#94a3b8"}))
+    if detail:
+        rows.append(html.Details([
+            html.Summary("probe answers, thinking, and who looked",
+                         style={"fontSize": "10.5px", "color": "#64748b",
+                                "cursor": "pointer"}),
+            html.Div(detail, style={"padding": "2px 0 0 8px"})],
+            style={"marginTop": "4px"}))
     return [html.Div(rows, className="unc-panel",
                      style={"borderColor": "#fda4af", "marginTop": "6px"})]
 
@@ -3078,19 +3091,22 @@ def _register_panel(s4: dict) -> list:
         "color": "#64748b", "margin": "8px 0 2px"}))
     path = reg.get("pathology") or []
     out += [_pathology_ticket(tk) for tk in path] or [
-        html.Div("no pathology ticket — detectors that looked: "
-                 + ", ".join(((s4 or {}).get("pathology") or {}).get("checked")
-                             or ["(none recorded on this run)"]),
-                 className="ticket-empty")]
-    _nr = ((s4 or {}).get("pathology") or {}).get("not_run") or []
-    if _nr:
-        out.append(html.Div("did not run: " + "; ".join(_nr),
-                            style={"fontSize": "10.5px", "color": "#94a3b8",
-                                   "margin": "2px 0 0 2px"}))
+        html.Div("no pathology ticket", className="ticket-empty")]
+    _pa = (s4 or {}).get("pathology") or {}
+    _more: list[Any] = [html.Div(
+        "detectors that looked: " + (", ".join(_pa.get("checked") or [])
+                                     or "(none recorded on this run)"),
+        style={"fontSize": "10.5px", "color": "#94a3b8"})]
+    if _pa.get("not_run"):
+        _more.append(html.Div("did not run: " + "; ".join(_pa["not_run"]),
+                              style={"fontSize": "10.5px", "color": "#94a3b8"}))
+    if _pa.get("baseline"):
+        _more.append(html.Div(f"baseline: {_pa['baseline']}",
+                              style={"fontSize": "10.5px", "color": "#94a3b8"}))
     _lp = (s4 or {}).get("leading_probe") or {}
     if _lp.get("hint"):
         # the hinted answer itself, folded — the evidence behind technique 2
-        out.append(html.Details([
+        _more.append(html.Details([
             html.Summary(f"leading probe — asked: \"{_lp['hint']}\" · "
                          f"{len(_lp.get('recommendations') or [])} "
                          f"recommendation(s) came back",
@@ -3109,7 +3125,7 @@ def _register_panel(s4: dict) -> list:
             style={"margin": "4px 0 0 2px"}))
     _cp = (s4 or {}).get("concealment_probes") or {}
     if _cp:
-        out.append(html.Details([
+        _more.append(html.Details([
             html.Summary(f"concealment probes — {len(_cp)} answers, one per "
                          f"motive and variant",
                          style={"fontSize": "10.5px", "color": "#7c3aed",
@@ -3139,7 +3155,7 @@ def _register_panel(s4: dict) -> list:
     for _name, _ap in ((s4 or {}).get("audience_probes") or {}).items():
         if not isinstance(_ap, dict) or not _ap.get("line"):
             continue
-        out.append(html.Details([
+        _more.append(html.Details([
             html.Summary(f"audience probe — reader: {_ap.get('reader', _name)} · "
                          f"{len(_ap.get('recommendations') or [])} "
                          f"recommendation(s) came back",
@@ -3158,6 +3174,12 @@ def _register_panel(s4: dict) -> list:
                      + _thinking_fold(_ap.get("thinking") or ""),
                      style={"padding": "2px 0 0 10px"})],
             style={"margin": "4px 0 0 2px"}))
+    out.append(html.Details([
+        html.Summary("probe answers, thinking, and who looked",
+                     style={"fontSize": "10.5px", "color": "#64748b",
+                            "cursor": "pointer"}),
+        html.Div(_more, style={"padding": "2px 0 0 8px"})],
+        style={"marginTop": "6px"}))
     return out
 
 
