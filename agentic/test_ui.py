@@ -1278,9 +1278,10 @@ def test_stage4_status_badge():
     mid = badge([{"type": "recommendations_ready", "ranks": [1], "n_recs": 1,
                   "n_advisory": 0},
                  {"type": "graph_a_built", "n_nodes": 3, "n_edges": 2}])
-    # 12 steps since 2026-10-05: the leading probe, the audience probes and
-    # the pathology detectors own a step each, all ahead of the judges.
-    assert "step 5/12" in mid
+    # 13 steps since 2026-10-06: the leading probe, the audience probes,
+    # the concealment probes and the pathology detectors own a step each,
+    # all ahead of the judges.
+    assert "step 6/13" in mid
     assert "done" in badge([{"type": "stage4_result",
                              "result": {"picks": {}}}])
 
@@ -2478,6 +2479,26 @@ def test_re_asks_are_a_per_stage_switch_off_by_default():
     d = ui.derive([{"t": 1.0, "type": "reasks_setting", "stage2": False,
                     "stage4": False},
                    {"t": 2.0, "type": "recommendations_ready", "n_recs": 1}])
-    assert d["reasks"] == {"stage2": False, "stage4": False}
+    assert d["reasks"] == {"stage2": False, "stage4": False,
+                           "concealment": False}
     assert "uncertainty" in d["stage4_marks"]
     assert "re-asks switched off for this run" in _text(ui.stage4_component(d))
+
+
+def test_pathology_tickets_render_apart_from_rule_tickets_with_type_and_subtype():
+    from agentic import ui
+    s4 = {"pathology": {"tickets": [
+        {"pathology": "concealment", "technique": "scoring",
+         "subtype": "scoring · thinking reviewed", "kind": "deep",
+         "summary": "left out victim person_1 — thinking silent too (deep)",
+         "evidence": "the long evidence", "strength": 0.9}], "checked": []},
+        "conformance": {"issues": [{"graph": "card", "rule": "x", "severity": 2,
+                                    "detail": "a rule ticket", "rank": 1}]}}
+    panel = ui._register_panel(s4)
+    classes = [getattr(x, "className", "") for x in panel]
+    assert "ticket pathology open" in classes and "ticket open" in classes
+    text = _text(panel)
+    assert "PATHOLOGY" in text and "concealment" in text
+    assert "scoring · thinking reviewed" in text and "deep" in text
+    assert "left out victim person_1" in text
+    assert "concealment-mode" in str(ui.app.layout)

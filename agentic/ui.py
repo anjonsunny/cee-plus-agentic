@@ -326,9 +326,21 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
             d["stage4_marks"].add("recommend")
         elif t == "reasks_setting":
             d["reasks"] = {"stage2": bool(ev.get("stage2")),
-                           "stage4": bool(ev.get("stage4"))}
+                           "stage4": bool(ev.get("stage4")),
+                           "concealment": bool(ev.get("concealment"))}
             if not ev.get("stage4"):
                 d["stage4_marks"].add("uncertainty")   # nothing to wait for
+            if not ev.get("concealment"):
+                d["stage4_marks"].add("concealment")
+        elif t in ("concealment_probe_ready", "concealment_probe_error"):
+            d.setdefault("stage4_concealment", {})[
+                f"{ev.get('motive')}:{ev.get('variant')}"] = {
+                "motive": ev.get("motive"), "variant": ev.get("variant"),
+                "variant_label": ev.get("variant_label"),
+                "error": ev.get("error"), "n_recs": ev.get("n_recs")}
+        elif t == "concealment_probes_skipped":
+            d["stage4_marks"].add("concealment")
+            d["stage4_concealment_skipped"] = ev.get("reason")
         elif t == "stage4_judges_off":
             d["stage4_judges_off"] = True
             d["stage4_marks"] |= {"card_judge", "graph_judge", "runoff"}
@@ -359,7 +371,9 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
             d.setdefault("stage4_patho", []).append(
                 {"pathology": ev.get("pathology"),
                  "technique": ev.get("technique"),
+                 "subtype": ev.get("subtype"), "kind": ev.get("kind"),
                  "strength": ev.get("strength"),
+                 "summary": ev.get("summary"),
                  "evidence": ev.get("evidence")})
         elif t == "pathology_ready":
             d["stage4_marks"].add("pathology")
@@ -369,6 +383,7 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
             d["stage4_marks"].add("graph_a")
             d["stage4_marks"].add("leading")   # ran (or was off) before this
             d["stage4_marks"].add("audience")
+            d["stage4_marks"].add("concealment")
         elif t == "graph_b_built":
             d["stage4_marks"].add("graph_b")
         elif t == "targets_picked":
@@ -1026,7 +1041,8 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
                 # recorded, so a run without re-asks is never read later as
                 # a run whose answers happened to agree
                 sink({"type": "reasks_setting", "stage2": REASKS["s2"],
-                      "stage4": REASKS["s4"]})
+                      "stage4": REASKS["s4"],
+                      "concealment": CONCEALMENT["on"]})
                 # F24 — the card judge. ADVISORY and display-only: it never
                 # enters a score, which is exactly why it is safe to leave on
                 # during calibration. A judge that cannot reach its model
@@ -1052,6 +1068,7 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
                                          judge_fn=_card_judge,
                                          think_fn=_s4_think,
                                          pathology_probes=True,
+                                         concealment_probes=CONCEALMENT["on"],
                                          n_probes=_s4_n_probes,
                                          on_event=sink)
                 (run_dir / "stage4.json").write_text(s4.model_dump_json(indent=2))
@@ -1533,15 +1550,24 @@ def _early_pathology(d: dict[str, Any]) -> list:
                 "fontSize": "11.5px", "color": "#475569",
                 "paddingLeft": "10px"}))
         rows += _thinking_fold(think.get(f"audience_probe:{name}", ""))
+    conc = d.get("stage4_concealment") or {}
+    if conc:
+        done = sum(1 for x in conc.values() if not x.get("error"))
+        rows.append(html.Div(
+            f"concealment probes: {done} answered, "
+            f"{len(conc) - done} failed, of {len(conc)} so far",
+            style={"fontSize": "11.5px", "color": "#7c3aed", "marginTop": "4px"}))
     for tk in d.get("stage4_patho") or []:
         rows.append(html.Div(
             f"⚠ {str(tk.get('pathology', '')).upper()} · "
-            f"{str(tk.get('technique', '')).replace('_', ' ')} · strength "
-            f"{tk.get('strength')}",
+            f"{tk.get('subtype') or str(tk.get('technique', '')).replace('_', ' ')}"
+            + (f" · {tk['kind']}" if tk.get("kind") else "")
+            + f" · strength {tk.get('strength')}",
             style={"fontSize": "12px", "fontWeight": "700",
                    "color": "#be123c", "marginTop": "4px"}))
-        rows.append(html.Div(str(tk.get("evidence", "")), style={
-            "fontSize": "11.5px", "color": "#475569", "paddingLeft": "10px"}))
+        rows.append(html.Div(str(tk.get("summary") or tk.get("evidence", "")),
+                             style={"fontSize": "11.5px", "color": "#475569",
+                                    "paddingLeft": "10px"}))
     if done and not d.get("stage4_patho"):
         rows.append(html.Div(
             "✓ no pathology ticket — detectors that looked: "
@@ -1562,6 +1588,7 @@ def stage4_status_span(d: dict[str, Any]) -> html.Span:
     # for 20 minutes while the body correctly shows the runoff voting.
     STEPS = [("recommend", "recommend"), ("uncertainty", "uncertainty"),
              ("leading probe", "leading"), ("audience probes", "audience"),
+             ("concealment", "concealment"),
              ("Graph A", "graph_a"), ("Graph B", "graph_b"),
              ("pathology", "pathology"),
              ("pick", "picks"), ("card judge", "card_judge"),
@@ -2961,6 +2988,51 @@ def _register_panel(s4: dict) -> list:
              "repaired": ("REPAIRED", "stamp fixed"), "survived": ("SURVIVED", "stamp stood"),
              "induced": ("INDUCED", "stamp open")}
 
+    def _pathology_ticket(tk: dict) -> Any:
+        """Sunny (2026-10-06): a pathology ticket is not a rule ticket — its
+        own colour, the type and subtype in the header, one brief line of
+        what happened, and the long evidence folded away."""
+        st = tk.get("status", "open")
+        lab, cls = stamp.get(st, ("OPEN", "stamp open"))
+        head = [html.Span("PATHOLOGY", className="ticket-kind",
+                          style={"color": "#be123c"}),
+                html.Span(str(tk.get("kind", "")).replace("_", " "),
+                          style={"fontSize": "12px", "fontWeight": "800",
+                                 "color": "#9f1239", "marginLeft": "6px"})]
+        if tk.get("subtype"):
+            head.append(html.Span(" · " + str(tk["subtype"]),
+                                  style={"fontSize": "11px", "color": "#9f1239",
+                                         "marginLeft": "2px"}))
+        if tk.get("pathology_kind"):
+            head.append(html.Span(str(tk["pathology_kind"]),
+                                  style={"fontSize": "9.5px", "fontWeight": "800",
+                                         "color": "#fff", "background": "#be123c",
+                                         "borderRadius": "6px", "padding": "1px 6px",
+                                         "marginLeft": "6px"}))
+        if tk.get("strength") is not None:
+            head.append(html.Span(f"strength {tk['strength']}",
+                                  style={"fontSize": "9.5px", "color": "#94a3b8",
+                                         "marginLeft": "6px"}))
+        if tk.get("single_baseline"):
+            head.append(html.Span("single baseline",
+                                  style={"fontSize": "9.5px", "color": "#b45309",
+                                         "marginLeft": "6px"}))
+        head.append(html.Span(lab, className=cls))
+        body = [html.Div(str(tk.get("summary") or tk.get("evidence", "")),
+                         style={"fontSize": "12px", "color": "#1f2937",
+                                "padding": "2px 0"})]
+        if tk.get("summary") and tk.get("evidence"):
+            body.append(html.Details([
+                html.Summary("details", style={"fontSize": "10px",
+                                               "color": "#be123c",
+                                               "cursor": "pointer"}),
+                html.Div(str(tk["evidence"]),
+                         style={"fontSize": "11px", "color": "#475569",
+                                "padding": "2px 0 0 8px"})]))
+        return html.Details([html.Summary(head),
+                             html.Div(body, className="ticket-body")],
+                            className=f"ticket pathology {st}")
+
     def _ticket(tk: dict) -> Any:
         st = tk.get("status", "open")
         lab, cls = stamp.get(st, ("OPEN", "stamp open"))
@@ -3003,7 +3075,7 @@ def _register_panel(s4: dict) -> list:
         "fontSize": "10px", "fontWeight": "800", "letterSpacing": ".08em",
         "color": "#64748b", "margin": "8px 0 2px"}))
     path = reg.get("pathology") or []
-    out += [_ticket(tk) for tk in path] or [
+    out += [_pathology_ticket(tk) for tk in path] or [
         html.Div("no pathology ticket — detectors that looked: "
                  + ", ".join(((s4 or {}).get("pathology") or {}).get("checked")
                              or ["(none recorded on this run)"]),
@@ -3031,6 +3103,35 @@ def _register_panel(s4: dict) -> list:
                     _lp.get("error") or "no recommendation came back",
                     style={"fontSize": "11px", "color": "#94a3b8"})]
                 + _thinking_fold(_lp.get("thinking") or ""),
+                style={"padding": "2px 0 0 10px"})],
+            style={"margin": "4px 0 0 2px"}))
+    _cp = (s4 or {}).get("concealment_probes") or {}
+    if _cp:
+        out.append(html.Details([
+            html.Summary(f"concealment probes — {len(_cp)} answers, one per "
+                         f"motive and variant",
+                         style={"fontSize": "10.5px", "color": "#7c3aed",
+                                "cursor": "pointer"}),
+            html.Div([html.Details([
+                html.Summary(f"{str(_v.get('motive', '')).replace('_', ' ')} · "
+                             f"{_v.get('variant_label', '')} · "
+                             f"{len(_v.get('recommendations') or [])} "
+                             f"recommendation(s)"
+                             + (f" · failed: {_v['error']}" if _v.get("error")
+                                else ""),
+                             style={"fontSize": "10.5px", "color": "#475569",
+                                    "cursor": "pointer"}),
+                html.Div([html.Div(f"block: \"{_v.get('block', '')}\"",
+                                   style={"fontSize": "10px", "color": "#94a3b8"})]
+                         + [html.Div(("BENIGN · " if x.get("benign") else "")
+                                     + f"#{x.get('rank')} {x.get('action', '')}",
+                                     style={"fontSize": "11px", "color": "#475569"})
+                            for x in (_v.get("recommendations") or [])
+                            if isinstance(x, dict)]
+                         + _thinking_fold(_v.get("thinking") or ""),
+                         style={"padding": "2px 0 0 10px"})],
+                style={"margin": "2px 0"})
+                for _k, _v in _cp.items() if isinstance(_v, dict)],
                 style={"padding": "2px 0 0 10px"})],
             style={"margin": "4px 0 0 2px"}))
     for _name, _ap in ((s4 or {}).get("audience_probes") or {}).items():
@@ -3121,6 +3222,9 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                 ("audience", "audience",
                  "asking once per stated reader (audience probes) · "
                  f"{len(d.get('stage4_audience') or {})}/2"),
+                ("concealment", "concealment",
+                 "asking once per motive (concealment probes) · "
+                 f"{len(d.get('stage4_concealment') or {})}/14"),
                 ("graph_a", "graph_a", "assembling Graph A"),
                 ("graph_b", "graph_b", "asking for the independent Graph B"),
                 ("pathology", "pathology", "running the pathology detectors"),
@@ -3145,6 +3249,13 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
         if d.get("reasks") and not d["reasks"].get("stage4"):
             LIVE = [(k, k2, "re-asks switched off for this run"
                      if k == "uncertainty" else lab) for k, k2, lab in LIVE]
+        if d.get("reasks") and not d["reasks"].get("concealment"):
+            LIVE = [(k, k2, "concealment probes switched off for this run"
+                     if k == "concealment" else lab) for k, k2, lab in LIVE]
+        if d.get("stage4_concealment_skipped"):
+            LIVE = [(k, k2, "concealment probes skipped: "
+                     + str(d["stage4_concealment_skipped"])
+                     if k == "concealment" else lab) for k, k2, lab in LIVE]
         active_used = False
         for key, _k, label in LIVE:
             if key in marks:
@@ -5053,6 +5164,8 @@ app.index_string = """<!DOCTYPE html>
       background:var(--card); box-shadow:var(--shadow); opacity:.62; }
   .station.active, .station.done { opacity:1; }
   .station.failed { opacity:1; border-color:#dc2626; background:#fef2f2; }
+  .ticket.pathology { border-color:#be123c; background:#fff1f2; }
+  .ticket.pathology.open { border-color:#be123c; }
   /* Per-stage tinted, shaded cards */
   .st-perceive.active, .st-perceive.done { background:linear-gradient(135deg,#eff6ff,#ffffff); border-left-color:#3b82f6; }
   .st-repair.active,   .st-repair.done   { background:linear-gradient(135deg,#fffbeb,#ffffff); border-left-color:#f59e0b; }
@@ -5287,6 +5400,16 @@ app.layout = html.Div([
                          {"label": " stage 4", "value": "s4"}],
                 className="ctl-toggle"),
         ], className="ctl-group"),
+        # Concealment probes (2026-10-06): fourteen extra calls with
+        # thinking on (~2.5 min each on the 27B), so a switch of their own.
+        html.Div([
+            html.Span("concealment", className="ctl-lbl"),
+            dcc.RadioItems(
+                id="concealment-mode", value="off", inline=True,
+                options=[{"label": "off", "value": "off"},
+                         {"label": "on (14 calls)", "value": "on"}],
+                className="ctl-toggle"),
+        ], className="ctl-group"),
         html.Div([
             html.Span("stage 4 judges", className="ctl-lbl"),
             dcc.RadioItems(
@@ -5401,10 +5524,12 @@ def cache_upload(contents, filename):
               State("judges-mode", "value"),
               State("subject-model", "value"),
               State("reasks-mode", "value"),
+              State("concealment-mode", "value"),
               prevent_initial_call=True)
 def start_run(_clicks, replay_path, cached, caption,
               control_mode, retrieval_choice, judges_choice="off",
-              subject_choice=None, reasks_choice=None):
+              subject_choice=None, reasks_choice=None,
+              concealment_choice="off"):
     # Apply the on-screen toggles for this run (in-process override).
     from agentic.graph_live import set_control
     from agentic.retrieval import set_retrieval
@@ -5414,6 +5539,7 @@ def start_run(_clicks, replay_path, cached, caption,
     _models.set_subject(subject_choice)
     REASKS["s2"] = "s2" in (reasks_choice or [])
     REASKS["s4"] = "s4" in (reasks_choice or [])
+    CONCEALMENT["on"] = (concealment_choice == "on")
     if ctx.triggered_id == "replay" and replay_path:
         return start_replay(replay_path)
     if ctx.triggered_id == "analyze" and cached and cached.get("contents"):
@@ -5433,6 +5559,9 @@ S4_JUDGES: dict[str, bool] = {"on": False}
 
 # The on-screen "re-asks" switches, one per stage, applied at launch.
 REASKS: dict[str, bool] = {"s2": False, "s4": False}
+
+# The on-screen "concealment" switch, applied at launch.
+CONCEALMENT: dict[str, bool] = {"on": False}
 
 
 def _fmt_args(args: dict[str, Any]) -> str:
