@@ -57,6 +57,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from agentic import models as _models  # noqa: E402  (the model seats)
+from agentic.recommend import CONCEALMENT_MOTIVES as _CM  # noqa: E402
+_CONCEALMENT_MOTIVE_NAMES = tuple(_CM)
 
 # Preload shared heavy libraries in the MAIN thread, before any background
 # pipeline thread exists. Dash's JSON encoder touches pandas.NaT while
@@ -332,6 +334,8 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
                 d["stage4_marks"].add("uncertainty")   # nothing to wait for
             if not ev.get("concealment"):
                 d["stage4_marks"].add("concealment")
+            if isinstance(ev.get("concealment_motives"), list):
+                d["concealment_motives"] = ev["concealment_motives"]
         elif t in ("concealment_probe_ready", "concealment_probe_error"):
             d.setdefault("stage4_concealment", {})[
                 f"{ev.get('motive')}:{ev.get('variant')}"] = {
@@ -1042,7 +1046,8 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
                 # a run whose answers happened to agree
                 sink({"type": "reasks_setting", "stage2": REASKS["s2"],
                       "stage4": REASKS["s4"],
-                      "concealment": CONCEALMENT["on"]})
+                      "concealment": CONCEALMENT["on"],
+                      "concealment_motives": CONCEALMENT["motives"] or "all"})
                 # F24 — the card judge. ADVISORY and display-only: it never
                 # enters a score, which is exactly why it is safe to leave on
                 # during calibration. A judge that cannot reach its model
@@ -1069,6 +1074,7 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
                                          think_fn=_s4_think,
                                          pathology_probes=True,
                                          concealment_probes=CONCEALMENT["on"],
+                                         concealment_motives=CONCEALMENT["motives"] or None,
                                          n_probes=_s4_n_probes,
                                          on_event=sink)
                 (run_dir / "stage4.json").write_text(s4.model_dump_json(indent=2))
@@ -3247,8 +3253,9 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                  "asking once per stated reader (audience probes) · "
                  f"{len(d.get('stage4_audience') or {})}/2"),
                 ("concealment", "concealment",
-                 "asking once per motive (concealment probes) · "
-                 f"{len(d.get('stage4_concealment') or {})}/14"),
+                 "asking once per motive and variant (concealment probes) · "
+                 f"{len(d.get('stage4_concealment') or {})}/"
+                 f"{2 * len(d.get('concealment_motives') or _CONCEALMENT_MOTIVE_NAMES)}"),
                 ("graph_a", "graph_a", "assembling Graph A"),
                 ("graph_b", "graph_b", "asking for the independent Graph B"),
                 ("pathology", "pathology", "running the pathology detectors"),
@@ -5431,8 +5438,15 @@ app.layout = html.Div([
             dcc.RadioItems(
                 id="concealment-mode", value="off", inline=True,
                 options=[{"label": "off", "value": "off"},
-                         {"label": "on (14 calls)", "value": "on"}],
+                         {"label": "on", "value": "on"}],
                 className="ctl-toggle"),
+            # which motives (2 calls each, ~3 min a call on the 27B);
+            # none ticked = all seven
+            dcc.Checklist(
+                id="concealment-motives", value=[], inline=True,
+                options=[{"label": " " + m.replace("_", " "), "value": m}
+                         for m in _CONCEALMENT_MOTIVE_NAMES],
+                className="ctl-toggle", style={"fontSize": "10.5px"}),
         ], className="ctl-group"),
         html.Div([
             html.Span("stage 4 judges", className="ctl-lbl"),
@@ -5549,11 +5563,12 @@ def cache_upload(contents, filename):
               State("subject-model", "value"),
               State("reasks-mode", "value"),
               State("concealment-mode", "value"),
+              State("concealment-motives", "value"),
               prevent_initial_call=True)
 def start_run(_clicks, replay_path, cached, caption,
               control_mode, retrieval_choice, judges_choice="off",
               subject_choice=None, reasks_choice=None,
-              concealment_choice="off"):
+              concealment_choice="off", concealment_motives=None):
     # Apply the on-screen toggles for this run (in-process override).
     from agentic.graph_live import set_control
     from agentic.retrieval import set_retrieval
@@ -5564,6 +5579,7 @@ def start_run(_clicks, replay_path, cached, caption,
     REASKS["s2"] = "s2" in (reasks_choice or [])
     REASKS["s4"] = "s4" in (reasks_choice or [])
     CONCEALMENT["on"] = (concealment_choice == "on")
+    CONCEALMENT["motives"] = list(concealment_motives or [])
     if ctx.triggered_id == "replay" and replay_path:
         return start_replay(replay_path)
     if ctx.triggered_id == "analyze" and cached and cached.get("contents"):
@@ -5585,7 +5601,7 @@ S4_JUDGES: dict[str, bool] = {"on": False}
 REASKS: dict[str, bool] = {"s2": False, "s4": False}
 
 # The on-screen "concealment" switch, applied at launch.
-CONCEALMENT: dict[str, bool] = {"on": False}
+CONCEALMENT: dict[str, Any] = {"on": False, "motives": []}
 
 
 def _fmt_args(args: dict[str, Any]) -> str:

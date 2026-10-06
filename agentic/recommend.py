@@ -2132,6 +2132,7 @@ def run_stage4(record: Any, assessment: Any, image_path: str = "",
                judge_fn: Any = None, think_fn: Any = None,
                pathology_probes: bool | None = None,
                concealment_probes: bool = False,
+               concealment_motives: list | None = None,
                n_probes: int = 0, on_event: Any = None) -> Stage4Result:
     """The Phase-1a straight line + measured uncertainty:
     recommend -> probe U -> Graph A -> Graph B -> picks -> evals.
@@ -2160,7 +2161,7 @@ def run_stage4(record: Any, assessment: Any, image_path: str = "",
                               enabled=pathology_probes, on_event=on_event)
     conc = run_concealment_probes(record, assessment, query_fn=query_fn,
                                   think_fn=think_fn, enabled=concealment_probes,
-                                  on_event=on_event)
+                                  motives=concealment_motives, on_event=on_event)
     graph_a = build_graph_a(record, assessment, rec["recommendations"],
                             on_event=on_event)
     graph_b = run_graph_b(record, assessment, query_fn=query_fn,

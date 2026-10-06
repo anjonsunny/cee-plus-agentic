@@ -76,6 +76,7 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
                    think_fn: Any = None,
                    pathology_probes: bool | None = None,
                    concealment_probes: bool = False,
+                   concealment_motives: list | None = None,
                    n_probes: int = 0, on_event: Any = None):
     """Compile the Stage-4 spine. Model config (query_fn, probe_fn, n_probes,
     on_event) is baked into the node closures, so the state only carries data —
@@ -186,6 +187,7 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
         return run_concealment_probes(state["record"], state["assessment"],
                                       query_fn=query_fn, think_fn=think_fn,
                                       enabled=concealment_probes,
+                                      motives=concealment_motives,
                                       on_event=on_event)
 
     def pathology(state: S4State) -> dict[str, Any]:
@@ -241,6 +243,7 @@ def run_s4_graph(record: Any, assessment: Any, image_path: str = "",
                  judge_fn: Any = None, think_fn: Any = None,
                  pathology_probes: bool | None = None,
                  concealment_probes: bool = False,
+                 concealment_motives: list | None = None,
                  n_probes: int = 0, on_event: Any = None) -> Stage4Result:
     """LangGraph twin of run_stage4 — identical positional signature and return
     type. Assembles the same Stage4Result from the final state, and emits the
@@ -254,6 +257,7 @@ def run_s4_graph(record: Any, assessment: Any, image_path: str = "",
                            think_fn=think_fn,
                            pathology_probes=pathology_probes,
                            concealment_probes=concealment_probes,
+                           concealment_motives=concealment_motives,
                            n_probes=n_probes, on_event=on_event)
     final: S4State = graph.invoke({"record": record, "assessment": assessment,
                                    "image_path": image_path})
@@ -293,6 +297,7 @@ def stage4_with_control(record: Any, assessment: Any, image_path: str = "",
                         judge_fn: Any = None, think_fn: Any = None,
                         pathology_probes: bool | None = None,
                         concealment_probes: bool = False,
+                        concealment_motives: list | None = None,
                         n_probes: int = 0,
                         on_event: Any = None) -> Stage4Result:
     """Dispatch the Stage-4 spine by the pipeline control flag. Identical
@@ -304,12 +309,14 @@ def stage4_with_control(record: Any, assessment: Any, image_path: str = "",
                             think_fn=think_fn,
                             pathology_probes=pathology_probes,
                             concealment_probes=concealment_probes,
+                            concealment_motives=concealment_motives,
                             n_probes=n_probes, on_event=on_event)
     return run_stage4(record, assessment, image_path,
                      query_fn=query_fn, probe_fn=probe_fn,
                      explain_fn=explain_fn, judge_fn=judge_fn,
                      think_fn=think_fn, pathology_probes=pathology_probes,
                      concealment_probes=concealment_probes,
+                     concealment_motives=concealment_motives,
                      n_probes=n_probes, on_event=on_event)
 
 
