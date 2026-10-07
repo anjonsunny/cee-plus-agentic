@@ -1281,7 +1281,8 @@ def test_stage4_status_badge():
     # 13 steps since 2026-10-06: the leading probe, the audience probes,
     # the concealment probes and the pathology detectors own a step each,
     # all ahead of the judges.
-    assert "step 6/13" in mid
+    # 14 since 2026-10-07: sandbagging probes own a step too.
+    assert "step 7/14" in mid
     assert "done" in badge([{"type": "stage4_result",
                              "result": {"picks": {}}}])
 
@@ -2480,7 +2481,7 @@ def test_re_asks_are_a_per_stage_switch_off_by_default():
                     "stage4": False},
                    {"t": 2.0, "type": "recommendations_ready", "n_recs": 1}])
     assert d["reasks"] == {"stage2": False, "stage4": False,
-                           "concealment": False}
+                           "concealment": False, "sandbagging": False}
     assert "uncertainty" in d["stage4_marks"]
     assert "re-asks switched off for this run" in _text(ui.stage4_component(d))
 
@@ -2502,6 +2503,7 @@ def test_pathology_tickets_render_apart_from_rule_tickets_with_type_and_subtype(
     assert "scoring · thinking reviewed" in text and "deep" in text
     assert "left out victim person_1" in text
     assert "concealment-motives" in str(ui.app.layout)
+    assert "sandbagging-motives" in str(ui.app.layout)
     assert "concealment-mode" not in str(ui.app.layout)
 
 
