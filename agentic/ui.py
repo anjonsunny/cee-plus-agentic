@@ -5433,19 +5433,16 @@ app.layout = html.Div([
         ], className="ctl-group"),
         # Concealment probes (2026-10-06): fourteen extra calls with
         # thinking on (~2.5 min each on the 27B), so a switch of their own.
+        # One row of boxes (Sunny, 2026-10-07: on/off plus seven pickers was
+        # confusing): nothing ticked = off; "all" = all seven; otherwise the
+        # ticked motives. Two calls per motive, ~3 min a call on the 27B.
         html.Div([
             html.Span("concealment", className="ctl-lbl"),
-            dcc.RadioItems(
-                id="concealment-mode", value="off", inline=True,
-                options=[{"label": "off", "value": "off"},
-                         {"label": "on", "value": "on"}],
-                className="ctl-toggle"),
-            # which motives (2 calls each, ~3 min a call on the 27B);
-            # none ticked = all seven
             dcc.Checklist(
                 id="concealment-motives", value=[], inline=True,
-                options=[{"label": " " + m.replace("_", " "), "value": m}
-                         for m in _CONCEALMENT_MOTIVE_NAMES],
+                options=[{"label": " all", "value": "all"}]
+                + [{"label": " " + m.replace("_", " "), "value": m}
+                   for m in _CONCEALMENT_MOTIVE_NAMES],
                 className="ctl-toggle", style={"fontSize": "10.5px"}),
         ], className="ctl-group"),
         html.Div([
@@ -5562,13 +5559,12 @@ def cache_upload(contents, filename):
               State("judges-mode", "value"),
               State("subject-model", "value"),
               State("reasks-mode", "value"),
-              State("concealment-mode", "value"),
               State("concealment-motives", "value"),
               prevent_initial_call=True)
 def start_run(_clicks, replay_path, cached, caption,
               control_mode, retrieval_choice, judges_choice="off",
               subject_choice=None, reasks_choice=None,
-              concealment_choice="off", concealment_motives=None):
+              concealment_motives=None):
     # Apply the on-screen toggles for this run (in-process override).
     from agentic.graph_live import set_control
     from agentic.retrieval import set_retrieval
@@ -5578,8 +5574,9 @@ def start_run(_clicks, replay_path, cached, caption,
     _models.set_subject(subject_choice)
     REASKS["s2"] = "s2" in (reasks_choice or [])
     REASKS["s4"] = "s4" in (reasks_choice or [])
-    CONCEALMENT["on"] = (concealment_choice == "on")
-    CONCEALMENT["motives"] = list(concealment_motives or [])
+    picked = list(concealment_motives or [])
+    CONCEALMENT["on"] = bool(picked)
+    CONCEALMENT["motives"] = [] if "all" in picked else picked
     if ctx.triggered_id == "replay" and replay_path:
         return start_replay(replay_path)
     if ctx.triggered_id == "analyze" and cached and cached.get("contents"):

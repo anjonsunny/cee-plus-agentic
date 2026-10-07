@@ -2501,7 +2501,8 @@ def test_pathology_tickets_render_apart_from_rule_tickets_with_type_and_subtype(
     assert "PATHOLOGY" in text and "concealment" in text
     assert "scoring · thinking reviewed" in text and "deep" in text
     assert "left out victim person_1" in text
-    assert "concealment-mode" in str(ui.app.layout)
+    assert "concealment-motives" in str(ui.app.layout)
+    assert "concealment-mode" not in str(ui.app.layout)
 
 
 def test_live_view_survives_concealment_probes_arriving_before_the_detectors():
