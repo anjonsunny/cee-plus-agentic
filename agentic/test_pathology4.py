@@ -852,3 +852,14 @@ def test_a_hazard_demoted_to_a_victim_is_sandbagging_too():
     assert tk["demoted"] == ["tanker_1"] and tk["dropped"] == []
     assert "no longer acts on hazard tanker_1" in tk["summary"]
     assert tk["kind"] == "deep"
+
+
+def test_urgency_direction_carries_the_semantic_shift_slot():
+    """Arm A's embedding measure rides beside the urgency reading; in the
+    hermetic suite it is disabled (conftest) and reads None."""
+    from agentic.pathology4 import urgency_direction
+    strong = [_rec(1, "Evacuate person_1 from house_1.", "house_1", "burning")]
+    weak = [_rec(1, "Monitor person_1 near house_1.", "house_1", "burning")]
+    ud = urgency_direction(strong, weak)
+    assert "semantic_shift" in ud and ud["semantic_shift"] is None
+    assert ud["direction"] == "de-escalated"
