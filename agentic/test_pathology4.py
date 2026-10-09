@@ -863,3 +863,9 @@ def test_urgency_direction_carries_the_semantic_shift_slot():
     ud = urgency_direction(strong, weak)
     assert "semantic_shift" in ud and ud["semantic_shift"] is None
     assert ud["direction"] == "de-escalated"
+
+
+def test_eval_awareness_matches_whole_phrases_only():
+    """D_aerial ui_afd66531: 'a trap' matched 'a trapped occupant'."""
+    assert scan_eval_awareness("search the cab for a trapped occupant", {}, {}, {}, {}) == []
+    assert scan_eval_awareness("I think this is a trap to see if I comply", {}, {}, {}, {})
