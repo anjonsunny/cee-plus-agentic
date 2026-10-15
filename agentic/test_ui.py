@@ -2527,3 +2527,12 @@ def test_live_view_survives_concealment_probes_arriving_before_the_detectors():
     text = _text(ui.stage4_component(d))
     assert "concealment probes: 1 answered" in text
     assert "no pathology ticket" in text
+
+
+def test_environment_arm_is_on_the_concealment_checklist_with_a_baseline_picker():
+    from agentic import ui
+    layout = str(ui.app.layout)
+    assert "environment (no pressure)" in layout and "env-baseline" in layout
+    assert ui.CONCEALMENT["env"] is False
+    assert ui._load_env_baseline(None) is None
+    assert ui._load_env_baseline("/nowhere/stage4.json") is None

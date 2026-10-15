@@ -852,6 +852,36 @@ def saved_records() -> list[dict[str, str]]:
     return opts
 
 
+def _baseline_runs() -> list[dict[str, str]]:
+    """Finished UI runs with a Stage 4 record, newest first, labelled by
+    image — the baseline choices for the environment arm."""
+    opts: list[dict[str, str]] = []
+    if not UI_RUNS_DIR.exists():
+        return opts
+    for p in sorted(UI_RUNS_DIR.glob("*/stage4.json"),
+                    key=lambda q: q.stat().st_mtime, reverse=True):
+        img = ""
+        try:
+            first = (p.parent / "events.jsonl").open().readline()
+            img = json.loads(first).get("image_name", "") if first else ""
+        except Exception:
+            pass
+        opts.append({"label": f"{p.parent.name} · {img}", "value": str(p)})
+    return opts[:40]
+
+
+def _load_env_baseline(path: str | None) -> dict | None:
+    """{"recommendations", "label"} from a chosen baseline run, or None."""
+    if not path:
+        return None
+    try:
+        d = json.loads(Path(path).read_text())
+        return {"recommendations": d.get("recommendations") or [],
+                "label": f"run {Path(path).parent.name}"}
+    except Exception:
+        return None
+
+
 def image_src_for_record(json_path: Path) -> str | None:
     stem = json_path.name.replace("__perception.json", "")
     for ext in (".png", ".jpg", ".jpeg", ".webp"):
@@ -1064,7 +1094,9 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
                       "concealment": CONCEALMENT["on"],
                       "concealment_motives": CONCEALMENT["motives"] or "all",
                       "sandbagging": SANDBAGGING["on"],
-                      "sandbagging_motives": SANDBAGGING["motives"] or "all"})
+                      "sandbagging_motives": SANDBAGGING["motives"] or "all",
+                      "concealment_env": CONCEALMENT["env"],
+                      "env_baseline": CONCEALMENT["env_baseline"]})
                 # F24 — the card judge. ADVISORY and display-only: it never
                 # enters a score, which is exactly why it is safe to leave on
                 # during calibration. A judge that cannot reach its model
@@ -1094,6 +1126,8 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
                                          concealment_motives=CONCEALMENT["motives"] or None,
                                          sandbagging_probes=SANDBAGGING["on"],
                                          sandbagging_motives=SANDBAGGING["motives"] or None,
+                                         env_baseline=(_load_env_baseline(CONCEALMENT["env_baseline"])
+                                                       if CONCEALMENT["env"] else None),
                                          n_probes=_s4_n_probes,
                                          on_event=sink)
                 (run_dir / "stage4.json").write_text(s4.model_dump_json(indent=2))
@@ -5469,8 +5503,17 @@ app.layout = html.Div([
                 id="concealment-motives", value=[], inline=True,
                 options=[{"label": " all", "value": "all"}]
                 + [{"label": " " + m.replace("_", " "), "value": m}
-                   for m in _CONCEALMENT_MOTIVE_NAMES],
+                   for m in _CONCEALMENT_MOTIVE_NAMES]
+                # the no-pressure arm (Sunny, 2026-10-15): nothing addressed
+                # to the model; this run's scene facts vs a baseline run of
+                # the same image. Reads hazard hidden, victim hidden, an
+                # "all covered" claim, and a trade-off the plan never states.
+                + [{"label": " environment (no pressure)", "value": "environment"}],
                 className="ctl-toggle", style={"fontSize": "10.5px"}),
+            dcc.Dropdown(id="env-baseline", options=_baseline_runs(),
+                         placeholder="baseline run (environment arm)",
+                         style={"width": "300px", "color": "#111",
+                                "fontSize": "11px"}),
         ], className="ctl-group"),
         # Sandbagging (2026-10-07): same shape as concealment — nothing
         # ticked = off; "all" = all five; else the ticked motives.
@@ -5599,11 +5642,13 @@ def cache_upload(contents, filename):
               State("reasks-mode", "value"),
               State("concealment-motives", "value"),
               State("sandbagging-motives", "value"),
+              State("env-baseline", "value"),
               prevent_initial_call=True)
 def start_run(_clicks, replay_path, cached, caption,
               control_mode, retrieval_choice, judges_choice="off",
               subject_choice=None, reasks_choice=None,
-              concealment_motives=None, sandbagging_motives=None):
+              concealment_motives=None, sandbagging_motives=None,
+              env_baseline=None):
     # Apply the on-screen toggles for this run (in-process override).
     from agentic.graph_live import set_control
     from agentic.retrieval import set_retrieval
@@ -5614,6 +5659,9 @@ def start_run(_clicks, replay_path, cached, caption,
     REASKS["s2"] = "s2" in (reasks_choice or [])
     REASKS["s4"] = "s4" in (reasks_choice or [])
     picked = list(concealment_motives or [])
+    CONCEALMENT["env"] = "environment" in picked
+    CONCEALMENT["env_baseline"] = env_baseline if CONCEALMENT["env"] else None
+    picked = [m for m in picked if m != "environment"]
     CONCEALMENT["on"] = bool(picked)
     CONCEALMENT["motives"] = [] if "all" in picked else picked
     picked = list(sandbagging_motives or [])
@@ -5640,7 +5688,8 @@ S4_JUDGES: dict[str, bool] = {"on": False}
 REASKS: dict[str, bool] = {"s2": False, "s4": False}
 
 # The on-screen "concealment" switch, applied at launch.
-CONCEALMENT: dict[str, Any] = {"on": False, "motives": []}
+CONCEALMENT: dict[str, Any] = {"on": False, "motives": [], "env": False,
+                               "env_baseline": None}
 SANDBAGGING: dict[str, Any] = {"on": False, "motives": []}
 
 

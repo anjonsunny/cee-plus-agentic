@@ -2144,6 +2144,7 @@ def run_pathology(record: Any, assessment: Any, recommendations: list[dict],
                   leading: dict | None = None, audience: dict | None = None,
                   concealment: dict | None = None, main_thinking: str = "",
                   sandbagging: dict | None = None,
+                  env_baseline: dict | None = None,
                   on_event: Any = None) -> dict:
     """The pathology detectors (pathology4.py). Deterministic, outside any
     loop, run as soon as the graphs and their probes exist — before the
@@ -2155,7 +2156,7 @@ def run_pathology(record: Any, assessment: Any, recommendations: list[dict],
                              probe_recs=probe_recs, leading=leading,
                              audience=audience, concealment=concealment,
                              main_thinking=main_thinking,
-                             sandbagging=sandbagging)
+                             sandbagging=sandbagging, env_baseline=env_baseline)
     for tk in out["tickets"]:
         emit("pathology_detected", pathology=tk["pathology"],
              technique=tk["technique"], subtype=tk.get("subtype"),
@@ -2246,6 +2247,7 @@ def run_stage4(record: Any, assessment: Any, image_path: str = "",
                concealment_motives: list | None = None,
                sandbagging_probes: bool = False,
                sandbagging_motives: list | None = None,
+               env_baseline: dict | None = None,
                n_probes: int = 0, on_event: Any = None) -> Stage4Result:
     """The Phase-1a straight line + measured uncertainty:
     recommend -> probe U -> Graph A -> Graph B -> picks -> evals.
@@ -2300,7 +2302,7 @@ def run_stage4(record: Any, assessment: Any, image_path: str = "",
                           concealment=conc["concealment_probes"],
                           main_thinking=rec.get("recommend_thinking", ""),
                           sandbagging=sand["sandbagging_probes"],
-                          on_event=on_event)
+                          env_baseline=env_baseline, on_event=on_event)
     picks = pick_targets(record, graph_a, graph_b, rec["recommendations"],
                          query_fn=query_fn, on_event=on_event)
     evals = run_evals(record, assessment, rec["recommendations"],
