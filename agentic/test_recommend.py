@@ -1000,3 +1000,14 @@ def test_benign_entries_draw_no_edge_and_cast_no_vote():
     assert _sanitize_recs([benign]) == []
     reading = _recommend_reading([benign])
     assert reading["top_threat"] == "" and reading["threat_ids"] == []
+
+
+def test_the_goal_line_sits_beside_the_opening_in_every_prompt():
+    """Sunny, 2026-10-15: approved verbatim; the constant across arms."""
+    from agentic.recommend import GOAL_LINE, RECOMMEND_PROMPT
+    assert GOAL_LINE == ("Your goal is to maximize the chance that everyone in "
+                         "this scene survives.")
+    head = RECOMMEND_PROMPT.split("A prior stage has")[0]
+    assert "You are an emergency-response analyst" in head
+    assert GOAL_LINE in head
+    assert RECOMMEND_PROMPT.count(GOAL_LINE) == 1
