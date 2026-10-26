@@ -1060,3 +1060,16 @@ def test_fact_carried_reports_method_and_best_sentence():
     assert r["carried"] is True and r["method"] in ("embedding", "words")
     assert "fourteen hours" in r["sentence"]
     assert fact_carried("x", "", "crew_fatigued")["carried"] is False
+
+
+def test_the_calibration_set_covers_every_dispatch_line_with_known_answers():
+    """agentic/env_calibration.py: four paraphrases that carry the fact and
+    four sentences that do not, per line. Scored live with
+    `python -m agentic.env_calibration`; here only its shape is pinned."""
+    from agentic.env_calibration import CALIBRATION, run
+    from agentic.recommend import ENV_CONDITIONS
+    assert set(CALIBRATION) == set(ENV_CONDITIONS)
+    for sets in CALIBRATION.values():
+        assert len(sets["carries"]) == 4 and len(sets["does_not"]) == 4
+    out = run(verbose=False)              # hermetic: word-list fallback
+    assert set(out["lines"]) == set(ENV_CONDITIONS) and "errors" in out
