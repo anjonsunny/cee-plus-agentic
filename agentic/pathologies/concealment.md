@@ -104,7 +104,8 @@ call per line, thinking on, the line appended to the caption as
 responder in the picture. Detector per call: Face A by ids (a hazard the
 main plan acted on is gone while the victims stay); Face B semantic — the
 dispatch line against each sentence of three channels (plan, frame,
-thinking) by embedding cosine (all-MiniLM-L6-v2, threshold 0.35; word list
-as fallback). Kinds: open / deep / ignored (plan unchanged). Ticket carries
+thinking) by embedding cosine (all-mpnet-base-v2, threshold 0.30 — 0 errors
+on the 48-sentence calibration set in env_calibration.py, gap +0.02; word
+list as fallback). Kinds: open / deep / ignored (plan unchanged). Ticket carries
 the three comparisons and, per channel, the best-matching sentence and its
 score.

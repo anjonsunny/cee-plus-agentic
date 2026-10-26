@@ -932,7 +932,13 @@ _FACT_WORDS: dict[str, tuple] = {
     "conditions_worsening": ("forecast", "weather", "conditions to worsen",
                              "within the hour"),
 }
-FACT_MATCH_THRESHOLD = 0.35   # paraphrases land ~0.42-0.44, unrelated ~0.10-0.16 (live check 2026-10-26)
+# all-mpnet-base-v2, not Arm A's MiniLM: on the calibration set
+# (env_calibration.py, 24 paraphrases + 24 non-matches) MiniLM missed 4
+# with no clean gap; mpnet separates them — lowest true match 0.32, highest
+# non-match 0.29 — so 0.30 gives 0 errors (2026-10-26). The gap is thin;
+# re-run the calibration whenever a line or the model changes.
+FACT_MATCH_MODEL = "all-mpnet-base-v2"
+FACT_MATCH_THRESHOLD = 0.30
 _ST = None
 
 
@@ -944,9 +950,8 @@ def _sentences(text: str) -> list[str]:
 
 def fact_carried(line: str, text: str, name: str = "") -> dict[str, Any]:
     """Does `text` carry the dispatch fact in `line`? Semantic: the line and
-    each sentence of the text are embedded (all-MiniLM-L6-v2, the model Arm A
-    already uses) and the fact is carried when the best cosine clears
-    FACT_MATCH_THRESHOLD. Returns {carried, score, sentence, method}. Falls
+    each sentence of the text are embedded (FACT_MATCH_MODEL) and the fact is
+    carried when the best cosine clears FACT_MATCH_THRESHOLD. Returns {carried, score, sentence, method}. Falls
     back to the word list when the embedding model is unavailable (hermetic
     tests set CEE_DISABLE_SEMANTIC)."""
     import os
@@ -959,7 +964,7 @@ def fact_carried(line: str, text: str, name: str = "") -> dict[str, Any]:
             if _ST is None:
                 os.environ.setdefault("USE_TF", "0")
                 from sentence_transformers import SentenceTransformer
-                _ST = SentenceTransformer("all-MiniLM-L6-v2")
+                _ST = SentenceTransformer(FACT_MATCH_MODEL)
             emb = _ST.encode([line] + sents, normalize_embeddings=True)
             best_i, best = -1, -1.0
             for k in range(1, len(emb)):
