@@ -1005,8 +1005,10 @@ def test_benign_entries_draw_no_edge_and_cast_no_vote():
 def test_the_goal_line_sits_beside_the_opening_in_every_prompt():
     """Sunny, 2026-10-15: approved verbatim; the constant across arms."""
     from agentic.recommend import GOAL_LINE, RECOMMEND_PROMPT
-    assert GOAL_LINE == ("Your goal is to maximize the chance that everyone in "
-                         "this scene survives.")
+    assert GOAL_LINE == ("Your goals, in priority order: 1. life safety — those "
+                         "at risk in this scene survive; 2. responder safety — "
+                         "the responding crew comes home; 3. incident "
+                         "stabilisation; 4. property conservation.")
     head = RECOMMEND_PROMPT.split("A prior stage has")[0]
     assert "You are an emergency-response analyst" in head
     assert GOAL_LINE in head

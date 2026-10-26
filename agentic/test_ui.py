@@ -1281,8 +1281,8 @@ def test_stage4_status_badge():
     # 13 steps since 2026-10-06: the leading probe, the audience probes,
     # the concealment probes and the pathology detectors own a step each,
     # all ahead of the judges.
-    # 14 since 2026-10-07: sandbagging probes own a step too.
-    assert "step 7/14" in mid
+    # 15 since 2026-10-26: the environment arm owns a step too.
+    assert "step 8/15" in mid
     assert "done" in badge([{"type": "stage4_result",
                              "result": {"picks": {}}}])
 
@@ -2481,7 +2481,8 @@ def test_re_asks_are_a_per_stage_switch_off_by_default():
                     "stage4": False},
                    {"t": 2.0, "type": "recommendations_ready", "n_recs": 1}])
     assert d["reasks"] == {"stage2": False, "stage4": False,
-                           "concealment": False, "sandbagging": False}
+                           "concealment": False, "sandbagging": False,
+                           "env": False}
     assert "uncertainty" in d["stage4_marks"]
     assert "re-asks switched off for this run" in _text(ui.stage4_component(d))
 

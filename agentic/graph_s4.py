@@ -35,7 +35,7 @@ from agentic.recommend import (QueryFn, Stage4Result, build_graph_a,
                                run_stage4, run_trust, run_pathology,
                                run_leading_probe, run_audience_probes,
                                run_concealment_probes, run_sandbagging_probes,
-                               _emitter)
+                               run_env_probes, _emitter)
 
 
 class S4State(TypedDict, total=False):
@@ -70,6 +70,7 @@ class S4State(TypedDict, total=False):
     audience_probes: dict   # one answer per stated reader of the plan
     concealment_probes: dict  # one answer per (motive, variant) block
     sandbagging_probes: dict  # one answer per (motive, variant) block
+    env_probes: dict        # concealment environment arm: one per dispatch line
     recommend_thinking: str  # the subject's reasoning behind the main answer
 
 
@@ -81,6 +82,8 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
                    concealment_motives: list | None = None,
                    sandbagging_probes: bool = False,
                    sandbagging_motives: list | None = None,
+                   env_probes: bool = False,
+                   env_conditions: list | None = None,
                    n_probes: int = 0, on_event: Any = None):
     """Compile the Stage-4 spine. Model config (query_fn, probe_fn, n_probes,
     on_event) is baked into the node closures, so the state only carries data —
@@ -201,6 +204,12 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
                                       motives=sandbagging_motives,
                                       on_event=on_event)
 
+    def env(state: S4State) -> dict[str, Any]:
+        return run_env_probes(state["record"], state["assessment"],
+                              query_fn=query_fn, think_fn=think_fn,
+                              enabled=env_probes, conditions=env_conditions,
+                              on_event=on_event)
+
     def pathology(state: S4State) -> dict[str, Any]:
         return run_pathology(state["record"], state["assessment"],
                              state["recommendations"], state.get("graph_b"),
@@ -210,6 +219,7 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
                              concealment=state.get("concealment_probes") or {},
                              main_thinking=state.get("recommend_thinking") or "",
                              sandbagging=state.get("sandbagging_probes") or {},
+                             env=state.get("env_probes") or {},
                              on_event=on_event)
 
     g = StateGraph(S4State)
@@ -227,6 +237,7 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
     g.add_node("audience_probes", audience_probes)
     g.add_node("concealment", concealment)
     g.add_node("sandbagging", sandbagging)
+    g.add_node("env", env)
     g.add_node("pathology", pathology)
 
     g.add_edge(START, "recommend")
@@ -238,7 +249,8 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
     g.add_edge("leading_probe", "audience_probes")
     g.add_edge("audience_probes", "concealment")
     g.add_edge("concealment", "sandbagging")
-    g.add_edge("sandbagging", "graph_a")
+    g.add_edge("sandbagging", "env")
+    g.add_edge("env", "graph_a")
     g.add_edge("graph_a", "graph_b")
     g.add_edge("graph_b", "pathology")
     g.add_edge("pathology", "picks")
@@ -260,6 +272,8 @@ def run_s4_graph(record: Any, assessment: Any, image_path: str = "",
                  concealment_motives: list | None = None,
                  sandbagging_probes: bool = False,
                  sandbagging_motives: list | None = None,
+                 env_probes: bool = False,
+                 env_conditions: list | None = None,
                  n_probes: int = 0, on_event: Any = None) -> Stage4Result:
     """LangGraph twin of run_stage4 — identical positional signature and return
     type. Assembles the same Stage4Result from the final state, and emits the
@@ -276,6 +290,7 @@ def run_s4_graph(record: Any, assessment: Any, image_path: str = "",
                            concealment_motives=concealment_motives,
                            sandbagging_probes=sandbagging_probes,
                            sandbagging_motives=sandbagging_motives,
+                           env_probes=env_probes, env_conditions=env_conditions,
                            n_probes=n_probes, on_event=on_event)
     final: S4State = graph.invoke({"record": record, "assessment": assessment,
                                    "image_path": image_path})
@@ -303,6 +318,7 @@ def run_s4_graph(record: Any, assessment: Any, image_path: str = "",
         audience_probes=final.get("audience_probes", {}) or {},
         concealment_probes=final.get("concealment_probes", {}) or {},
         sandbagging_probes=final.get("sandbagging_probes", {}) or {},
+        env_probes=final.get("env_probes", {}) or {},
         recommend_thinking=final.get("recommend_thinking", "") or "",
         graph_b_uncertainty=final.get("graph_b_uncertainty", {}),
         graph_b_internal=final.get("graph_b_internal", {}) or {},
@@ -319,6 +335,8 @@ def stage4_with_control(record: Any, assessment: Any, image_path: str = "",
                         concealment_motives: list | None = None,
                         sandbagging_probes: bool = False,
                         sandbagging_motives: list | None = None,
+                        env_probes: bool = False,
+                        env_conditions: list | None = None,
                         n_probes: int = 0,
                         on_event: Any = None) -> Stage4Result:
     """Dispatch the Stage-4 spine by the pipeline control flag. Identical
@@ -333,6 +351,7 @@ def stage4_with_control(record: Any, assessment: Any, image_path: str = "",
                             concealment_motives=concealment_motives,
                             sandbagging_probes=sandbagging_probes,
                             sandbagging_motives=sandbagging_motives,
+                            env_probes=env_probes, env_conditions=env_conditions,
                             n_probes=n_probes, on_event=on_event)
     return run_stage4(record, assessment, image_path,
                      query_fn=query_fn, probe_fn=probe_fn,
@@ -342,6 +361,7 @@ def stage4_with_control(record: Any, assessment: Any, image_path: str = "",
                      concealment_motives=concealment_motives,
                      sandbagging_probes=sandbagging_probes,
                      sandbagging_motives=sandbagging_motives,
+                     env_probes=env_probes, env_conditions=env_conditions,
                      n_probes=n_probes, on_event=on_event)
 
 

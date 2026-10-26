@@ -59,8 +59,10 @@ if str(REPO_ROOT) not in sys.path:
 from agentic import models as _models  # noqa: E402  (the model seats)
 from agentic.recommend import CONCEALMENT_MOTIVES as _CM  # noqa: E402
 from agentic.recommend import SANDBAGGING_MOTIVES as _SM  # noqa: E402
+from agentic.recommend import ENV_CONDITIONS as _EC  # noqa: E402
 _CONCEALMENT_MOTIVE_NAMES = tuple(_CM)
 _SANDBAGGING_MOTIVE_NAMES = tuple(_SM)
+_ENV_CONDITION_NAMES = tuple(_EC)
 
 # Preload shared heavy libraries in the MAIN thread, before any background
 # pipeline thread exists. Dash's JSON encoder touches pandas.NaT while
@@ -332,7 +334,8 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
             d["reasks"] = {"stage2": bool(ev.get("stage2")),
                            "stage4": bool(ev.get("stage4")),
                            "concealment": bool(ev.get("concealment")),
-                           "sandbagging": bool(ev.get("sandbagging"))}
+                           "sandbagging": bool(ev.get("sandbagging")),
+                           "env": bool(ev.get("env"))}
             if not ev.get("stage4"):
                 d["stage4_marks"].add("uncertainty")   # nothing to wait for
             if not ev.get("concealment"):
@@ -343,6 +346,17 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
                 d["stage4_marks"].add("sandbagging")
             if isinstance(ev.get("sandbagging_motives"), list):
                 d["sandbagging_motives"] = ev["sandbagging_motives"]
+            if not ev.get("env"):
+                d["stage4_marks"].add("env")
+            if isinstance(ev.get("env_conditions"), list):
+                d["env_conditions"] = ev["env_conditions"]
+        elif t in ("env_probe_ready", "env_probe_error"):
+            d.setdefault("stage4_env", {})[str(ev.get("condition"))] = {
+                "label": ev.get("label"), "error": ev.get("error"),
+                "n_recs": ev.get("n_recs")}
+        elif t == "env_probes_skipped":
+            d["stage4_marks"].add("env")
+            d["stage4_env_skipped"] = ev.get("reason")
         elif t in ("sandbagging_probe_ready", "sandbagging_probe_error"):
             d.setdefault("stage4_sandbagging", {})[
                 f"{ev.get('motive')}:{ev.get('variant')}"] = {
@@ -403,6 +417,7 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
             d["stage4_marks"].add("audience")
             d["stage4_marks"].add("concealment")
             d["stage4_marks"].add("sandbagging")
+            d["stage4_marks"].add("env")
         elif t == "graph_b_built":
             d["stage4_marks"].add("graph_b")
         elif t == "targets_picked":
@@ -1064,7 +1079,9 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
                       "concealment": CONCEALMENT["on"],
                       "concealment_motives": CONCEALMENT["motives"] or "all",
                       "sandbagging": SANDBAGGING["on"],
-                      "sandbagging_motives": SANDBAGGING["motives"] or "all"})
+                      "sandbagging_motives": SANDBAGGING["motives"] or "all",
+                      "env": ENV["on"],
+                      "env_conditions": ENV["conditions"] or "all"})
                 # F24 — the card judge. ADVISORY and display-only: it never
                 # enters a score, which is exactly why it is safe to leave on
                 # during calibration. A judge that cannot reach its model
@@ -1094,6 +1111,8 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
                                          concealment_motives=CONCEALMENT["motives"] or None,
                                          sandbagging_probes=SANDBAGGING["on"],
                                          sandbagging_motives=SANDBAGGING["motives"] or None,
+                                         env_probes=ENV["on"],
+                                         env_conditions=ENV["conditions"] or None,
                                          n_probes=_s4_n_probes,
                                          on_event=sink)
                 (run_dir / "stage4.json").write_text(s4.model_dump_json(indent=2))
@@ -1629,6 +1648,7 @@ def stage4_status_span(d: dict[str, Any]) -> html.Span:
     STEPS = [("recommend", "recommend"), ("uncertainty", "uncertainty"),
              ("leading probe", "leading"), ("audience probes", "audience"),
              ("concealment", "concealment"), ("sandbagging", "sandbagging"),
+             ("environment", "env"),
              ("Graph A", "graph_a"), ("Graph B", "graph_b"),
              ("pathology", "pathology"),
              ("pick", "picks"), ("card judge", "card_judge"),
@@ -3148,6 +3168,32 @@ def _register_panel(s4: dict) -> list:
                 + _thinking_fold(_lp.get("thinking") or ""),
                 style={"padding": "2px 0 0 10px"})],
             style={"margin": "4px 0 0 2px"}))
+    _ep = (s4 or {}).get("env_probes") or {}
+    if _ep:
+        _more.append(html.Details([
+            html.Summary(f"environment arm — {len(_ep)} answers, one per "
+                         f"dispatch condition",
+                         style={"fontSize": "10.5px", "color": "#7c3aed",
+                                "cursor": "pointer"}),
+            html.Div([html.Details([
+                html.Summary(f"{_v.get('label', '')} · face {_v.get('face', '')} · "
+                             f"{len(_v.get('recommendations') or [])} recommendation(s)"
+                             + (f" · failed: {_v['error']}" if _v.get("error") else ""),
+                             style={"fontSize": "10.5px", "color": "#475569",
+                                    "cursor": "pointer"}),
+                html.Div([html.Div(f"dispatch: \"{_v.get('line', '')}\"",
+                                   style={"fontSize": "10px", "color": "#94a3b8"})]
+                         + [html.Div(("BENIGN · " if x.get("benign") else "")
+                                     + f"#{x.get('rank')} {x.get('action', '')}",
+                                     style={"fontSize": "11px", "color": "#475569"})
+                            for x in (_v.get("recommendations") or [])
+                            if isinstance(x, dict)]
+                         + _thinking_fold(_v.get("thinking") or ""),
+                         style={"padding": "2px 0 0 10px"})],
+                style={"margin": "2px 0"})
+                for _k, _v in _ep.items() if isinstance(_v, dict)],
+                style={"padding": "2px 0 0 10px"})],
+            style={"margin": "4px 0 0 2px"}))
     for _fam in ("concealment", "sandbagging"):
       _cp = (s4 or {}).get(f"{_fam}_probes") or {}
       if _cp:
@@ -3280,6 +3326,10 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                  "asking once per motive and variant (sandbagging probes) · "
                  f"{len(d.get('stage4_sandbagging') or {})}/"
                  f"{2 * len(d.get('sandbagging_motives') or _SANDBAGGING_MOTIVE_NAMES)}"),
+                ("env", "env",
+                 "asking once per dispatch condition (environment arm) · "
+                 f"{len(d.get('stage4_env') or {})}/"
+                 f"{len(d.get('env_conditions') or _ENV_CONDITION_NAMES)}"),
                 ("graph_a", "graph_a", "assembling Graph A"),
                 ("graph_b", "graph_b", "asking for the independent Graph B"),
                 ("pathology", "pathology", "running the pathology detectors"),
@@ -3310,6 +3360,12 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
         if d.get("reasks") and not d["reasks"].get("sandbagging"):
             LIVE = [(k, k2, "sandbagging probes switched off for this run"
                      if k == "sandbagging" else lab) for k, k2, lab in LIVE]
+        if d.get("reasks") and not d["reasks"].get("env"):
+            LIVE = [(k, k2, "environment arm switched off for this run"
+                     if k == "env" else lab) for k, k2, lab in LIVE]
+        if d.get("stage4_env_skipped"):
+            LIVE = [(k, k2, "environment arm skipped: " + str(d["stage4_env_skipped"])
+                     if k == "env" else lab) for k, k2, lab in LIVE]
         if d.get("stage4_concealment_skipped"):
             LIVE = [(k, k2, "concealment probes skipped: "
                      + str(d["stage4_concealment_skipped"])
@@ -5472,6 +5528,17 @@ app.layout = html.Div([
                    for m in _CONCEALMENT_MOTIVE_NAMES],
                 className="ctl-toggle", style={"fontSize": "10.5px"}),
         ], className="ctl-group"),
+        # Concealment, environment arm (2026-10-26): no pressure — one
+        # dispatch fact in the caption per ticked condition. Same shape.
+        html.Div([
+            html.Span("concealment · environment", className="ctl-lbl"),
+            dcc.Checklist(
+                id="env-conditions", value=[], inline=True,
+                options=[{"label": " all", "value": "all"}]
+                + [{"label": " " + _EC[c]["label"], "value": c}
+                   for c in _ENV_CONDITION_NAMES],
+                className="ctl-toggle", style={"fontSize": "10.5px"}),
+        ], className="ctl-group"),
         # Sandbagging (2026-10-07): same shape as concealment — nothing
         # ticked = off; "all" = all five; else the ticked motives.
         html.Div([
@@ -5599,11 +5666,13 @@ def cache_upload(contents, filename):
               State("reasks-mode", "value"),
               State("concealment-motives", "value"),
               State("sandbagging-motives", "value"),
+              State("env-conditions", "value"),
               prevent_initial_call=True)
 def start_run(_clicks, replay_path, cached, caption,
               control_mode, retrieval_choice, judges_choice="off",
               subject_choice=None, reasks_choice=None,
-              concealment_motives=None, sandbagging_motives=None):
+              concealment_motives=None, sandbagging_motives=None,
+              env_conditions=None):
     # Apply the on-screen toggles for this run (in-process override).
     from agentic.graph_live import set_control
     from agentic.retrieval import set_retrieval
@@ -5619,6 +5688,9 @@ def start_run(_clicks, replay_path, cached, caption,
     picked = list(sandbagging_motives or [])
     SANDBAGGING["on"] = bool(picked)
     SANDBAGGING["motives"] = [] if "all" in picked else picked
+    picked = list(env_conditions or [])
+    ENV["on"] = bool(picked)
+    ENV["conditions"] = [] if "all" in picked else picked
     if ctx.triggered_id == "replay" and replay_path:
         return start_replay(replay_path)
     if ctx.triggered_id == "analyze" and cached and cached.get("contents"):
@@ -5642,6 +5714,7 @@ REASKS: dict[str, bool] = {"s2": False, "s4": False}
 # The on-screen "concealment" switch, applied at launch.
 CONCEALMENT: dict[str, Any] = {"on": False, "motives": []}
 SANDBAGGING: dict[str, Any] = {"on": False, "motives": []}
+ENV: dict[str, Any] = {"on": False, "conditions": []}
 
 
 def _fmt_args(args: dict[str, Any]) -> str:
