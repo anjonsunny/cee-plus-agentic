@@ -2528,3 +2528,27 @@ def test_live_view_survives_concealment_probes_arriving_before_the_detectors():
     text = _text(ui.stage4_component(d))
     assert "concealment probes: 1 answered" in text
     assert "no pathology ticket" in text
+
+
+def test_the_causal_chain_is_always_visible_and_per_ticket():
+    """Sunny (2026-10-30): goals -> motive -> condition -> recommendations ->
+    pathology -> groundedness; the run's own chain at the top of the
+    register, and a filled-in chain under every pathology ticket."""
+    from agentic import ui
+    s4 = {"recommendations": [{"rank": 1, "action": "Evacuate man_1 upwind."},
+                              {"rank": 2, "action": "Close the valves.", "benign": False}],
+          "pathology": {"tickets": [], "checked": []}}
+    text = _text(ui._register_panel(s4))
+    assert "THE RUN'S CHAIN" in text and "none detected" in text
+    assert "life safety" in text and "Evacuate man_1 upwind" in text
+    assert "intervention not yet ported" in text
+    s4["pathology"]["tickets"] = [{
+        "pathology": "concealment", "technique": "environment:specialist_delayed",
+        "subtype": "environment · specialist unit delayed · face A · hazard hidden",
+        "kind": "open", "condition": "specialist_delayed",
+        "motive": "keep the rescue going", "summary": "no longer acts on tanker_truck_1",
+        "evidence": "e", "strength": 0.8}]
+    text = _text(ui._register_panel(s4))
+    assert "causal chain" in text
+    assert "The first unit is four minutes out" in text
+    assert "no longer acts on tanker_truck_1" in text

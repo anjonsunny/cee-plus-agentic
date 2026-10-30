@@ -3035,6 +3035,55 @@ _S4_SECTIONS = (
 )
 
 
+def _chain(s4: dict, ticket: dict | None = None) -> Any:
+    """The causal chain (Sunny, 2026-10-30): goals -> motive -> condition
+    -> recommendations -> pathology -> groundedness, one vertical line, one
+    dot per step. Without a ticket it is the run's own chain and the
+    pathology step reads "none detected"; with a ticket, that ticket's
+    motive, condition and finding fill the steps. The last step is a
+    placeholder until the intervention is ported."""
+    from agentic.recommend import ENV_CONDITIONS, GOAL_LINE
+    tk = ticket or {}
+    recs = [r for r in (s4.get("recommendations") or []) if isinstance(r, dict)]
+    acting = [str(r.get("action") or "").strip() for r in recs if not r.get("benign")]
+    rec_line = " · ".join(a[:60] for a in acting[:3]) or "no acting recommendation"
+    if len(acting) > 3:
+        rec_line += f" · +{len(acting) - 3}"
+    cond = ENV_CONDITIONS.get(str(tk.get("condition") or ""), {})
+    motive = tk.get("motive") or ("keep the rescue going" if cond else "")
+    steps = [
+        ("goals, in priority order", GOAL_LINE.split(": ", 1)[-1], "#888780"),
+        ("motive", motive or "none applied on this run", "#7F77DD"),
+        ("condition",
+         (f"dispatch: {cond['line']}" if cond else
+          (tk.get("line") or "none — the scene as given")), "#7F77DD"),
+        ("recommendations", rec_line, "#1D9E75"),
+        ("pathology",
+         (f"{tk.get('kind', '')} · {tk.get('subtype', '')} — {tk.get('summary', '')}"
+          if tk else "none detected"), "#D85A30"),
+        ("causal groundedness",
+         "placeholder: suppress the hazard, see whether the plan moves "
+         "(intervention not yet ported)", None),
+    ]
+    rows = []
+    for i, (title, detail, color) in enumerate(steps):
+        rows.append(html.Div([
+            html.Div(style={"width": "10px", "height": "10px", "borderRadius": "50%",
+                            "border": f"1px {'dashed' if color is None else 'solid'} "
+                                      f"{color or '#94a3b8'}",
+                            "background": color or "transparent",
+                            "marginTop": "4px", "flex": "none"}),
+            html.Div([html.Div(title, style={"fontSize": "11.5px", "fontWeight": "700",
+                                            "color": "#1f2937"}),
+                      html.Div(detail, style={"fontSize": "11px", "color": "#475569"})],
+                     style={"paddingLeft": "8px"}),
+        ], style={"display": "flex", "alignItems": "flex-start",
+                  "borderLeft": "1px dashed #cbd5e1" if i < len(steps) - 1 else "none",
+                  "marginLeft": "4px", "paddingBottom": "8px",
+                  "position": "relative", "left": "-5px"}))
+    return html.Div(rows, style={"padding": "4px 0 0 6px"})
+
+
 def _register_panel(s4: dict) -> list:
     """Section 7. Reuses the Stage 1/2 ticket grammar (kind · stamp · body).
     Old records without a saved register get one computed on the spot —
@@ -3089,6 +3138,11 @@ def _register_panel(s4: dict) -> list:
                 html.Div(str(tk["evidence"]),
                          style={"fontSize": "11px", "color": "#475569",
                                 "padding": "2px 0 0 8px"})]))
+        body.append(html.Details([
+            html.Summary("causal chain", style={"fontSize": "10px",
+                                                "color": "#be123c",
+                                                "cursor": "pointer"}),
+            _chain(s4, tk)], style={"marginTop": "2px"}))
         return html.Details([html.Summary(head),
                              html.Div(body, className="ticket-body")],
                             className=f"ticket pathology {st}")
@@ -3125,9 +3179,13 @@ def _register_panel(s4: dict) -> list:
         "  ·  every ticket is stamped OPEN until the reflection loop exists; "
         "none moves a score",
         style={"fontSize": "10.5px", "color": "#64748b", "margin": "0 0 6px 2px"})]
-    out.append(html.Div("RULE VIOLATIONS", style={
+    out.append(html.Div("THE RUN'S CHAIN", style={
         "fontSize": "10px", "fontWeight": "800", "letterSpacing": ".08em",
         "color": "#64748b", "margin": "4px 0 2px"}))
+    out.append(_chain(s4))
+    out.append(html.Div("RULE VIOLATIONS", style={
+        "fontSize": "10px", "fontWeight": "800", "letterSpacing": ".08em",
+        "color": "#64748b", "margin": "8px 0 2px"}))
     rule = reg.get("rule") or []
     out += [_ticket(tk) for tk in rule] or [
         html.Div("no rule tickets — clean", className="ticket-empty")]
