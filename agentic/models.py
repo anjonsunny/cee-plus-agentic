@@ -110,6 +110,26 @@ def subject_json_mode(model: str | None = None) -> bool:
     return not any(h in name for h in _THINKING_HINTS)
 
 
+# Bounding-box convention per subject (C_tanker, 2026-10-30: four C runs in
+# a row boxed the man on a patch of grass and the spill under the truck).
+# qwen2.5vl reports image pixels. The Qwen3 family reports every box on a
+# fixed 0-1000 grid, whatever the image size: on the 1672x941 C image the
+# 27B put the tanker at x 405-950 where DINO found it at 678-1586 — the
+# same box, 1.67x apart. Unscaled, DINO matched nothing but the big
+# objects and the rest fell back to the wrong grass. Env-overridable:
+# SUBJECT_BBOX_GRID=1000|0.
+_GRID_HINTS = ("qwen3",)
+
+
+def subject_bbox_grid(model: str | None = None) -> int:
+    """0 = boxes are image pixels; N = boxes are on a 0..N grid."""
+    env = os.getenv("SUBJECT_BBOX_GRID")
+    if env is not None:
+        return int(env or 0)
+    name = (model or SUBJECT_MODEL).lower()
+    return 1000 if any(h in name for h in _GRID_HINTS) else 0
+
+
 def subject_thinks(model: str | None = None) -> bool:
     """Is the seated subject a thinking model (its reasoning comes back in a
     separate field)? Same name hints as the JSON-mode seat."""

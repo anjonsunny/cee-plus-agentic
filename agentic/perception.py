@@ -792,6 +792,22 @@ def mask_bbox(mask) -> list[int] | None:
 # ── Assembly ────────────────────────────────────────────────────────────
 
 
+def grid_to_pixels(bbox: Any, width: int, height: int,
+                   grid: int | None = None) -> Any:
+    """A subject that reports boxes on a 0..grid frame (Qwen3 family: 1000)
+    gets them rescaled to image pixels before any binding. Pixel-reporting
+    subjects pass through untouched. Never raises on a malformed box."""
+    g = _models.subject_bbox_grid() if grid is None else grid
+    if not g or not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+        return bbox
+    try:
+        x1, y1, x2, y2 = (float(v) for v in bbox)
+    except (TypeError, ValueError):
+        return bbox
+    return [int(round(x1 * width / g)), int(round(y1 * height / g)),
+            int(round(x2 * width / g)), int(round(y2 * height / g))]
+
+
 def assign_ids(entities: list[dict[str, Any]]) -> None:
     counts: dict[str, int] = {}
     for e in entities:
@@ -909,7 +925,9 @@ def run_perception(
         e["family_name_as_label"] = is_family
         e.setdefault("description", "")
         e["state"] = normalize_state(e.get("state", "unknown"))
-        e["anchor_bbox"] = clamp_bbox(e.get("bbox"), image.width, image.height)
+        e["anchor_bbox"] = clamp_bbox(
+            grid_to_pixels(e.get("bbox"), image.width, image.height),
+            image.width, image.height)
         e.pop("bbox", None)
 
     assign_ids(entities)

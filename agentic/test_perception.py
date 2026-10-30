@@ -642,3 +642,34 @@ def test_cut_repeats_survives_malformed_entities():
            {"label": "car", "state": "stationary", "bbox": {"x": 1}}]
     kept, note = perception.cut_repeats(odd)
     assert len(kept) == 4 and "1 exact repeat" in note
+
+
+# ── Qwen3 boxes are on a 0-1000 grid (C_tanker, 2026-10-30) ──────────────
+
+
+def test_grid_boxes_are_rescaled_to_pixels_for_a_qwen3_subject(monkeypatch):
+    from agentic import models
+    monkeypatch.delenv("SUBJECT_BBOX_GRID", raising=False)
+    assert models.subject_bbox_grid("qwen3.8:27b-mlx") == 1000
+    assert models.subject_bbox_grid("qwen2.5vl:7b") == 0
+    # the tanker on the 1672x941 C image: the 27B said 405-950, DINO 678-1586
+    assert perception.grid_to_pixels([405, 45, 950, 775], 1672, 941, grid=1000) == [
+        677, 42, 1588, 729]
+    assert perception.grid_to_pixels([320, 362, 380, 658], 1672, 941, grid=1000)[0] == 535
+    # pixel subjects and malformed boxes pass through
+    assert perception.grid_to_pixels([405, 45, 950, 775], 1672, 941, grid=0) == [405, 45, 950, 775]
+    assert perception.grid_to_pixels([[1, 2], [3, 4]], 1672, 941, grid=1000) == [[1, 2], [3, 4]]
+    monkeypatch.setenv("SUBJECT_BBOX_GRID", "0")
+    assert models.subject_bbox_grid("qwen3.8:27b-mlx") == 0
+
+
+def test_run_perception_rescales_anchors_for_a_grid_subject(tmp_path, fake_models, monkeypatch):
+    from agentic import models
+    monkeypatch.setattr(models, "SUBJECT_MODEL", "qwen3.8:27b-mlx")
+    monkeypatch.delenv("SUBJECT_BBOX_GRID", raising=False)
+    img_path = tmp_path / "scene.jpg"
+    Image.new("RGB", (2000, 1000), "gray").save(img_path)
+    entities = [{"label": "person", "state": "standing", "bbox": [500, 500, 600, 1000]}]
+    result = perception.run_perception(
+        img_path, entities=entities, with_masks=False, out_dir=tmp_path / "out")
+    assert result.detected_objects[0].anchor_bbox == [1000, 500, 1200, 1000]
