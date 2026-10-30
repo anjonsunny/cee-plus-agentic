@@ -1242,7 +1242,7 @@ def build_assess_replay_events(name: str,
 # ── Components (each a pure function of the derived state) ──────────────
 
 
-def rail_component(d: dict[str, Any]) -> html.Div:
+def rail_component(d: dict[str, Any], mode: str = "detailed") -> html.Div:
     """The stage rail. Perceive and Repair carry rich detail lines:
     Perceive lists what the model's FIRST answer named (label·state, so a
     later repair is visible as a difference); Repair summarizes the loop's
@@ -3314,7 +3314,8 @@ def _register_panel(s4: dict) -> list:
     return out
 
 
-def _assemble_stage4_sections(out: list, s4: dict, d: dict) -> list:
+def _assemble_stage4_sections(out: list, s4: dict, d: dict,
+                              mode: str = "detailed") -> list:
     """Partition the built panels by the «sec:name» markers and emit five
     numbered, collapsible sections (Sunny, 2026-08-08: 'stage 4 is getting
     crowded'). The build ORDER above is unchanged — only the display order
@@ -3352,7 +3353,8 @@ def _assemble_stage4_sections(out: list, s4: dict, d: dict) -> list:
     return sections
 
 
-def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[Any]:
+def stage4_component(d: dict[str, Any], image_src: str | None = None,
+                     mode: str = "detailed") -> list[Any]:
     """STAGE 4 body: the ON-THE-IMAGE overlay, the trust headline, the three-way
     intervention picks, measured uncertainty, the checks, the model's
     recommendations with their quads + per-rec uncertainty, and both graphs."""
@@ -4198,12 +4200,13 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
             f"B={_conf.get('raw_b_validity')} — kept for comparison",
             title=_CLEAN_TIP,
             style={"fontSize": "10px", "color": "#94a3b8", "marginTop": "4px"}))
-    return _assemble_stage4_sections(out, s4, d)
+    return _assemble_stage4_sections(out, s4, d, mode=mode)
 
 
 def assess_component(d: dict[str, Any], unc_view: str = "both",
                      record_name: str | None = None,
-                     judge_result: dict[str, Any] | None = None) -> list[Any]:
+                     judge_result: dict[str, Any] | None = None,
+                     mode: str = "detailed") -> list[Any]:
     """PHASE 1 · ASSESS body: verdict banner, the two uncertainty channels
     (view chosen by the toggle: model's self-report vs measured vs both,
     side-by-side being the calibration view), causal drivers, and the
@@ -4884,7 +4887,7 @@ def assess_component(d: dict[str, Any], unc_view: str = "both",
     return out
 
 
-def tickets_component(d: dict[str, Any]) -> html.Div:
+def tickets_component(d: dict[str, Any], mode: str = "detailed") -> html.Div:
     """Violation tickets with lifecycle stamps; expanded = the Rulebook's
     exact instruction (the Model side lives in the round summary)."""
     cards = []
@@ -5050,7 +5053,7 @@ def progress_strip(d: dict[str, Any]) -> html.Div:
     return html.Div(rows, className="pstrip")
 
 
-def instruments_component(d: dict[str, Any]) -> html.Div:
+def instruments_component(d: dict[str, Any], mode: str = "detailed") -> html.Div:
     n_entities = (len(d["result"]["detected_objects"]) if d["result"]
                   else len(d["anchors"]) or len(d["repair_entities_latest"]))
     open_v = sum(1 for v in d["violations"].values() if v["status"] == "open")
@@ -5532,6 +5535,9 @@ app.index_string = """<!DOCTYPE html>
   .agent-inputrow { display:flex; gap:8px; }
   .agent-inputbox { flex:1; background:#fff; border:1px solid var(--line); color:var(--ink);
       border-radius:10px; padding:9px 12px; }
+  /* UI cleanup step 2: the view switch. The clientside callback sets the
+     wrap div to "wrap mode-clean" / "wrap mode-detailed". */
+  .mode-clean .only-detailed { display:none; }
 </style></head>
 <body>{%app_entry%}<footer>{%config%}{%scripts%}{%renderer%}</footer></body></html>"""
 
@@ -5595,6 +5601,14 @@ app.layout = html.Div([
         dcc.Dropdown(id="replay", options=saved_records(),
                      placeholder="or replay a saved run...",
                      style={"width": "260px", "color": "#111"}),
+        # UI cleanup step 2 (2026-10-30): one switch for the whole page.
+        # A fresh browser opens in clean view (Sunny); the choice is kept
+        # in localStorage, page-level, never in events.jsonl.
+        dcc.RadioItems(id="view-mode", value="clean",
+                       options=[{"label": "clean", "value": "clean"},
+                                {"label": "detailed", "value": "detailed"}],
+                       persistence=True, persistence_type="local",
+                       inline=True, className="view-mode"),
         # UI cleanup step 1 (2026-10-30): the eight toggles fold away behind
         # one "run settings" line. Ids and defaults are unchanged, so
         # start_run reads them exactly as before; the summary line shows
@@ -5779,7 +5793,16 @@ app.layout = html.Div([
     dcc.Store(id="run-id"), dcc.Store(id="selected"),
     dcc.Store(id="upload-cache"), dcc.Store(id="render-key"),
     dcc.Interval(id="tick", interval=700),
-], className="wrap")
+], className="wrap mode-clean", id="wrap")
+
+
+# View switch (UI cleanup step 2): page-level CSS class, no server round
+# trip. `.mode-clean .only-detailed` hides layout pieces in clean view.
+app.clientside_callback(
+    """function(mode) {
+        return mode === "detailed" ? "wrap mode-detailed" : "wrap mode-clean";
+    }""",
+    Output("wrap", "className"), Input("view-mode", "value"))
 
 
 @app.callback(Output("run-settings-summary", "children"),
@@ -6032,11 +6055,12 @@ def select_entity(box_clicks, close_clicks):
     Output("phase2-status", "children"),
     Output("render-key", "data"),
     Input("tick", "n_intervals"), Input("scrub", "value"),
-    Input("unc-view", "value"),
+    Input("unc-view", "value"), Input("view-mode", "value"),
     State("run-id", "data"), State("selected", "data"), State("scrub", "max"),
     State("upload-cache", "data"), State("render-key", "data"))
-def render(_n, scrub_value, unc_view, run_id, selected, scrub_max, cached,
-           prev_key):
+def render(_n, scrub_value, unc_view, mode, run_id, selected, scrub_max,
+           cached, prev_key):
+    mode = mode or "clean"
     thread = f"ui-{run_id or 'global'}"
     log = AGENT_LOGS.get(thread, [])
     # Agent fingerprint: any new step or completed answer re-renders.
@@ -6045,7 +6069,7 @@ def render(_n, scrub_value, unc_view, run_id, selected, scrub_max, cached,
     if not run:
         empty = derive([])
         key = ["empty", bool(cached and cached.get("contents")), agent_sig,
-               unc_view, "pending"]
+               unc_view, "pending", mode]
         if key == prev_key:
             return (dash.no_update,) * 15
         # A picked-but-unanalyzed image previews in the scene immediately,
@@ -6056,11 +6080,13 @@ def render(_n, scrub_value, unc_view, run_id, selected, scrub_max, cached,
                               f"press ANALYZE", className="ribbon")]
         else:
             scene = scene_component(empty, None)
-        return (rail_component(empty), tickets_component(empty),
-                instruments_component(empty), scene,
+        return (rail_component(empty, mode=mode),
+                tickets_component(empty, mode=mode),
+                instruments_component(empty, mode=mode), scene,
                 inspector_component(empty, None), 1, 1,
                 agent_transcript_component(log),
-                assess_component(empty, unc_view), stage4_component(empty, None),
+                assess_component(empty, unc_view, mode=mode),
+                stage4_component(empty, None, mode=mode),
                 dash.no_update,
                 phase_status_span([]), phase_status_span([]),
                 html.Span("○ waiting", className="phase-status pending"), key)
@@ -6077,7 +6103,8 @@ def render(_n, scrub_value, unc_view, run_id, selected, scrub_max, cached,
     # (re-rendering identical children would reset every <details>).
     key = [run_id, total, k, selected, agent_sig, unc_view, assess_status,
            (run.get("judge") or {}).get("winner",
-                                        (run.get("judge") or {}).get("status"))]
+                                        (run.get("judge") or {}).get("status")),
+           mode]  # mode stays LAST: prev_key[6] is assess_status
     if key == prev_key and ctx.triggered_id != "scrub":
         return (dash.no_update,) * 15
     # Auto-collapse Phase 0 exactly ONCE, at the moment Phase 1 starts
@@ -6103,9 +6130,10 @@ def render(_n, scrub_value, unc_view, run_id, selected, scrub_max, cached,
     p1_badge = phase_status_span(
         s2_steps, now if any(s == "active" for _, s in s2_steps) else "",
         settled=_settled)
-    rail_view: Any = rail_component(d)
+    rail_view: Any = rail_component(d, mode=mode)
     assess_view: Any = assess_component(d, unc_view,
-                                        run.get("record_name"), judge)
+                                        run.get("record_name"), judge,
+                                        mode=mode)
     e0 = d.get("epoch0")
     if e0:
         # Sunny 2026-07-22: never overwrite the first pass — keep it as a
@@ -6120,7 +6148,8 @@ def render(_n, scrub_value, unc_view, run_id, selected, scrub_max, cached,
                                  className="unc-tag",
                                  style={"cursor": "pointer",
                                         "padding": "4px 0"}),
-                    rail_component(e0), tickets_component(e0),
+                    rail_component(e0, mode=mode),
+                    tickets_component(e0, mode=mode),
                 ], open=False,
                     style={"opacity": "0.85", "borderBottom":
                            "2px dashed #c4b5fd", "marginBottom": "8px",
@@ -6136,7 +6165,7 @@ def render(_n, scrub_value, unc_view, run_id, selected, scrub_max, cached,
                              className="unc-tag",
                              style={"cursor": "pointer",
                                     "padding": "4px 0"}),
-                html.Div(assess_component(e0, unc_view)),
+                html.Div(assess_component(e0, unc_view, mode=mode)),
             ], open=False,
                 style={"opacity": "0.85", "borderBottom":
                        "2px dashed #c4b5fd", "marginBottom": "8px",
@@ -6146,12 +6175,13 @@ def render(_n, scrub_value, unc_view, run_id, selected, scrub_max, cached,
                      className="unc-tag",
                      style={"color": "#7c3aed", "margin": "2px 0"}),
         ] + assess_view
-    return (rail_view, tickets_component(d), instruments_component(d),
+    return (rail_view, tickets_component(d, mode=mode),
+            instruments_component(d, mode=mode),
             scene_component(d, run.get("image_src")),
             inspector_component(d, selected),
             total, total if following else k,
             agent_transcript_component(log),
-            assess_view, stage4_component(d, run.get("image_src")),
+            assess_view, stage4_component(d, run.get("image_src"), mode=mode),
             phase0_open, p0_badge, p1_badge, stage4_status_span(d), key)
 
 

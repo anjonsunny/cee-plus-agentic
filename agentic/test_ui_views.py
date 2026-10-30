@@ -2,6 +2,10 @@
 
 Step 1 — the control strip: the eight run toggles fold behind one
 "run settings" line whose summary shows the current choices as chips.
+
+Step 2 — the view switch plumbing: a page-level clean/detailed RadioItems
+reaches every renderer, but no clean builder exists yet, so both views
+must render identically.
 """
 from dash import html
 
@@ -153,3 +157,84 @@ def test_the_callback_keeps_the_label_and_uses_settings_summary():
     text = _text(out)
     assert text.startswith("run settings")
     assert "no extra probes" in text
+
+
+# --- Step 2: view switch plumbing -------------------------------------------
+
+def _view_events():
+    """A full stream (perception -> assessment -> stage 4) to cut at every
+    prefix; borrowed from test_ui's fixtures."""
+    from agentic.test_ui import ASSESS_EVENTS, EVENTS, _s4_sectioned
+    return EVENTS + ASSESS_EVENTS + [{"type": "stage4_result",
+                                      "result": _s4_sectioned()}]
+
+
+def test_view_mode_switch_defaults_to_clean_and_persists_locally():
+    hit = _find(ui.app.layout, "view-mode")
+    assert hit is not None
+    radio, ancestors = hit
+    assert radio.value == "clean"
+    assert {o["value"] for o in radio.options} == {"clean", "detailed"}
+    assert radio.persistence is True
+    assert radio.persistence_type == "local"
+    # always visible: not folded inside run settings
+    assert not any(isinstance(a, html.Details) for a in ancestors)
+
+
+def test_the_wrap_div_has_an_id_and_a_mode_class():
+    assert ui.app.layout.id == "wrap"
+    assert "wrap" in ui.app.layout.className.split()
+    assert ".mode-clean .only-detailed" in ui.app.index_string
+
+
+def test_the_wrap_class_is_set_clientside_from_view_mode():
+    cbs = [c for c in ui.app._callback_list
+           if c.get("output") == "wrap.className"]
+    assert len(cbs) == 1
+    assert cbs[0].get("clientside_function") is not None
+    assert [i["id"] for i in cbs[0]["inputs"]] == ["view-mode"]
+
+
+def _render_cb():
+    hits = [c for c in ui.app._callback_list
+            if "stage4-body.children" in c.get("output", "")]
+    assert len(hits) == 1
+    return hits[0]
+
+
+def test_render_takes_view_mode_right_after_unc_view_and_keeps_15_outputs():
+    cb = _render_cb()
+    ids = [i["id"] for i in cb["inputs"]]
+    assert "view-mode" in ids
+    assert ids.index("view-mode") == ids.index("unc-view") + 1
+    outs = cb["output"].strip(".").split("...")
+    assert len(outs) == 15
+
+
+def test_mode_is_the_last_render_key_element_and_assess_status_stays_at_6():
+    run_id = "test-view-mode"
+    ui.RUNS[run_id] = {"events": _view_events()}
+    try:
+        for mode in ("clean", "detailed"):
+            out = ui.render(1, None, "both", mode, run_id, None,
+                                        None, None, None)
+            assert len(out) == 15
+            key = out[-1]
+            assert key[-1] == mode
+            assert key[6] == "done"          # assess_status unchanged
+    finally:
+        ui.RUNS.pop(run_id, None)
+
+
+def test_every_renderer_is_identical_in_both_views_at_every_prefix():
+    events = _view_events()
+    for k in range(len(events) + 1):
+        d = ui.derive(events[:k])
+        for name, fn in (("rail", ui.rail_component),
+                         ("tickets", ui.tickets_component),
+                         ("instruments", ui.instruments_component),
+                         ("assess", ui.assess_component),
+                         ("stage4", ui.stage4_component)):
+            base = str(fn(d))
+            assert base == str(fn(d, mode="detailed")), (name, k)
+            assert base == str(fn(d, mode="clean")), (name, k)
