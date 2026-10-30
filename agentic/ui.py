@@ -5428,6 +5428,22 @@ app.index_string = """<!DOCTYPE html>
                     cursor:pointer;}
   .ctl-toggle input{accent-color:#2563eb; cursor:pointer;}
 
+  /* Run settings: the toggles fold away; the summary line shows the
+     current choices as chips (UI cleanup step 1). */
+  .run-settings { flex-basis:100%; background:var(--card); border:1px solid var(--line);
+      border-radius:10px; padding:6px 12px; box-shadow:var(--shadow); }
+  .run-settings > summary { cursor:pointer; display:flex; flex-wrap:wrap;
+      align-items:center; gap:6px; list-style:none; }
+  .run-settings > summary::-webkit-details-marker { display:none; }
+  .set-head { font-size:10px; font-weight:800; letter-spacing:.06em;
+      text-transform:uppercase; color:#64748b; margin-right:4px; }
+  .set-chip { font-size:11px; font-weight:700; color:#334155; background:#f1f5f9;
+      border:1px solid #cbd5e1; border-radius:9px; padding:2px 9px; }
+  .set-chip.slow { color:#92400e; background:#fef3c7; border-color:#fcd34d; }
+  .set-chip.quiet { color:#64748b; background:transparent; border-style:dashed; }
+  .set-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:8px; }
+  .set-row-lbl { font-size:11px; color:#64748b; font-style:italic; min-width:170px; }
+
   /* Live status badge on each stage card header */
   .phase-status { margin-left:auto; margin-right:8px; font-size:11px;
                   font-weight:700; letter-spacing:.02em; }
@@ -5519,6 +5535,55 @@ app.index_string = """<!DOCTYPE html>
 </style></head>
 <body>{%app_entry%}<footer>{%config%}{%scripts%}{%renderer%}</footer></body></html>"""
 
+def _picked(name: str, ticked, total: int):
+    """One chip text for a probe checklist: 'all', or 'k of n'."""
+    ticked = list(ticked or [])
+    if not ticked:
+        return None
+    if "all" in ticked:
+        return f"{name}: all"
+    return f"{name}: {len(ticked)} of {total}"
+
+
+def settings_summary(control, retrieval, subject, reasks, judges,
+                     concealment, env, sandbagging) -> list:
+    """The run-settings line as chips (html.Span), from the eight toggle
+    values. Pure: no app state. A slow choice gets an amber chip that says
+    how much slower ("about 1 hour", "about 3x slower"). With nothing extra
+    ticked the line ends in "no extra probes"."""
+    chips = [html.Span("LangGraph" if control == "langgraph" else "Python",
+                       className="set-chip")]
+    subj = str(subject or "")
+    if "27b" in subj.lower():
+        chips.append(html.Span(f"{subj} · about 3x slower",
+                               className="set-chip slow"))
+    elif subj:
+        chips.append(html.Span(subj, className="set-chip"))
+    look = {"rulebook": "exact", "rag": "RAG", "both": "both"}.get(
+        retrieval, str(retrieval))
+    chips.append(html.Span(f"rule lookup: {look}", className="set-chip"))
+
+    extra = []
+    if judges == "on":
+        extra.append(html.Span("judges on · about 1 hour",
+                               className="set-chip slow"))
+    stages = [lbl for v, lbl in (("s2", "stage 2"), ("s4", "stage 4"))
+              if v in (reasks or [])]
+    if stages:
+        extra.append(html.Span("re-asks: " + ", ".join(stages),
+                               className="set-chip"))
+    for name, ticked, total in (
+            ("concealment", concealment, len(_CONCEALMENT_MOTIVE_NAMES)),
+            ("concealment · environment", env, len(_ENV_CONDITION_NAMES)),
+            ("sandbagging", sandbagging, len(_SANDBAGGING_MOTIVE_NAMES))):
+        txt = _picked(name, ticked, total)
+        if txt:
+            extra.append(html.Span(txt, className="set-chip"))
+    if not extra:
+        extra.append(html.Span("no extra probes", className="set-chip quiet"))
+    return chips + extra
+
+
 app.layout = html.Div([
     html.H1("CEE+ AGENTIC · STAGES 1-2 · PERCEPTION → ASSESSMENT"),
     html.Div([
@@ -5530,103 +5595,121 @@ app.layout = html.Div([
         dcc.Dropdown(id="replay", options=saved_records(),
                      placeholder="or replay a saved run...",
                      style={"width": "260px", "color": "#111"}),
-        # Control-plane toggles (no restart, no env vars). Applied at the
-        # moment a run launches. Defaults from 2026-07-28 (Sunny): LangGraph
-        # and both. The control we ship should be the one every run exercises,
-        # and a RAG seam only measured when someone remembers to switch it on
-        # is a seam nobody measures. Either can still be switched per run.
-        html.Div([
-            html.Span("control", className="ctl-lbl"),
-            dcc.RadioItems(
-                id="control-mode", value="langgraph", inline=True,
-                options=[{"label": "Python", "value": "python"},
-                         {"label": "LangGraph", "value": "langgraph"}],
-                className="ctl-toggle"),
-        ], className="ctl-group"),
-        # Sunny (2026-10-05): the three Stage 4 judges are ~85% of a run
-        # (run A: 55 of 62 minutes). They are advisory — no score reads
-        # them — so they can be switched off per run to see the detectors
-        # and trust in minutes. Default OFF (Sunny, later the same day):
-        # the judges mainly serve reflection, which is deferred, so a normal
-        # run skips them; switch on for a run that needs the bench.
-        # The subject seat (2026-10-05). The 27B thinks (its reasoning is
-        # kept as evidence) and is ~3x slower per call; the 7B is the fast
-        # one every earlier run used. Applied when a run launches.
-        html.Div([
-            html.Span("subject", className="ctl-lbl"),
-            dcc.RadioItems(
-                id="subject-model", value=_models.SUBJECT_MODEL, inline=True,
-                options=[{"label": n, "value": n}
-                         for n in dict.fromkeys(
-                             (_models.SUBJECT_MODEL,) + _models.SUBJECT_CHOICES)],
-                className="ctl-toggle"),
-        ], className="ctl-group"),
-        # Re-asks per stage (Sunny, 2026-10-05): "I am more interested in
-        # finding pathology. Re-asks can be integrated later per stage."
-        # On the 27B subject each re-ask is ~80 s and the three sets of five
-        # are about half a run. Off by default; the pathology probes run
-        # either way and say when their baseline was a single answer.
-        html.Div([
-            html.Span("re-asks", className="ctl-lbl"),
-            dcc.Checklist(
-                id="reasks-mode", value=[], inline=True,
-                options=[{"label": " stage 2", "value": "s2"},
-                         {"label": " stage 4", "value": "s4"}],
-                className="ctl-toggle"),
-        ], className="ctl-group"),
-        # Concealment probes (2026-10-06): fourteen extra calls with
-        # thinking on (~2.5 min each on the 27B), so a switch of their own.
-        # One row of boxes (Sunny, 2026-10-07: on/off plus seven pickers was
-        # confusing): nothing ticked = off; "all" = all seven; otherwise the
-        # ticked motives. Two calls per motive, ~3 min a call on the 27B.
-        html.Div([
-            html.Span("concealment", className="ctl-lbl"),
-            dcc.Checklist(
-                id="concealment-motives", value=[], inline=True,
-                options=[{"label": " all", "value": "all"}]
-                + [{"label": " " + m.replace("_", " "), "value": m}
-                   for m in _CONCEALMENT_MOTIVE_NAMES],
-                className="ctl-toggle", style={"fontSize": "10.5px"}),
-        ], className="ctl-group"),
-        # Concealment, environment arm (2026-10-26): no pressure — one
-        # dispatch fact in the caption per ticked condition. Same shape.
-        html.Div([
-            html.Span("concealment · environment", className="ctl-lbl"),
-            dcc.Checklist(
-                id="env-conditions", value=[], inline=True,
-                options=[{"label": " all", "value": "all"}]
-                + [{"label": " " + _EC[c]["label"], "value": c}
-                   for c in _ENV_CONDITION_NAMES],
-                className="ctl-toggle", style={"fontSize": "10.5px"}),
-        ], className="ctl-group"),
-        # Sandbagging (2026-10-07): same shape as concealment — nothing
-        # ticked = off; "all" = all five; else the ticked motives.
-        html.Div([
-            html.Span("sandbagging", className="ctl-lbl"),
-            dcc.Checklist(
-                id="sandbagging-motives", value=[], inline=True,
-                options=[{"label": " all", "value": "all"}]
-                + [{"label": " " + m.replace("_", " "), "value": m}
-                   for m in _SANDBAGGING_MOTIVE_NAMES],
-                className="ctl-toggle", style={"fontSize": "10.5px"}),
-        ], className="ctl-group"),
-        html.Div([
-            html.Span("stage 4 judges", className="ctl-lbl"),
-            dcc.RadioItems(
-                id="judges-mode", value="off", inline=True,
-                options=[{"label": "off (fast)", "value": "off"},
-                         {"label": "on (~1 hour)", "value": "on"}],
-                className="ctl-toggle"),
-        ], className="ctl-group"),
-        html.Div([
-            html.Span("rule lookup", className="ctl-lbl"),
-            dcc.RadioItems(
-                id="retrieval-mode", value="both", inline=True,
-                options=[{"label": "exact", "value": "rulebook"},
-                         {"label": "RAG", "value": "rag"},
-                         {"label": "both", "value": "both"}],
-                className="ctl-toggle"),
-        ], className="ctl-group"),
+        # UI cleanup step 1 (2026-10-30): the eight toggles fold away behind
+        # one "run settings" line. Ids and defaults are unchanged, so
+        # start_run reads them exactly as before; the summary line shows
+        # the current choices as chips (settings_summary).
+        html.Details([
+            html.Summary(
+                [html.Span("run settings", className="set-head")]
+                + settings_summary("langgraph", "both", _models.SUBJECT_MODEL,
+                                   [], "off", [], [], []),
+                id="run-settings-summary"),
+            html.Div([
+                html.Span("how it runs", className="set-row-lbl"),
+                # Control-plane toggles (no restart, no env vars). Applied at the
+                # moment a run launches. Defaults from 2026-07-28 (Sunny): LangGraph
+                # and both. The control we ship should be the one every run exercises,
+                # and a RAG seam only measured when someone remembers to switch it on
+                # is a seam nobody measures. Either can still be switched per run.
+                html.Div([
+                    html.Span("control", className="ctl-lbl"),
+                    dcc.RadioItems(
+                        id="control-mode", value="langgraph", inline=True,
+                        options=[{"label": "Python", "value": "python"},
+                                 {"label": "LangGraph", "value": "langgraph"}],
+                        className="ctl-toggle"),
+                ], className="ctl-group"),
+                # The subject seat (2026-10-05). The 27B thinks (its reasoning is
+                # kept as evidence) and is ~3x slower per call; the 7B is the fast
+                # one every earlier run used. Applied when a run launches.
+                html.Div([
+                    html.Span("subject", className="ctl-lbl"),
+                    dcc.RadioItems(
+                        id="subject-model", value=_models.SUBJECT_MODEL, inline=True,
+                        options=[{"label": n, "value": n}
+                                 for n in dict.fromkeys(
+                                     (_models.SUBJECT_MODEL,) + _models.SUBJECT_CHOICES)],
+                        className="ctl-toggle"),
+                ], className="ctl-group"),
+                html.Div([
+                    html.Span("rule lookup", className="ctl-lbl"),
+                    dcc.RadioItems(
+                        id="retrieval-mode", value="both", inline=True,
+                        options=[{"label": "exact", "value": "rulebook"},
+                                 {"label": "RAG", "value": "rag"},
+                                 {"label": "both", "value": "both"}],
+                        className="ctl-toggle"),
+                ], className="ctl-group"),
+            ], className="set-row"),
+            html.Div([
+                html.Span("extra probes (each adds time)",
+                          className="set-row-lbl"),
+                # Sunny (2026-10-05): the three Stage 4 judges are ~85% of a run
+                # (run A: 55 of 62 minutes). They are advisory — no score reads
+                # them — so they can be switched off per run to see the detectors
+                # and trust in minutes. Default OFF (Sunny, later the same day):
+                # the judges mainly serve reflection, which is deferred, so a normal
+                # run skips them; switch on for a run that needs the bench.
+                html.Div([
+                    html.Span("stage 4 judges", className="ctl-lbl"),
+                    dcc.RadioItems(
+                        id="judges-mode", value="off", inline=True,
+                        options=[{"label": "off (fast)", "value": "off"},
+                                 {"label": "on (~1 hour)", "value": "on"}],
+                        className="ctl-toggle"),
+                ], className="ctl-group"),
+                # Re-asks per stage (Sunny, 2026-10-05): "I am more interested in
+                # finding pathology. Re-asks can be integrated later per stage."
+                # On the 27B subject each re-ask is ~80 s and the three sets of five
+                # are about half a run. Off by default; the pathology probes run
+                # either way and say when their baseline was a single answer.
+                html.Div([
+                    html.Span("re-asks", className="ctl-lbl"),
+                    dcc.Checklist(
+                        id="reasks-mode", value=[], inline=True,
+                        options=[{"label": " stage 2", "value": "s2"},
+                                 {"label": " stage 4", "value": "s4"}],
+                        className="ctl-toggle"),
+                ], className="ctl-group"),
+                # Concealment probes (2026-10-06): fourteen extra calls with
+                # thinking on (~2.5 min each on the 27B), so a switch of their own.
+                # One row of boxes (Sunny, 2026-10-07: on/off plus seven pickers was
+                # confusing): nothing ticked = off; "all" = all seven; otherwise the
+                # ticked motives. Two calls per motive, ~3 min a call on the 27B.
+                html.Div([
+                    html.Span("concealment", className="ctl-lbl"),
+                    dcc.Checklist(
+                        id="concealment-motives", value=[], inline=True,
+                        options=[{"label": " all", "value": "all"}]
+                        + [{"label": " " + m.replace("_", " "), "value": m}
+                           for m in _CONCEALMENT_MOTIVE_NAMES],
+                        className="ctl-toggle", style={"fontSize": "10.5px"}),
+                ], className="ctl-group"),
+                # Concealment, environment arm (2026-10-26): no pressure — one
+                # dispatch fact in the caption per ticked condition. Same shape.
+                html.Div([
+                    html.Span("concealment · environment", className="ctl-lbl"),
+                    dcc.Checklist(
+                        id="env-conditions", value=[], inline=True,
+                        options=[{"label": " all", "value": "all"}]
+                        + [{"label": " " + _EC[c]["label"], "value": c}
+                           for c in _ENV_CONDITION_NAMES],
+                        className="ctl-toggle", style={"fontSize": "10.5px"}),
+                ], className="ctl-group"),
+                # Sandbagging (2026-10-07): same shape as concealment — nothing
+                # ticked = off; "all" = all five; else the ticked motives.
+                html.Div([
+                    html.Span("sandbagging", className="ctl-lbl"),
+                    dcc.Checklist(
+                        id="sandbagging-motives", value=[], inline=True,
+                        options=[{"label": " all", "value": "all"}]
+                        + [{"label": " " + m.replace("_", " "), "value": m}
+                           for m in _SANDBAGGING_MOTIVE_NAMES],
+                        className="ctl-toggle", style={"fontSize": "10.5px"}),
+                ], className="ctl-group"),
+            ], className="set-row"),
+        ], className="run-settings", open=False, id="run-settings"),
     ], className="controls"),
     html.Div(id="instruments"),
     html.Div([
@@ -5697,6 +5780,21 @@ app.layout = html.Div([
     dcc.Store(id="upload-cache"), dcc.Store(id="render-key"),
     dcc.Interval(id="tick", interval=700),
 ], className="wrap")
+
+
+@app.callback(Output("run-settings-summary", "children"),
+              Input("control-mode", "value"), Input("retrieval-mode", "value"),
+              Input("subject-model", "value"), Input("reasks-mode", "value"),
+              Input("judges-mode", "value"),
+              Input("concealment-motives", "value"),
+              Input("env-conditions", "value"),
+              Input("sandbagging-motives", "value"))
+def update_settings_summary(control, retrieval, subject, reasks, judges,
+                            concealment, env, sandbagging):
+    """Keep the folded run-settings line in step with the toggles."""
+    return ([html.Span("run settings", className="set-head")]
+            + settings_summary(control, retrieval, subject, reasks, judges,
+                               concealment, env, sandbagging))
 
 
 @app.callback(Output("upload-cache", "data"), Output("upload", "children"),
