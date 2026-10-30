@@ -2465,7 +2465,9 @@ def test_stage4_judges_can_be_switched_off_and_the_run_says_so():
         {"t": 3.0, "type": "recommendations_ready", "n_recs": 1}])
     assert d["stage4_judges_off"] is True
     assert {"card_judge", "graph_judge", "runoff"} <= d["stage4_marks"]
-    assert "switched off for this run" in _text(ui.stage4_component(d))
+    text = _text(ui.stage4_component(d))
+    assert "card judge · switched off for this run" in text
+    assert "runoff judge · switched off for this run" in text
     done = ui.derive([{"t": 1.0, "type": "stage4_judges_off"},
                       {"t": 2.0, "type": "stage4_result",
                        "result": {"recommendations": []}}])

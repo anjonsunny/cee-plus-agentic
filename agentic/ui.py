@@ -3407,9 +3407,10 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                 ("trust", "trust", "folding the trust score")]
         rows: list[Any] = [html.Div("STAGE 4 · running…", className="unc-tag")]
         if d.get("stage4_judges_off"):
-            LIVE = [(k, k2, "switched off for this run"
-                     if k in ("card_judge", "graph_judge", "runoff") else lab)
-                    for k, k2, lab in LIVE]
+            _names = {"card_judge": "card judge", "graph_judge": "A-vs-B judge",
+                      "runoff": "runoff judge"}
+            LIVE = [(k, k2, f"{_names[k]} · switched off for this run"
+                     if k in _names else lab) for k, k2, lab in LIVE]
         if d.get("reasks") and not d["reasks"].get("stage4"):
             LIVE = [(k, k2, "re-asks switched off for this run"
                      if k == "uncertainty" else lab) for k, k2, lab in LIVE]
