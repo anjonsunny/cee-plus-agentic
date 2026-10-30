@@ -3059,7 +3059,8 @@ def _chain(s4: dict, ticket: dict | None = None) -> Any:
           (tk.get("line") or "none — the scene as given")), "#7F77DD"),
         ("recommendations", rec_line, "#1D9E75"),
         ("pathology",
-         (f"{tk.get('kind', '')} · {tk.get('subtype', '')} — {tk.get('summary', '')}"
+         (f"{tk.get('pathology_kind') or tk.get('kind', '')} · "
+          f"{tk.get('subtype', '')} — {tk.get('summary', '')}"
           if tk else "none detected"), "#D85A30"),
         ("causal groundedness",
          "placeholder: suppress the hazard, see whether the plan moves "

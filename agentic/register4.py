@@ -144,6 +144,9 @@ def stage4_register(s4: dict | None) -> dict[str, Any]:
                                    "subtype": tk.get("subtype"),
                                    "summary": tk.get("summary"),
                                    "pathology_kind": tk.get("kind"),
+                                   "motive": tk.get("motive"),
+                                   "condition": tk.get("condition"),
+                                   "line": tk.get("line"),
                                    "single_baseline": tk.get("single_baseline"),
                                    "id": f"p{n + 1}"}))
     return {"rule": rule, "pathology": pathology,
