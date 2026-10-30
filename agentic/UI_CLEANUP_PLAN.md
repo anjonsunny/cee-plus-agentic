@@ -197,3 +197,14 @@ Total about 820 lines, about 40 new tests. Steps 1, 2, 4 are independent;
    purple. Change those two to slate or blue so purple means judges only?
 5. During a live run, clean view shows only "now: <step> · n of 15", or
    the full step list?
+
+## 7. Decisions so far (Sunny, 2026-10-30)
+
+- The clean-view builders go in a separate file, `agentic/ui_clean.py`,
+  imported by `ui.py`; the switch itself lives in `ui.py`.
+- UI cleanup is developed on its own branch off `agentic` and merged step
+  by step; pathology work continues on `agentic` in parallel.
+- The space below the image, reserved for the conversation agent, goes
+  to the Stage 4 card in clean view; the agent dock shrinks to one input
+  line with the transcript opening only when there is one. Detailed view
+  keeps today's layout.
