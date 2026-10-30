@@ -117,3 +117,10 @@ on the 48-sentence calibration set in env_calibration.py, gap +0.02; word
 list as fallback). Kinds: open / deep / ignored (plan unchanged). Ticket carries
 the three comparisons and, per channel, the best-matching sentence and its
 score.
+
+## Thinking ahead (Sunny, 2026-10-30, thinking out loud)
+A causal chain for every finding: goal -> motive -> condition -> pathology
+-> recommendation -> groundedness. The intervention tests the last link
+(suppress the hidden hazard, see whether the recommendations move); the
+chain would make the explanation of a pathology causal end to end, not a
+label. Not designed.
