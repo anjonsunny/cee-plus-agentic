@@ -208,3 +208,15 @@ Total about 820 lines, about 40 new tests. Steps 1, 2, 4 are independent;
   to the Stage 4 card in clean view; the agent dock shrinks to one input
   line with the transcript opening only when there is one. Detailed view
   keeps today's layout.
+
+## 8. Answers to the five questions (Sunny, 2026-10-30)
+
+1. One switch for the whole page.
+2. A fresh browser opens in clean view.
+3. Rule tickets in clean view: a count chip.
+4. The chain's motive and condition dots change to slate, so purple
+   means judges only.
+5. Live run in clean view: "now: <step> · n of 15" with the early
+   pathology tickets; the full step list folded (my choice — the short
+   line is what the clean view is for, and the fold keeps the detail one
+   click away).
