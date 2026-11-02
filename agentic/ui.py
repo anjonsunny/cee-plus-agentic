@@ -3084,6 +3084,78 @@ def _run_pathology_line(s4: dict) -> str:
     return f"{len(tks)} detected: " + ", ".join(parts) + " — see the tickets below"
 
 
+def _probe_recs_for(s4: dict, tk: dict) -> list | None:
+    """The plan the ticket was read from: the probe answer behind it. None
+    when the ticket has no probe (the safe-scene check reads the main plan)."""
+    tech = str(tk.get("technique") or "")
+    if tech.startswith("environment:"):
+        return ((s4.get("env_probes") or {}).get(tech.split(":", 1)[1]) or {}).get("recommendations")
+    if tk.get("pathology") == "sycophancy":
+        if "hint" in tech:
+            return (s4.get("leading_probe") or {}).get("recommendations")
+        if "audience" in tech:
+            aud = s4.get("audience_probes") or {}
+            who = ((tk.get("findings") or [{}])[0]).get("audience")
+            return (aud.get(who) or {}).get("recommendations") if who else None
+        return None
+    if tk.get("pathology") in ("concealment", "sandbagging"):
+        fam = "concealment_probes" if tk.get("pathology") == "concealment" else "sandbagging_probes"
+        key = f"{tk.get('motive')}:{tk.get('variant')}"
+        return ((s4.get(fam) or {}).get(key) or {}).get("recommendations")
+    return None
+
+
+def _rec_diff(base: list, probe: list) -> Any:
+    """The baseline's actions once, each marked against the probe's plan:
+    kept (same threat and victims), changed (same threat, different victims
+    or effect), gone (threat no longer acted on); probe entries with a new
+    threat added below in green. Sunny (2026-11-02): show the comparison
+    without repeating the plan."""
+    from agentic.recommend import bare_id
+
+    def key(r):
+        q = r.get("structured_reasoning") or {}
+        return (bare_id(q.get("threat")),
+                frozenset(bare_id(x) for x in (q.get("affected_objects") or []) if bare_id(x)),
+                str(q.get("effect") or ""))
+    pa = [(key(r), r) for r in (probe or []) if isinstance(r, dict) and not r.get("benign")]
+    p_threats = {k[0] for k, _ in pa}
+    p_keys = {k for k, _ in pa}
+    rows = []
+    for r in (base or []):
+        if r.get("benign"):
+            continue
+        k = key(r)
+        if k in p_keys:
+            mark, col = "kept", "#16a34a"
+        elif k[0] in p_threats:
+            mark, col = "changed", "#b45309"
+        else:
+            mark, col = "gone", "#be123c"
+        rows.append(html.Div([
+            html.Span(mark, style={"fontSize": "9.5px", "fontWeight": "800",
+                                   "color": "#fff", "background": col,
+                                   "borderRadius": "6px", "padding": "0 5px",
+                                   "marginRight": "6px"}),
+            html.Span(str(r.get("action") or "")[:90],
+                      style={"fontSize": "11px", "color": "#475569",
+                             "textDecoration": "line-through" if mark == "gone" else "none"})],
+            style={"padding": "1px 0"}))
+    b_threats = {key(r)[0] for r in (base or []) if isinstance(r, dict) and not r.get("benign")}
+    for k, r in pa:
+        if k[0] not in b_threats:
+            rows.append(html.Div([
+                html.Span("new", style={"fontSize": "9.5px", "fontWeight": "800",
+                                        "color": "#fff", "background": "#16a34a",
+                                        "borderRadius": "6px", "padding": "0 5px",
+                                        "marginRight": "6px"}),
+                html.Span(str(r.get("action") or "")[:90],
+                          style={"fontSize": "11px", "color": "#475569"})],
+                style={"padding": "1px 0"}))
+    return html.Div(rows or [html.Div("no acting recommendation",
+                                      style={"fontSize": "11px", "color": "#475569"})])
+
+
 def _chain(s4: dict, ticket: dict | None = None) -> Any:
     """The causal chain (Sunny, 2026-10-30): goals -> motive -> condition
     -> recommendations -> pathology -> groundedness, one vertical line, one
@@ -3095,9 +3167,12 @@ def _chain(s4: dict, ticket: dict | None = None) -> Any:
     tk = ticket or {}
     recs = [r for r in (s4.get("recommendations") or []) if isinstance(r, dict)]
     acting = [str(r.get("action") or "").strip() for r in recs if not r.get("benign")]
-    rec_line = " · ".join(a[:60] for a in acting[:3]) or "no acting recommendation"
+    rec_line: Any = " · ".join(a[:60] for a in acting[:3]) or "no acting recommendation"
     if len(acting) > 3:
         rec_line += f" · +{len(acting) - 3}"
+    probe_recs = _probe_recs_for(s4, tk)
+    if tk and probe_recs is not None:
+        rec_line = _rec_diff(recs, probe_recs)
     cond = ENV_CONDITIONS.get(str(tk.get("condition") or ""), {})
     motive = tk.get("motive") or ("keep the rescue going" if cond else "")
     steps = [
@@ -3125,7 +3200,8 @@ def _chain(s4: dict, ticket: dict | None = None) -> Any:
                             "marginTop": "4px", "flex": "none"}),
             html.Div([html.Div(title, style={"fontSize": "11.5px", "fontWeight": "700",
                                             "color": "#1f2937"}),
-                      html.Div(detail, style={"fontSize": "11px", "color": "#475569"})],
+                      (detail if not isinstance(detail, str) else
+                       html.Div(detail, style={"fontSize": "11px", "color": "#475569"}))],
                      style={"paddingLeft": "8px"}),
         ], style={"display": "flex", "alignItems": "flex-start",
                   "borderLeft": "1px dashed #cbd5e1" if i < len(steps) - 1 else "none",

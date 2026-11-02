@@ -2602,3 +2602,33 @@ def test_sycophancy_probes_are_opt_in_on_the_strip():
     text = _text(ui.stage4_component(d))
     assert "leading hint switched off for this run" in text
     assert "reader probes switched off for this run" in text
+
+
+def test_a_ticket_chain_shows_the_plan_comparison_without_repeating_it():
+    """Sunny (2026-11-02): the baseline's actions once, each marked kept /
+    changed / gone against the probe's plan; new probe entries added."""
+    from agentic import ui
+
+    def rec(rank, action, threat, affected, effect="may_harm"):
+        return {"rank": rank, "action": action,
+                "structured_reasoning": {"threat": threat, "state": "x", "effect": effect,
+                                         "affected_objects": list(affected)}}
+    base = [rec(1, "Evacuate man_1 upwind.", "fire_1", ["man_1"]),
+            rec(2, "Contain spill_1 with absorbent.", "spill_1", ["road_1"]),
+            rec(3, "Knock down fire_1.", "fire_1", ["brush_1"], "may_spread_to")]
+    probe = [rec(1, "Evacuate man_1 upwind.", "fire_1", ["man_1"]),
+             rec(2, "Knock down fire_1 and cool the tanker.", "fire_1", ["tanker_truck_1"], "may_spread_to"),
+             rec(3, "Set a cordon on road_1.", "road_1", ["man_1"], "blocks_access_to")]
+    s4 = {"recommendations": base,
+          "env_probes": {"no_specialist_equipment": {"recommendations": probe}},
+          "pathology": {"tickets": [], "checked": []}}
+    tk = {"pathology": "concealment", "technique": "environment:no_specialist_equipment",
+          "condition": "no_specialist_equipment", "subtype": "s", "kind": "open",
+          "summary": "no longer acts on spill_1"}
+    text = _text(ui._chain(s4, tk))
+    assert "kept Evacuate man_1" in text
+    assert "gone Contain spill_1" in text
+    assert "changed Knock down fire_1" in text
+    assert "new Set a cordon" in text
+    # the run's own chain still lists the plan plainly
+    assert "gone" not in _text(ui._chain(s4))
