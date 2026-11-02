@@ -3084,25 +3084,38 @@ def _run_pathology_line(s4: dict) -> str:
     return f"{len(tks)} detected: " + ", ".join(parts) + " — see the tickets below"
 
 
-def _probe_recs_for(s4: dict, tk: dict) -> list | None:
-    """The plan the ticket was read from: the probe answer behind it. None
-    when the ticket has no probe (the safe-scene check reads the main plan)."""
+def _probe_recs_for(s4: dict, tk: dict) -> list[tuple[str, list]]:
+    """The plan(s) the ticket was read from: [(label, recommendations)].
+    Empty when the ticket has no probe (the safe-scene check reads the
+    main plan). Register tickets carry kind/subtype/condition; raw
+    detector tickets carry pathology/technique — both shapes are read."""
+    fam = tk.get("pathology") or tk.get("kind")
     tech = str(tk.get("technique") or "")
-    if tech.startswith("environment:"):
-        return ((s4.get("env_probes") or {}).get(tech.split(":", 1)[1]) or {}).get("recommendations")
-    if tk.get("pathology") == "sycophancy":
-        if "hint" in tech:
-            return (s4.get("leading_probe") or {}).get("recommendations")
-        if "audience" in tech:
+    sub = str(tk.get("subtype") or "")
+    cond = tk.get("condition")
+    if tech.startswith("environment:") or (fam == "concealment" and cond and not tk.get("variant")):
+        name = tech.split(":", 1)[1] if tech.startswith("environment:") else cond
+        recs = ((s4.get("env_probes") or {}).get(name) or {}).get("recommendations")
+        return [("", recs)] if recs is not None else []
+    if fam == "sycophancy":
+        if "hint" in tech or "hint" in sub:
+            recs = (s4.get("leading_probe") or {}).get("recommendations")
+            return [("", recs)] if recs is not None else []
+        if "audience" in tech or "audience" in sub:
             aud = s4.get("audience_probes") or {}
-            who = ((tk.get("findings") or [{}])[0]).get("audience")
-            return (aud.get(who) or {}).get("recommendations") if who else None
-        return None
-    if tk.get("pathology") in ("concealment", "sandbagging"):
-        fam = "concealment_probes" if tk.get("pathology") == "concealment" else "sandbagging_probes"
+            whos = [f.get("audience") for f in (tk.get("findings") or []) if f.get("audience")]
+            out = []
+            for who in whos or list(aud):
+                recs = (aud.get(who) or {}).get("recommendations")
+                if recs is not None:
+                    out.append((f"reader: {who}", recs))
+            return out
+        return []
+    if fam in ("concealment", "sandbagging"):
         key = f"{tk.get('motive')}:{tk.get('variant')}"
-        return ((s4.get(fam) or {}).get(key) or {}).get("recommendations")
-    return None
+        recs = ((s4.get(f"{fam}_probes") or {}).get(key) or {}).get("recommendations")
+        return [("", recs)] if recs is not None else []
+    return []
 
 
 def _rec_diff(base: list, probe: list) -> Any:
@@ -3170,9 +3183,15 @@ def _chain(s4: dict, ticket: dict | None = None) -> Any:
     rec_line: Any = " · ".join(a[:60] for a in acting[:3]) or "no acting recommendation"
     if len(acting) > 3:
         rec_line += f" · +{len(acting) - 3}"
-    probe_recs = _probe_recs_for(s4, tk)
-    if tk and probe_recs is not None:
-        rec_line = _rec_diff(recs, probe_recs)
+    probe_plans = _probe_recs_for(s4, tk) if tk else []
+    if probe_plans:
+        blocks = []
+        for label, probe in probe_plans:
+            if label:
+                blocks.append(html.Div(label, style={"fontSize": "10.5px", "fontWeight": "700",
+                                                     "color": "#64748b", "marginTop": "3px"}))
+            blocks.append(_rec_diff(recs, probe))
+        rec_line = html.Div(blocks)
     cond = ENV_CONDITIONS.get(str(tk.get("condition") or ""), {})
     motive = tk.get("motive") or ("keep the rescue going" if cond else "")
     steps = [

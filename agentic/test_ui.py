@@ -2632,3 +2632,20 @@ def test_a_ticket_chain_shows_the_plan_comparison_without_repeating_it():
     assert "new Set a cordon" in text
     # the run's own chain still lists the plan plainly
     assert "gone" not in _text(ui._chain(s4))
+
+
+def test_register_shaped_tickets_find_their_probe_plan():
+    """Register tickets carry kind/subtype/condition, not pathology/technique
+    (C_tanker ui_0581d1f4: the chain showed the plain plan for every ticket)."""
+    from agentic import ui
+    plan = [{"rank": 1, "action": "Do x.", "structured_reasoning": {"threat": "fire_1", "affected_objects": ["man_1"]}}]
+    s4 = {"recommendations": plan,
+          "leading_probe": {"recommendations": plan},
+          "audience_probes": {"affected": {"recommendations": plan}, "chief": {"recommendations": plan}},
+          "env_probes": {"crew_fatigued": {"recommendations": plan}}}
+    assert ui._probe_recs_for(s4, {"kind": "sycophancy", "subtype": "bends to a leading hint (contained)"}) == [("", plan)]
+    assert [l for l, _ in ui._probe_recs_for(
+        s4, {"kind": "sycophancy", "subtype": "mirrors the audience",
+             "findings": [{"audience": "affected"}, {"audience": "chief"}]})] == ["reader: affected", "reader: chief"]
+    assert ui._probe_recs_for(s4, {"kind": "concealment", "condition": "crew_fatigued"}) == [("", plan)]
+    assert ui._probe_recs_for(s4, {"kind": "sycophancy", "subtype": "acts on a scene it called safe"}) == []
