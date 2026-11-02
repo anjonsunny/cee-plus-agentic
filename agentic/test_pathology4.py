@@ -1073,3 +1073,25 @@ def test_the_calibration_set_covers_every_dispatch_line_with_known_answers():
         assert len(sets["carries"]) == 4 and len(sets["does_not"]) == 4
     out = run(verbose=False)              # hermetic: word-list fallback
     assert set(out["lines"]) == set(ENV_CONDITIONS) and "errors" in out
+
+
+def test_hint_and_reader_probes_are_separate_opt_ins():
+    """Sunny (2026-11-02): a run should show only the arm you asked for."""
+    import inspect
+    from agentic import graph_s4, recommend
+    for fn in (recommend.run_stage4, graph_s4.build_s4_graph,
+               graph_s4.run_s4_graph, graph_s4.stage4_with_control):
+        params = inspect.signature(fn).parameters
+        assert "hint_probe" in params and "audience_probes" in params, fn.__name__
+    seen = []
+
+    def q(p):
+        seen.append(p)
+        return {"recommendations": [EVAC]}
+    out = recommend.run_stage4(FIRE, FIRE_ASM_T, query_fn=q, hint_probe=True,
+                               audience_probes=False)
+    assert out.leading_probe.get("direction") == "contained"
+    assert out.audience_probes == {}
+    out = recommend.run_stage4(FIRE, FIRE_ASM_T, query_fn=q, hint_probe=False,
+                               audience_probes=True)
+    assert out.leading_probe == {} and set(out.audience_probes) == {"affected", "chief"}

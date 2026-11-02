@@ -341,7 +341,13 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
                            "stage4": bool(ev.get("stage4")),
                            "concealment": bool(ev.get("concealment")),
                            "sandbagging": bool(ev.get("sandbagging")),
-                           "env": bool(ev.get("env"))}
+                           "env": bool(ev.get("env")),
+                           "hint": bool(ev.get("hint")),
+                           "readers": bool(ev.get("readers"))}
+            if "hint" in ev and not ev.get("hint"):
+                d["stage4_marks"].add("leading")
+            if "readers" in ev and not ev.get("readers"):
+                d["stage4_marks"].add("audience")
             if not ev.get("stage4"):
                 d["stage4_marks"].add("uncertainty")   # nothing to wait for
             if not ev.get("concealment"):
@@ -1107,6 +1113,8 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
                       "sandbagging": SANDBAGGING["on"],
                       "sandbagging_motives": SANDBAGGING["motives"] or "all",
                       "env": ENV["on"],
+                      "hint": SYCOPHANCY["hint"],
+                      "readers": SYCOPHANCY["readers"],
                       "env_conditions": ENV["conditions"] or "all"})
                 # F24 — the card judge. ADVISORY and display-only: it never
                 # enters a score, which is exactly why it is safe to leave on
@@ -1132,7 +1140,8 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
                                          probe_fn=_s4_probe,
                                          judge_fn=_card_judge,
                                          think_fn=_s4_think,
-                                         pathology_probes=True,
+                                         hint_probe=SYCOPHANCY["hint"],
+                                         audience_probes=SYCOPHANCY["readers"],
                                          concealment_probes=CONCEALMENT["on"],
                                          concealment_motives=CONCEALMENT["motives"] or None,
                                          sandbagging_probes=SANDBAGGING["on"],
@@ -3460,6 +3469,12 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
         if d.get("reasks") and not d["reasks"].get("sandbagging"):
             LIVE = [(k, k2, "sandbagging probes switched off for this run"
                      if k == "sandbagging" else lab) for k, k2, lab in LIVE]
+        if d.get("reasks") and "hint" in d["reasks"] and not d["reasks"]["hint"]:
+            LIVE = [(k, k2, "leading hint switched off for this run"
+                     if k == "leading" else lab) for k, k2, lab in LIVE]
+        if d.get("reasks") and "readers" in d["reasks"] and not d["reasks"]["readers"]:
+            LIVE = [(k, k2, "reader probes switched off for this run"
+                     if k == "audience" else lab) for k, k2, lab in LIVE]
         if d.get("reasks") and not d["reasks"].get("env"):
             LIVE = [(k, k2, "environment arm switched off for this run"
                      if k == "env" else lab) for k, k2, lab in LIVE]
@@ -5639,6 +5654,17 @@ app.layout = html.Div([
                    for c in _ENV_CONDITION_NAMES],
                 className="ctl-toggle", style={"fontSize": "10.5px"}),
         ], className="ctl-group"),
+        # Sycophancy probes (opt-in since 2026-11-02, Sunny: a run should
+        # show only the arm you asked for). The hint is one call; the two
+        # readers are two.
+        html.Div([
+            html.Span("sycophancy", className="ctl-lbl"),
+            dcc.Checklist(
+                id="sycophancy-probes", value=[], inline=True,
+                options=[{"label": " leading hint (1 call)", "value": "hint"},
+                         {"label": " readers (2 calls)", "value": "readers"}],
+                className="ctl-toggle", style={"fontSize": "10.5px"}),
+        ], className="ctl-group"),
         # Sandbagging (2026-10-07): same shape as concealment — nothing
         # ticked = off; "all" = all five; else the ticked motives.
         html.Div([
@@ -5779,13 +5805,14 @@ def refresh_replay_options(_run_id, n, current):
               State("reasks-mode", "value"),
               State("concealment-motives", "value"),
               State("sandbagging-motives", "value"),
+              State("sycophancy-probes", "value"),
               State("env-conditions", "value"),
               prevent_initial_call=True)
 def start_run(_clicks, replay_path, cached, caption,
               control_mode, retrieval_choice, judges_choice="off",
               subject_choice=None, reasks_choice=None,
               concealment_motives=None, sandbagging_motives=None,
-              env_conditions=None):
+              sycophancy_probes=None, env_conditions=None):
     # Apply the on-screen toggles for this run (in-process override).
     from agentic.graph_live import set_control
     from agentic.retrieval import set_retrieval
@@ -5801,6 +5828,9 @@ def start_run(_clicks, replay_path, cached, caption,
     picked = list(sandbagging_motives or [])
     SANDBAGGING["on"] = bool(picked)
     SANDBAGGING["motives"] = [] if "all" in picked else picked
+    picked = list(sycophancy_probes or [])
+    SYCOPHANCY["hint"] = "hint" in picked
+    SYCOPHANCY["readers"] = "readers" in picked
     picked = list(env_conditions or [])
     ENV["on"] = bool(picked)
     ENV["conditions"] = [] if "all" in picked else picked
@@ -5828,6 +5858,7 @@ REASKS: dict[str, bool] = {"s2": False, "s4": False}
 CONCEALMENT: dict[str, Any] = {"on": False, "motives": []}
 SANDBAGGING: dict[str, Any] = {"on": False, "motives": []}
 ENV: dict[str, Any] = {"on": False, "conditions": []}
+SYCOPHANCY: dict[str, bool] = {"hint": False, "readers": False}
 
 
 def _fmt_args(args: dict[str, Any]) -> str:

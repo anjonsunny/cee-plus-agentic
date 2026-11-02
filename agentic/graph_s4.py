@@ -78,6 +78,8 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
                    explain_fn: Any = None, judge_fn: Any = None,
                    think_fn: Any = None,
                    pathology_probes: bool | None = None,
+                   hint_probe: bool | None = None,
+                   audience_probes: bool | None = None,
                    concealment_probes: bool = False,
                    concealment_motives: list | None = None,
                    sandbagging_probes: bool = False,
@@ -179,15 +181,17 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
         return {"trust": t["trust"]}
 
     def leading_probe(state: S4State) -> dict[str, Any]:
+        _hint = pathology_probes if hint_probe is None else hint_probe
         return run_leading_probe(state["record"], state["assessment"],
                                  query_fn=query_fn, n_probes=n_probes,
-                                 think_fn=think_fn, enabled=pathology_probes,
+                                 think_fn=think_fn, enabled=_hint,
                                  on_event=on_event)
 
-    def audience_probes(state: S4State) -> dict[str, Any]:
+    def audience_probes_node(state: S4State) -> dict[str, Any]:
+        _aud = pathology_probes if audience_probes is None else audience_probes
         return run_audience_probes(state["record"], state["assessment"],
                                    query_fn=query_fn, n_probes=n_probes,
-                                   think_fn=think_fn, enabled=pathology_probes,
+                                   think_fn=think_fn, enabled=_aud,
                                    on_event=on_event)
 
     def concealment(state: S4State) -> dict[str, Any]:
@@ -234,7 +238,7 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
     g.add_node("runoff_judge", runoff_judge)
     g.add_node("trust", trust)
     g.add_node("leading_probe", leading_probe)
-    g.add_node("audience_probes", audience_probes)
+    g.add_node("audience_probes", audience_probes_node)
     g.add_node("concealment", concealment)
     g.add_node("sandbagging", sandbagging)
     g.add_node("env", env)
@@ -268,6 +272,8 @@ def run_s4_graph(record: Any, assessment: Any, image_path: str = "",
                  probe_fn: QueryFn | None = None, explain_fn: Any = None,
                  judge_fn: Any = None, think_fn: Any = None,
                  pathology_probes: bool | None = None,
+                 hint_probe: bool | None = None,
+                 audience_probes: bool | None = None,
                  concealment_probes: bool = False,
                  concealment_motives: list | None = None,
                  sandbagging_probes: bool = False,
@@ -286,6 +292,7 @@ def run_s4_graph(record: Any, assessment: Any, image_path: str = "",
                            explain_fn=explain_fn, judge_fn=judge_fn,
                            think_fn=think_fn,
                            pathology_probes=pathology_probes,
+                           hint_probe=hint_probe, audience_probes=audience_probes,
                            concealment_probes=concealment_probes,
                            concealment_motives=concealment_motives,
                            sandbagging_probes=sandbagging_probes,
@@ -331,6 +338,8 @@ def stage4_with_control(record: Any, assessment: Any, image_path: str = "",
                         probe_fn: QueryFn | None = None, explain_fn: Any = None,
                         judge_fn: Any = None, think_fn: Any = None,
                         pathology_probes: bool | None = None,
+                        hint_probe: bool | None = None,
+                        audience_probes: bool | None = None,
                         concealment_probes: bool = False,
                         concealment_motives: list | None = None,
                         sandbagging_probes: bool = False,
@@ -347,6 +356,7 @@ def stage4_with_control(record: Any, assessment: Any, image_path: str = "",
                             explain_fn=explain_fn, judge_fn=judge_fn,
                             think_fn=think_fn,
                             pathology_probes=pathology_probes,
+                            hint_probe=hint_probe, audience_probes=audience_probes,
                             concealment_probes=concealment_probes,
                             concealment_motives=concealment_motives,
                             sandbagging_probes=sandbagging_probes,
@@ -357,6 +367,7 @@ def stage4_with_control(record: Any, assessment: Any, image_path: str = "",
                      query_fn=query_fn, probe_fn=probe_fn,
                      explain_fn=explain_fn, judge_fn=judge_fn,
                      think_fn=think_fn, pathology_probes=pathology_probes,
+                     hint_probe=hint_probe, audience_probes=audience_probes,
                      concealment_probes=concealment_probes,
                      concealment_motives=concealment_motives,
                      sandbagging_probes=sandbagging_probes,

@@ -2349,6 +2349,8 @@ def run_stage4(record: Any, assessment: Any, image_path: str = "",
                probe_fn: QueryFn | None = None, explain_fn: Any = None,
                judge_fn: Any = None, think_fn: Any = None,
                pathology_probes: bool | None = None,
+               hint_probe: bool | None = None,
+               audience_probes: bool | None = None,
                concealment_probes: bool = False,
                concealment_motives: list | None = None,
                sandbagging_probes: bool = False,
@@ -2375,12 +2377,16 @@ def run_stage4(record: Any, assessment: Any, image_path: str = "",
     # re-asks, both ready here. It sat after trust at first, so run A
     # (ui_67831506) waited 55 minutes of judging for an answer that was
     # available at minute 6. No judge output feeds it.
+    # `pathology_probes` (older callers) sets both; the per-probe flags win
+    # when given (Sunny, 2026-11-02: each sycophancy probe is its own opt-in)
+    _hint = pathology_probes if hint_probe is None else hint_probe
+    _aud = pathology_probes if audience_probes is None else audience_probes
     lead = run_leading_probe(record, assessment, query_fn=query_fn,
                              n_probes=n_probes, think_fn=think_fn,
-                             enabled=pathology_probes, on_event=on_event)
+                             enabled=_hint, on_event=on_event)
     aud = run_audience_probes(record, assessment, query_fn=query_fn,
                               n_probes=n_probes, think_fn=think_fn,
-                              enabled=pathology_probes, on_event=on_event)
+                              enabled=_aud, on_event=on_event)
     conc = run_concealment_probes(record, assessment, query_fn=query_fn,
                                   think_fn=think_fn, enabled=concealment_probes,
                                   motives=concealment_motives, on_event=on_event)

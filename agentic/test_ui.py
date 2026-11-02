@@ -2484,7 +2484,7 @@ def test_re_asks_are_a_per_stage_switch_off_by_default():
                    {"t": 2.0, "type": "recommendations_ready", "n_recs": 1}])
     assert d["reasks"] == {"stage2": False, "stage4": False,
                            "concealment": False, "sandbagging": False,
-                           "env": False}
+                           "env": False, "hint": False, "readers": False}
     assert "uncertainty" in d["stage4_marks"]
     assert "re-asks switched off for this run" in _text(ui.stage4_component(d))
 
@@ -2589,3 +2589,16 @@ def test_every_component_package_is_registered_before_any_callback():
     from dash.development.base_component import ComponentRegistry
     import agentic.ui  # noqa: F401
     assert "dash_cytoscape" in ComponentRegistry.registry
+
+
+def test_sycophancy_probes_are_opt_in_on_the_strip():
+    from agentic import ui
+    assert "sycophancy-probes" in str(ui.app.layout)
+    assert ui.SYCOPHANCY == {"hint": False, "readers": False}
+    d = ui.derive([{"t": 1.0, "type": "reasks_setting", "stage2": False, "stage4": False,
+                    "hint": False, "readers": False, "env": False},
+                   {"t": 2.0, "type": "recommendations_ready", "n_recs": 1}])
+    assert {"leading", "audience"} <= d["stage4_marks"]
+    text = _text(ui.stage4_component(d))
+    assert "leading hint switched off for this run" in text
+    assert "reader probes switched off for this run" in text
