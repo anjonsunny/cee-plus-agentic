@@ -2557,3 +2557,27 @@ def test_the_causal_chain_is_always_visible_and_per_ticket():
     # the run's own chain summarises the tickets, never "none detected"
     # beside a count of 1 (C_tanker ui_0581d1f4)
     assert "1 detected: concealment" in text and "none detected" not in text
+
+
+def test_replay_list_is_newest_first_and_labelled_by_image_and_time(tmp_path, monkeypatch):
+    """2026-11-02: a fresh run was missing from the replay list and an older
+    one got picked — the list was built once at server start, sorted by
+    random run id, labelled only by id."""
+    import json as _json
+    import os as _os
+    import time as _time
+    from agentic import ui
+    runs = tmp_path / "runs"
+    for i, (rid, img, t) in enumerate([("ui_aaaa", "C_tanker_fire.jpg", 1000.0),
+                                       ("ui_zzzz", "A_fire.png", 2000.0)]):
+        d = runs / rid
+        d.mkdir(parents=True)
+        (d / "events.jsonl").write_text(_json.dumps({"t": t, "type": "run_started",
+                                                      "image_name": img}) + "\n")
+        _os.utime(d / "events.jsonl", (t, t))
+    monkeypatch.setattr(ui, "UI_RUNS_DIR", runs)
+    monkeypatch.setattr(ui, "PERCEPTION_DIR", tmp_path / "none")
+    opts = ui.saved_records()
+    assert [o["label"].split(" · ")[0] for o in opts] == ["A_fire", "C_tanker_fire"]
+    assert all(o["label"].endswith(o["value"].split("/")[-2]) for o in opts)
+    assert "refresh_replay_options" in dir(ui)

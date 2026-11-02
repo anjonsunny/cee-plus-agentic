@@ -855,15 +855,35 @@ def build_replay_events(record: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def saved_records() -> list[dict[str, str]]:
-    """Replayables: frozen worked-example records, plus every UI run's
-    events.jsonl flight recorder (true replay, exact event stream)."""
+    """Replayables: every UI run's events.jsonl flight recorder (true
+    replay, exact event stream), newest first, labelled with the image and
+    the time — then the frozen worked-example records.
+
+    Sunny (2026-11-02): the list was built once at server start, sorted by
+    run id (random hex) and labelled only "ui run · ui_xxxx", so a fresh
+    run was not in it and an older one got picked. Now rebuilt every time
+    the dropdown opens, newest first, with image name and time."""
+    import datetime as _dt
     opts: list[dict[str, str]] = []
-    if PERCEPTION_DIR.exists():
-        opts += [{"label": p.name.replace("__perception.json", ""), "value": str(p)}
-                 for p in sorted(PERCEPTION_DIR.glob("*__perception.json"))]
     if UI_RUNS_DIR.exists():
-        opts += [{"label": f"ui run · {p.parent.name}", "value": str(p)}
-                 for p in sorted(UI_RUNS_DIR.glob("*/events.jsonl"))]
+        runs = sorted(UI_RUNS_DIR.glob("*/events.jsonl"),
+                      key=lambda q: q.stat().st_mtime, reverse=True)
+        for p in runs:
+            img, when = "", ""
+            try:
+                first = p.open().readline()
+                head = json.loads(first) if first else {}
+                img = str(head.get("image_name") or "").rsplit(".", 1)[0]
+                when = _dt.datetime.fromtimestamp(
+                    float(head.get("t") or p.stat().st_mtime)).strftime("%b %d %H:%M")
+            except Exception:
+                when = _dt.datetime.fromtimestamp(p.stat().st_mtime).strftime("%b %d %H:%M")
+            opts.append({"label": f"{img or 'run'} · {when} · {p.parent.name}",
+                         "value": str(p)})
+    if PERCEPTION_DIR.exists():
+        opts += [{"label": "example · " + p.name.replace("__perception.json", ""),
+                  "value": str(p)}
+                 for p in sorted(PERCEPTION_DIR.glob("*__perception.json"))]
     return opts
 
 
@@ -5728,6 +5748,19 @@ def cache_upload(contents, filename):
         html.Span(filename or "image", className="upload-name"),
     ], className="upload-inner")
     return {"contents": contents, "filename": filename}, picked, ""
+
+
+@app.callback(Output("replay", "options"),
+              Input("run-id", "data"), Input("tick", "n_intervals"),
+              State("replay", "options"), prevent_initial_call=False)
+def refresh_replay_options(_run_id, n, current):
+    """Keep the replay list current: on page load, when a run starts, and
+    every ~70 s while the page is open (the tick is 700 ms; most ticks are
+    skipped). Returns no_update when nothing changed."""
+    if ctx.triggered_id == "tick" and (n or 0) % 100:
+        return dash.no_update
+    fresh = saved_records()
+    return fresh if fresh != (current or []) else dash.no_update
 
 
 @app.callback(Output("run-id", "data"),
