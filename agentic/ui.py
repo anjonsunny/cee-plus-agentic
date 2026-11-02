@@ -51,6 +51,12 @@ from typing import Any
 
 import dash
 from dash import ALL, Input, Output, State, ctx, dcc, html
+# Dash 3 refuses a callback that registers a new component package. main.py
+# (Arm A, imported lazily by the renderers) pulls in dash_cytoscape, and
+# the first callback to reach it raised ImportedInsideCallbackError
+# (2026-11-02, once the replay-list callback ran before render). Register
+# it here, at import time, so no callback is ever the first.
+import dash_cytoscape  # noqa: F401
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:

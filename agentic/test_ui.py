@@ -2581,3 +2581,11 @@ def test_replay_list_is_newest_first_and_labelled_by_image_and_time(tmp_path, mo
     assert [o["label"].split(" · ")[0] for o in opts] == ["A_fire", "C_tanker_fire"]
     assert all(o["label"].endswith(o["value"].split("/")[-2]) for o in opts)
     assert "refresh_replay_options" in dir(ui)
+
+
+def test_every_component_package_is_registered_before_any_callback():
+    """Dash 3 raises ImportedInsideCallbackError when a callback is the first
+    to import a component package (2026-11-02: main.py's dash_cytoscape)."""
+    from dash.development.base_component import ComponentRegistry
+    import agentic.ui  # noqa: F401
+    assert "dash_cytoscape" in ComponentRegistry.registry
