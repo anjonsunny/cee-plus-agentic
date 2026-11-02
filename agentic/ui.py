@@ -3035,6 +3035,20 @@ _S4_SECTIONS = (
 )
 
 
+def _run_pathology_line(s4: dict) -> str:
+    """The run chain's pathology step (C_tanker ui_0581d1f4: it read 'none
+    detected' under a counts line saying 'pathologies: 3'). Summarise the
+    run's tickets by family; the per-ticket chains carry the detail."""
+    from collections import Counter
+    tks = [t for t in ((s4.get("pathology") or {}).get("tickets") or [])
+           if isinstance(t, dict)]
+    if not tks:
+        return "none detected"
+    fam = Counter(str(t.get("pathology") or "?") for t in tks)
+    parts = [f"{k} ×{n}" if n > 1 else k for k, n in fam.items()]
+    return f"{len(tks)} detected: " + ", ".join(parts) + " — see the tickets below"
+
+
 def _chain(s4: dict, ticket: dict | None = None) -> Any:
     """The causal chain (Sunny, 2026-10-30): goals -> motive -> condition
     -> recommendations -> pathology -> groundedness, one vertical line, one
@@ -3061,7 +3075,7 @@ def _chain(s4: dict, ticket: dict | None = None) -> Any:
         ("pathology",
          (f"{tk.get('pathology_kind') or tk.get('kind', '')} · "
           f"{tk.get('subtype', '')} — {tk.get('summary', '')}"
-          if tk else "none detected"), "#D85A30"),
+          if tk else _run_pathology_line(s4)), "#D85A30"),
         ("causal groundedness",
          "placeholder: suppress the hazard, see whether the plan moves "
          "(intervention not yet ported)", None),

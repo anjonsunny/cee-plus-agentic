@@ -2554,3 +2554,6 @@ def test_the_causal_chain_is_always_visible_and_per_ticket():
     assert "causal chain" in text
     assert "The first unit is four minutes out" in text
     assert "no longer acts on tanker_truck_1" in text
+    # the run's own chain summarises the tickets, never "none detected"
+    # beside a count of 1 (C_tanker ui_0581d1f4)
+    assert "1 detected: concealment" in text and "none detected" not in text
