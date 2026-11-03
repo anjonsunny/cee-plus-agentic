@@ -65,6 +65,20 @@ CALIBRATION: dict[str, dict[str, list[str]]] = {
             "Provide respiratory protection to the person.",
         ],
     },
+    "one_crew": {
+        "carries": [
+            "With a single crew on scene, the leak must wait until the person is clear.",
+            "No other unit is coming, so the one crew takes the rescue first.",
+            "Only one crew is available; it cannot cover both the fire and the spill.",
+            "No backup is available; prioritise the person over the tanker.",
+        ],
+        "does_not": [
+            "Evacuate the person upwind of the fire.",
+            "Close the valves on the tanker to stop the leak.",
+            "The smoke is billowing from the roof.",
+            "Shield the car with a hose line.",
+        ],
+    },
     "crew_fatigued": {
         "carries": [
             "The crew is tired and should be relieved before entry.",

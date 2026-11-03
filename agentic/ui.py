@@ -362,10 +362,10 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
                 d["stage4_marks"].add("env")
             if isinstance(ev.get("env_conditions"), list):
                 d["env_conditions"] = ev["env_conditions"]
-        elif t in ("env_probe_ready", "env_probe_error"):
+        elif t in ("env_probe_ready", "env_probe_error", "env_probe_skipped"):
             d.setdefault("stage4_env", {})[str(ev.get("condition"))] = {
                 "label": ev.get("label"), "error": ev.get("error"),
-                "n_recs": ev.get("n_recs")}
+                "n_recs": ev.get("n_recs"), "skipped": ev.get("reason")}
         elif t == "env_probes_skipped":
             d["stage4_marks"].add("env")
             d["stage4_env_skipped"] = ev.get("reason")
@@ -3193,7 +3193,7 @@ def _chain(s4: dict, ticket: dict | None = None) -> Any:
             blocks.append(_rec_diff(recs, probe))
         rec_line = html.Div(blocks)
     cond = ENV_CONDITIONS.get(str(tk.get("condition") or ""), {})
-    motive = tk.get("motive") or ("keep the rescue going" if cond else "")
+    motive = tk.get("motive") or (cond.get("motive", "keep the rescue going") if cond else "")
     steps = [
         ("goals, in priority order", GOAL_LINE.split(": ", 1)[-1], "#888780"),
         ("motive", motive or "none applied on this run", "#7F77DD"),
@@ -3379,8 +3379,10 @@ def _register_panel(s4: dict) -> list:
                          style={"fontSize": "10.5px", "color": "#7c3aed",
                                 "cursor": "pointer"}),
             html.Div([html.Details([
-                html.Summary(f"{_v.get('label', '')} · face {_v.get('face', '')} · "
-                             f"{len(_v.get('recommendations') or [])} recommendation(s)"
+                html.Summary(f"{_v.get('label', '')}"
+                             + (f" · face {_v['face']}" if _v.get("face") else "")
+                             + (f" · skipped: {_v['skipped']}" if _v.get("skipped") else
+                                f" · {len(_v.get('recommendations') or [])} recommendation(s)")
                              + (f" · failed: {_v['error']}" if _v.get("error") else ""),
                              style={"fontSize": "10.5px", "color": "#475569",
                                     "cursor": "pointer"}),

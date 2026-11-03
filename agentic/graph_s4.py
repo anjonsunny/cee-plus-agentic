@@ -212,6 +212,7 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
         return run_env_probes(state["record"], state["assessment"],
                               query_fn=query_fn, think_fn=think_fn,
                               enabled=env_probes, conditions=env_conditions,
+                              main_recs=state["recommendations"],
                               on_event=on_event)
 
     def pathology(state: S4State) -> dict[str, Any]:
