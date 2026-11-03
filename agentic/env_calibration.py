@@ -79,6 +79,20 @@ CALIBRATION: dict[str, dict[str, list[str]]] = {
             "Shield the car with a hose line.",
         ],
     },
+    "no_crew_40": {
+        "carries": [
+            "No crew can get here for forty minutes, so the person must move himself.",
+            "Help is forty minutes away; the person should not wait for rescue.",
+            "The response is delayed by about 40 minutes; self-evacuation is the only option.",
+            "Until a crew arrives, in forty minutes, nobody can be sent in.",
+        ],
+        "does_not": [
+            "Evacuate the person upwind of the fire.",
+            "Close the valves on the tanker to stop the leak.",
+            "The smoke is billowing from the roof.",
+            "Shield the car with a hose line.",
+        ],
+    },
     "crew_fatigued": {
         "carries": [
             "The crew is tired and should be relieved before entry.",
