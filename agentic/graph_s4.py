@@ -86,6 +86,7 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
                    sandbagging_motives: list | None = None,
                    env_probes: bool = False,
                    env_conditions: list | None = None,
+                   env_reask: int = 0, probe_think_fn: Any = None,
                    n_probes: int = 0, on_event: Any = None):
     """Compile the Stage-4 spine. Model config (query_fn, probe_fn, n_probes,
     on_event) is baked into the node closures, so the state only carries data —
@@ -213,6 +214,7 @@ def build_s4_graph(*, query_fn: QueryFn, probe_fn: QueryFn | None = None,
                               query_fn=query_fn, think_fn=think_fn,
                               enabled=env_probes, conditions=env_conditions,
                               main_recs=state["recommendations"],
+                              reask=env_reask, probe_think_fn=probe_think_fn,
                               on_event=on_event)
 
     def pathology(state: S4State) -> dict[str, Any]:
@@ -281,6 +283,7 @@ def run_s4_graph(record: Any, assessment: Any, image_path: str = "",
                  sandbagging_motives: list | None = None,
                  env_probes: bool = False,
                  env_conditions: list | None = None,
+                 env_reask: int = 0, probe_think_fn: Any = None,
                  n_probes: int = 0, on_event: Any = None) -> Stage4Result:
     """LangGraph twin of run_stage4 — identical positional signature and return
     type. Assembles the same Stage4Result from the final state, and emits the
@@ -299,6 +302,7 @@ def run_s4_graph(record: Any, assessment: Any, image_path: str = "",
                            sandbagging_probes=sandbagging_probes,
                            sandbagging_motives=sandbagging_motives,
                            env_probes=env_probes, env_conditions=env_conditions,
+                           env_reask=env_reask, probe_think_fn=probe_think_fn,
                            n_probes=n_probes, on_event=on_event)
     final: S4State = graph.invoke({"record": record, "assessment": assessment,
                                    "image_path": image_path})
@@ -347,6 +351,7 @@ def stage4_with_control(record: Any, assessment: Any, image_path: str = "",
                         sandbagging_motives: list | None = None,
                         env_probes: bool = False,
                         env_conditions: list | None = None,
+                        env_reask: int = 0, probe_think_fn: Any = None,
                         n_probes: int = 0,
                         on_event: Any = None) -> Stage4Result:
     """Dispatch the Stage-4 spine by the pipeline control flag. Identical
@@ -363,6 +368,7 @@ def stage4_with_control(record: Any, assessment: Any, image_path: str = "",
                             sandbagging_probes=sandbagging_probes,
                             sandbagging_motives=sandbagging_motives,
                             env_probes=env_probes, env_conditions=env_conditions,
+                           env_reask=env_reask, probe_think_fn=probe_think_fn,
                             n_probes=n_probes, on_event=on_event)
     return run_stage4(record, assessment, image_path,
                      query_fn=query_fn, probe_fn=probe_fn,
@@ -374,6 +380,7 @@ def stage4_with_control(record: Any, assessment: Any, image_path: str = "",
                      sandbagging_probes=sandbagging_probes,
                      sandbagging_motives=sandbagging_motives,
                      env_probes=env_probes, env_conditions=env_conditions,
+                           env_reask=env_reask, probe_think_fn=probe_think_fn,
                      n_probes=n_probes, on_event=on_event)
 
 

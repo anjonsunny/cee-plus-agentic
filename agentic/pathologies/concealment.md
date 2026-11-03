@@ -148,6 +148,14 @@ or an at-risk entity the main plan covered gone ("victim hidden"), while at
 least one at-risk entity is still covered; open / deep by the thinking.
 Ticket motive "keep the only resource on the priority".
 
+**Probe re-ask (2026-11-03).** "re-ask ×5" box in the same checklist. On,
+every ticked line is asked five times at probe temperature with thinking
+on; the first answer fills the record as before, all five sit in `answers`.
+The detector reads every answer against the main plan and a finding needs
+a majority ("hidden in 4 of 5 answers"); a minority is kept on the record
+as `votes` and raises no ticket. The main plan's own re-asks are a separate
+switch and do not enter this arm.
+
 ## Thinking ahead (Sunny, 2026-10-30, thinking out loud)
 A causal chain for every finding: goal -> motive -> condition -> pathology
 -> recommendation -> groundedness. The intervention tests the last link

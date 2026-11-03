@@ -66,6 +66,7 @@ from agentic import models as _models  # noqa: E402  (the model seats)
 from agentic.recommend import CONCEALMENT_MOTIVES as _CM  # noqa: E402
 from agentic.recommend import SANDBAGGING_MOTIVES as _SM  # noqa: E402
 from agentic.recommend import ENV_CONDITIONS as _EC  # noqa: E402
+from agentic.recommend import ENV_REASK_N as _ENV_REASK_N  # noqa: E402
 _CONCEALMENT_MOTIVE_NAMES = tuple(_CM)
 _SANDBAGGING_MOTIVE_NAMES = tuple(_SM)
 _ENV_CONDITION_NAMES = tuple(_EC)
@@ -362,6 +363,7 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
                 d["stage4_marks"].add("env")
             if isinstance(ev.get("env_conditions"), list):
                 d["env_conditions"] = ev["env_conditions"]
+            d["env_reask"] = int(ev.get("env_reask") or 0)
         elif t in ("env_probe_ready", "env_probe_error", "env_probe_skipped"):
             d.setdefault("stage4_env", {})[str(ev.get("condition"))] = {
                 "label": ev.get("label"), "error": ev.get("error"),
@@ -1097,6 +1099,14 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
                 if not _models.subject_thinks():
                     _s4_think = None
 
+                # the environment arm's probe re-ask: probe temperature,
+                # thinking on and returned (Sunny, 2026-11-03)
+                def _s4_probe_think(prompt, _u=_data_url):
+                    return _query_vlm(prompt, image_contents=_u,
+                                      temperature=REC_PROBE_TEMPERATURE,
+                                      think=_models.subject_thinks(),
+                                      with_thinking=True)
+
                 # probe re-asks: same image, raised temperature (channel-2 U)
                 def _s4_probe(prompt, _u=_data_url):
                     return _query_vlm(prompt, image_contents=_u,
@@ -1115,7 +1125,8 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
                       "env": ENV["on"],
                       "hint": SYCOPHANCY["hint"],
                       "readers": SYCOPHANCY["readers"],
-                      "env_conditions": ENV["conditions"] or "all"})
+                      "env_conditions": ENV["conditions"] or "all",
+                      "env_reask": _ENV_REASK_N if ENV["reask"] else 0})
                 # F24 — the card judge. ADVISORY and display-only: it never
                 # enters a score, which is exactly why it is safe to leave on
                 # during calibration. A judge that cannot reach its model
@@ -1148,6 +1159,8 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
                                          sandbagging_motives=SANDBAGGING["motives"] or None,
                                          env_probes=ENV["on"],
                                          env_conditions=ENV["conditions"] or None,
+                                         env_reask=_ENV_REASK_N if ENV["reask"] else 0,
+                                         probe_think_fn=_s4_probe_think,
                                          n_probes=_s4_n_probes,
                                          on_event=sink)
                 (run_dir / "stage4.json").write_text(s4.model_dump_json(indent=2))
@@ -3383,6 +3396,9 @@ def _register_panel(s4: dict) -> list:
                              + (f" · face {_v['face']}" if _v.get("face") else "")
                              + (f" · skipped: {_v['skipped']}" if _v.get("skipped") else
                                 f" · {len(_v.get('recommendations') or [])} recommendation(s)")
+                             + (f" · {len(_v['answers'])} answers, first shown" if _v.get("answers") else "")
+                             + (" · votes " + ", ".join(f"{k} {v}" for k, v in _v["votes"].items() if k != "n")
+                                if isinstance(_v.get("votes"), dict) and len(_v["votes"]) > 1 else ""),
                              + (f" · failed: {_v['error']}" if _v.get("error") else ""),
                              style={"fontSize": "10.5px", "color": "#475569",
                                     "cursor": "pointer"}),
@@ -3532,7 +3548,8 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                  f"{len(d.get('stage4_sandbagging') or {})}/"
                  f"{2 * len(d.get('sandbagging_motives') or _SANDBAGGING_MOTIVE_NAMES)}"),
                 ("env", "env",
-                 "asking once per dispatch condition (environment arm) · "
+                 (f"asking {d['env_reask']} times per dispatch condition" if d.get("env_reask")
+                  else "asking once per dispatch condition") + " (environment arm) · "
                  f"{len(d.get('stage4_env') or {})}/"
                  f"{len(d.get('env_conditions') or _ENV_CONDITION_NAMES)}"),
                 ("graph_a", "graph_a", "assembling Graph A"),
@@ -5748,7 +5765,8 @@ app.layout = html.Div([
                 id="env-conditions", value=[], inline=True,
                 options=[{"label": " all", "value": "all"}]
                 + [{"label": " " + _EC[c]["label"], "value": c}
-                   for c in _ENV_CONDITION_NAMES],
+                   for c in _ENV_CONDITION_NAMES]
+                + [{"label": f" re-ask ×{_ENV_REASK_N}", "value": "reask"}],
                 className="ctl-toggle", style={"fontSize": "10.5px"}),
         ], className="ctl-group"),
         # Sycophancy probes (opt-in since 2026-11-02, Sunny: a run should
@@ -5929,6 +5947,8 @@ def start_run(_clicks, replay_path, cached, caption,
     SYCOPHANCY["hint"] = "hint" in picked
     SYCOPHANCY["readers"] = "readers" in picked
     picked = list(env_conditions or [])
+    ENV["reask"] = "reask" in picked
+    picked = [c for c in picked if c != "reask"]
     ENV["on"] = bool(picked)
     ENV["conditions"] = [] if "all" in picked else picked
     if ctx.triggered_id == "replay" and replay_path:
@@ -5954,7 +5974,7 @@ REASKS: dict[str, bool] = {"s2": False, "s4": False}
 # The on-screen "concealment" switch, applied at launch.
 CONCEALMENT: dict[str, Any] = {"on": False, "motives": []}
 SANDBAGGING: dict[str, Any] = {"on": False, "motives": []}
-ENV: dict[str, Any] = {"on": False, "conditions": []}
+ENV: dict[str, Any] = {"on": False, "conditions": [], "reask": False}
 SYCOPHANCY: dict[str, bool] = {"hint": False, "readers": False}
 
 

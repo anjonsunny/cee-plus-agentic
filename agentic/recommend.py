@@ -2191,6 +2191,10 @@ ENV_CONDITIONS: dict[str, dict[str, str]] = {
 }
 ENV_DEFAULT_MOTIVE = "keep the rescue going"
 ENV_PROBE_ON = os.getenv("ENV_PROBE", "1") == "1"
+# Probe re-ask (Sunny, 2026-11-03): each ticked dispatch line asked this
+# many times at probe temperature, thinking on, so "hidden in k of n
+# answers" replaces one answer against one. Off = one call per line.
+ENV_REASK_N = int(os.getenv("ENV_REASK_N", "5"))
 
 
 def env_motive(name: str) -> str:
@@ -2244,10 +2248,15 @@ def run_env_probes(record: Any, assessment: Any, *, query_fn: QueryFn,
                    think_fn: Any = None, enabled: bool = False,
                    conditions: list | None = None,
                    main_recs: list | None = None,
+                   reask: int = 0, probe_think_fn: Any = None,
                    on_event: Any = None) -> dict:
-    """One call per chosen condition. Returns {'env_probes': {name: {...}}}
-    — empty when off, on a hazard-free scene, or with a responder in the
-    picture (the dispatch lines speak of units still arriving)."""
+    """One call per chosen condition — or `reask` calls at probe temperature
+    through `probe_think_fn` (falls back to the ordinary call) when the probe
+    re-ask is on; the first answer fills recommendations/frame/thinking as
+    before and every answer sits in `answers`. Returns
+    {'env_probes': {name: {...}}} — empty when off, on a hazard-free scene,
+    or with a responder in the picture (the dispatch lines speak of units
+    still arriving)."""
     emit = _emitter(on_event)
     if not (ENV_PROBE_ON and enabled):
         return {"env_probes": {}}
@@ -2279,21 +2288,35 @@ def run_env_probes(record: Any, assessment: Any, *, query_fn: QueryFn,
         one: dict[str, Any] = {"condition": name, "line": c["line"],
                                "face": c["face"], "label": c["label"],
                                "motive": env_motive(name)}
-        try:
-            raw, thinking = _ask(prompt, query_fn, think_fn)
-        except Exception as exc:              # transport failure ≠ an answer
-            one["error"] = str(exc)[:200]
-            emit("env_probe_error", condition=name, error=one["error"])
+        n_calls = max(1, int(reask or 0))
+        ask_think = probe_think_fn if (n_calls > 1 and probe_think_fn is not None) else think_fn
+        answers: list[dict] = []
+        for i in range(n_calls):
+            try:
+                raw, thinking = _ask(prompt, query_fn, ask_think)
+            except Exception as exc:          # transport failure ≠ an answer
+                err = str(exc)[:200]
+                emit("env_probe_error", condition=name, error=err, answer=i + 1)
+                answers.append({"error": err})
+                continue
+            frame, recs, _adv, notes = parse_recommend(raw)
+            answers.append({"recommendations": recs, "frame": frame, "notes": notes,
+                            "raw": raw, "thinking": thinking})
+            if thinking:
+                emit("subject_thinking", step=f"env:{name}" + (f":{i + 1}" if n_calls > 1 else ""),
+                     text=thinking)
+        good = [x for x in answers if "error" not in x]
+        if not good:
+            one["error"] = answers[0]["error"] if answers else "no answer"
             out[name] = one
             continue
-        frame, recs, _adv, notes = parse_recommend(raw)
-        one.update({"recommendations": recs, "frame": frame, "notes": notes,
-                    "raw": raw, "thinking": thinking})
+        one.update(good[0])
+        if n_calls > 1:
+            one["answers"] = answers
         emit("env_probe_ready", condition=name, label=c["label"], face=c["face"],
-             line=c["line"], n_recs=len(recs), recs=recs,
-             n_thinking=len(thinking))
-        if thinking:
-            emit("subject_thinking", step=f"env:{name}", text=thinking)
+             line=c["line"], n_recs=len(good[0]["recommendations"]),
+             recs=good[0]["recommendations"], n_thinking=len(good[0]["thinking"]),
+             n_answers=len(good))
         out[name] = one
     return {"env_probes": out}
 
@@ -2412,6 +2435,7 @@ def run_stage4(record: Any, assessment: Any, image_path: str = "",
                sandbagging_motives: list | None = None,
                env_probes: bool = False,
                env_conditions: list | None = None,
+               env_reask: int = 0, probe_think_fn: Any = None,
                n_probes: int = 0, on_event: Any = None) -> Stage4Result:
     """The Phase-1a straight line + measured uncertainty:
     recommend -> probe U -> Graph A -> Graph B -> picks -> evals.
@@ -2451,7 +2475,9 @@ def run_stage4(record: Any, assessment: Any, image_path: str = "",
     envp = run_env_probes(record, assessment, query_fn=query_fn,
                           think_fn=think_fn, enabled=env_probes,
                           conditions=env_conditions,
-                          main_recs=rec["recommendations"], on_event=on_event)
+                          main_recs=rec["recommendations"],
+                          reask=env_reask, probe_think_fn=probe_think_fn,
+                          on_event=on_event)
     graph_a = build_graph_a(record, assessment, rec["recommendations"],
                             on_event=on_event)
     graph_b = run_graph_b(record, assessment, query_fn=query_fn,

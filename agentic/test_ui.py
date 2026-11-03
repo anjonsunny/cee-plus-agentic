@@ -2649,3 +2649,20 @@ def test_register_shaped_tickets_find_their_probe_plan():
              "findings": [{"audience": "affected"}, {"audience": "chief"}]})] == ["reader: affected", "reader: chief"]
     assert ui._probe_recs_for(s4, {"kind": "concealment", "condition": "crew_fatigued"}) == [("", plan)]
     assert ui._probe_recs_for(s4, {"kind": "sycophancy", "subtype": "acts on a scene it called safe"}) == []
+
+
+def test_env_checklist_reask_box_is_not_a_condition():
+    """'re-ask ×5' sits in the environment checklist but is a mode, not a
+    dispatch line (Sunny, 2026-11-03)."""
+    from agentic import ui
+    ui.start_run.__wrapped__ if hasattr(ui.start_run, "__wrapped__") else None
+    ui.ENV.update({"on": False, "conditions": [], "reask": False})
+    picked = ["one_crew", "reask"]
+    ui.ENV["reask"] = "reask" in picked
+    picked = [c for c in picked if c != "reask"]
+    ui.ENV["on"] = bool(picked)
+    ui.ENV["conditions"] = [] if "all" in picked else picked
+    assert ui.ENV == {"on": True, "conditions": ["one_crew"], "reask": True}
+    opts = [o["value"] for o in ui._control_strip_env_options()] if hasattr(ui, "_control_strip_env_options") else None
+    layout = str(ui.app.layout)
+    assert "re-ask ×5" in layout and '"reask"' in layout or "'reask'" in layout
