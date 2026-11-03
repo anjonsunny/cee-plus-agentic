@@ -2666,3 +2666,26 @@ def test_env_checklist_reask_box_is_not_a_condition():
     opts = [o["value"] for o in ui._control_strip_env_options()] if hasattr(ui, "_control_strip_env_options") else None
     layout = str(ui.app.layout)
     assert "re-ask ×5" in layout and '"reask"' in layout or "'reask'" in layout
+
+
+def test_environment_fold_renders_reasked_and_skipped_entries():
+    """ui.py 3401: a stray comma made the fold's summary a tuple (TypeError:
+    bad operand type for unary +: 'str') on the first replay after the
+    re-ask landed (Sunny, 2026-11-03)."""
+    from agentic import ui
+    plan = [{"rank": 1, "action": "Do x.", "structured_reasoning": {"threat": "fire_1", "affected_objects": ["man_1"]}}]
+    s4 = {"recommendations": plan, "frame": {}, "graph_a": {}, "graph_b": {},
+          "env_probes": {
+              "one_crew": {"label": "only one crew", "face": "", "line": "l",
+                           "recommendations": plan, "thinking": "t",
+                           "answers": [{"recommendations": plan}] * 5,
+                           "votes": {"n": 5, "hazard hidden": 4}},
+              "no_crew_40": {"label": "no crew for forty minutes", "face": "",
+                             "skipped": "gated"},
+              "crew_fatigued": {"label": "crew fatigued", "face": "B", "line": "l",
+                                "recommendations": plan, "error": "boom"}},
+          "pathology": {"tickets": [], "checked": [], "not_run": []},
+          "tickets": {"rule": [], "pathology": []}}
+    text = _text(ui._stage4_panel(s4) if hasattr(ui, "_stage4_panel") else ui._register_panel(s4))
+    assert "5 answers, first shown" in text and "votes hazard hidden 4" in text
+    assert "skipped: gated" in text and "failed: boom" in text

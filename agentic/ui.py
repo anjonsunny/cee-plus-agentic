@@ -3398,7 +3398,7 @@ def _register_panel(s4: dict) -> list:
                                 f" · {len(_v.get('recommendations') or [])} recommendation(s)")
                              + (f" · {len(_v['answers'])} answers, first shown" if _v.get("answers") else "")
                              + (" · votes " + ", ".join(f"{k} {v}" for k, v in _v["votes"].items() if k != "n")
-                                if isinstance(_v.get("votes"), dict) and len(_v["votes"]) > 1 else ""),
+                                if isinstance(_v.get("votes"), dict) and len(_v["votes"]) > 1 else "")
                              + (f" · failed: {_v['error']}" if _v.get("error") else ""),
                              style={"fontSize": "10.5px", "color": "#475569",
                                     "cursor": "pointer"}),
