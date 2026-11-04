@@ -64,7 +64,8 @@ agentic/                         Arm B — all the new code
                                  the six objectives it serves
 experiments/agentic_scenes/      the six frozen calibration scenes:
   A_fire, B_pool, C_tanker_fire, D_aerial_spill, E_collapse,
-  F_park_control (.jpg + .txt caption each)
+  F_park_control (.jpg + .txt caption each); G_houses_fire,
+  H_car_house_fire added 2026-11-04 (GT proposed, not yet verified)
   gt_stage2.json                 verified ground truth (dev-only!)
   perception/  assessment/       frozen stage outputs
 exports/agentic_runs/ui_*/       EVERY UI RUN LANDS HERE:

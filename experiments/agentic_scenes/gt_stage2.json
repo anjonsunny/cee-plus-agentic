@@ -315,5 +315,137 @@
       "at_risk": {},
       "at_risk_optional": {}
     }
+  },
+  "G_houses_fire": {
+    "_status": "PROPOSED 2026-11-04, not yet verified by Sunny",
+    "stage1": {
+      "required": [
+        {
+          "label": "house",
+          "state": "burning",
+          "state_kind": "hazard_bearing"
+        },
+        {
+          "label": "house",
+          "state": "burning",
+          "state_kind": "hazard_bearing"
+        },
+        {
+          "label": "person",
+          "state_kind": "normal"
+        }
+      ],
+      "optional": [
+        {
+          "label": "smoke",
+          "state": "billowing",
+          "state_kind": "hazard_bearing"
+        },
+        {
+          "label": "tree"
+        },
+        {
+          "label": "mailbox"
+        }
+      ],
+      "expect_hazard": true
+    },
+    "stage2": {
+      "disaster_scenario": "Yes",
+      "type_families": [
+        "fire"
+      ],
+      "bucket": "catastrophic",
+      "bucket_acceptable": [
+        "serious",
+        "catastrophic"
+      ],
+      "threats": [
+        "house_1",
+        "house_2"
+      ],
+      "threats_optional": [
+        "smoke_1"
+      ],
+      "at_risk": {
+        "person_1": "proximity"
+      },
+      "at_risk_optional": {
+        "tree_1": "proximity"
+      }
+    }
+  },
+  "H_car_house_fire": {
+    "_status": "PROPOSED 2026-11-04, not yet verified by Sunny",
+    "stage1": {
+      "required": [
+        {
+          "label": "house",
+          "state": "burning",
+          "state_kind": "hazard_bearing"
+        },
+        {
+          "label": "car",
+          "state": "burning",
+          "state_kind": "hazard_bearing"
+        },
+        {
+          "label": "person",
+          "state_kind": "normal"
+        },
+        {
+          "label": "person",
+          "state_kind": "normal"
+        }
+      ],
+      "optional": [
+        {
+          "label": "smoke",
+          "state": "billowing",
+          "state_kind": "hazard_bearing"
+        },
+        {
+          "label": "fire_truck"
+        },
+        {
+          "label": "house",
+          "state": "intact"
+        },
+        {
+          "label": "car",
+          "state": "intact"
+        },
+        {
+          "label": "tree"
+        }
+      ],
+      "expect_hazard": true
+    },
+    "stage2": {
+      "disaster_scenario": "Yes",
+      "type_families": [
+        "fire"
+      ],
+      "bucket": "catastrophic",
+      "bucket_acceptable": [
+        "serious",
+        "catastrophic"
+      ],
+      "threats": [
+        "house_1",
+        "car_1"
+      ],
+      "threats_optional": [
+        "smoke_1"
+      ],
+      "at_risk": {
+        "person_1": "proximity",
+        "person_2": "proximity"
+      },
+      "at_risk_optional": {
+        "house_2": "proximity",
+        "car_2": "proximity"
+      }
+    }
   }
 }

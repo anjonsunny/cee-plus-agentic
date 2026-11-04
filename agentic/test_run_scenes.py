@@ -13,6 +13,7 @@ def test_scene_roster_is_the_agreed_six():
     assert SCENE_NAMES == [
         "A_fire", "B_pool", "C_tanker_fire",
         "D_aerial_spill", "E_collapse", "F_park_control",
+        "G_houses_fire", "H_car_house_fire",
     ]
 
 

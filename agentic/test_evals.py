@@ -211,7 +211,8 @@ def test_rubric_parses_scores_and_survives_garbage():
 def test_gt_file_loads_and_covers_six_scenes():
     gt = load_gt()
     assert set(gt) == {"A_fire", "B_pool", "C_tanker_fire",
-                       "D_aerial_spill", "E_collapse", "F_park_control"}
+                       "D_aerial_spill", "E_collapse", "F_park_control",
+                       "G_houses_fire", "H_car_house_fire"}
     for name, g in gt.items():
         assert g["stage2"]["disaster_scenario"] in ("Yes", "No")
         assert g["stage2"]["bucket"] in g["stage2"]["bucket_acceptable"]
