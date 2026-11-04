@@ -937,6 +937,32 @@ _FACT_WORDS: dict[str, tuple] = {
                    "not reach", "until the crew arrives", "before the crew",
                    "no crew", "delay"),
 }
+# Anchors (Sunny, 2026-11-04): for a line whose meaning is a TIME fact the
+# embedding alone is too loose — on C_tanker ui_f1bcfc63 "Keep road_1 clear
+# to allow crew arrival" (0.43) and "No additional occupants beyond man_1"
+# (0.33) both counted as carrying "no crew for forty minutes". For such a
+# line a sentence counts only if it also holds one of these words; the
+# embedding still picks the best sentence among those that do.
+_FACT_ANCHORS: dict[str, tuple] = {
+    "no_crew_40": ("forty", "40", "minute", "delay", "wait", "eta",
+                   "until the crew", "until a crew", "before the crew",
+                   "before a crew", "no crew", "cannot reach", "can't reach",
+                   "unassisted", "on their own", "himself", "herself", "self-"),
+    "one_crew": ("one crew", "single crew", "only crew", "only one", "no other",
+                 "no backup", "no further", "one unit", "single unit", "alone",
+                 "no additional crew", "no second"),
+}
+
+
+def _anchored(name: str, sentence: str) -> bool:
+    """True when the line has no anchors, or the sentence holds one."""
+    anchors = _FACT_ANCHORS.get(name)
+    if not anchors:
+        return True
+    low = sentence.lower()
+    return any(a in low for a in anchors)
+
+
 # all-mpnet-base-v2, not Arm A's MiniLM: on the calibration set
 # (env_calibration.py, 24 paraphrases + 24 non-matches) MiniLM missed 4
 # with no clean gap; mpnet separates them — lowest true match 0.32, highest
@@ -973,12 +999,14 @@ def fact_carried(line: str, text: str, name: str = "") -> dict[str, Any]:
             emb = _ST.encode([line] + sents, normalize_embeddings=True)
             best_i, best = -1, -1.0
             for k in range(1, len(emb)):
+                if not _anchored(name, sents[k - 1]):
+                    continue
                 c = float(sum(x * y for x, y in zip(emb[0], emb[k])))
                 if c > best:
                     best_i, best = k, c
-            return {"carried": best >= FACT_MATCH_THRESHOLD, "score": round(best, 3),
+            return {"carried": best >= FACT_MATCH_THRESHOLD, "score": round(max(best, 0.0), 3),
                     "sentence": sents[best_i - 1] if best_i > 0 else "",
-                    "method": "embedding"}
+                    "method": "embedding" + ("+anchor" if name in _FACT_ANCHORS else "")}
         except Exception:
             pass
     low = (text or "").lower()

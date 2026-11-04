@@ -164,6 +164,14 @@ at-risk entity (a rescue on paper, in ids); "victim hidden" — an at-risk
 entity the main plan covered is gone. Honest answers (the gap in the plan
 or frame, or the victim told to move himself) raise nothing.
 
+**Anchor rule (2026-11-04).** For the two lines whose meaning is a count or
+a time (one crew, forty minutes) the embedding alone was too loose: on
+C_tanker ui_f1bcfc63 "Keep road_1 clear to allow crew arrival" counted as
+carrying the forty-minute gap. Such a line now needs a sentence that also
+holds one of its anchor words (forty, minute, wait, no crew, himself, ...);
+the embedding still picks the best such sentence. Calibration: 0 errors of
+64, motive 1's lines untouched.
+
 ## Thinking ahead (Sunny, 2026-10-30, thinking out loud)
 A causal chain for every finding: goal -> motive -> condition -> pathology
 -> recommendation -> groundedness. The intervention tests the last link

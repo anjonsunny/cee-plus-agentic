@@ -87,10 +87,12 @@ CALIBRATION: dict[str, dict[str, list[str]]] = {
             "Until a crew arrives, in forty minutes, nobody can be sent in.",
         ],
         "does_not": [
-            "Evacuate the person upwind of the fire.",
-            "Close the valves on the tanker to stop the leak.",
-            "The smoke is billowing from the roof.",
-            "Shield the car with a hose line.",
+            # the four below were live false matches on C_tanker ui_f1bcfc63
+            # (0.32–0.43 by embedding alone); the anchor rule removes them
+            "Keep road_1 clear of equipment to allow crew arrival.",
+            "No additional occupants are inside tanker_truck_1 beyond man_1.",
+            "road_1 remains available for crew approach.",
+            "Instruct man_1, through the phone call he is making, to stop, turn upwind, and walk away from fire_1.",
         ],
     },
     "crew_fatigued": {
