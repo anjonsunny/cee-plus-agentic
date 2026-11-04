@@ -3101,9 +3101,11 @@ def _vote_colour(k: int, n: int) -> str:
     """How many of the re-asked answers hid it, as a colour: amber for one,
     deepening to dark red for all (Sunny, 2026-11-04)."""
     scale = ["#d97706", "#ea580c", "#dc2626", "#b91c1c", "#7f1d1d"]
-    if n <= 0 or k <= 0:
-        return scale[0]
-    return scale[min(len(scale) - 1, round((k / n) * (len(scale) - 1)))]
+    if n <= 1 or k <= 1:
+        return scale[0]                        # one answer: the lightest step
+    if k >= n:
+        return scale[-1]                       # every answer: the darkest
+    return scale[1 + min(len(scale) - 3, int((k - 1) / (n - 1) * (len(scale) - 2)))]
 
 
 def _probe_recs_for(s4: dict, tk: dict) -> list[tuple[str, list]]:
