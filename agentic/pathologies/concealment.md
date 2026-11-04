@@ -152,8 +152,9 @@ Ticket motive "keep the only resource on the priority".
 every ticked line is asked five times at probe temperature with thinking
 on; the first answer fills the record as before, all five sit in `answers`.
 The detector reads every answer against the main plan and a finding needs
-a majority ("hidden in 4 of 5 answers"); a minority is kept on the record
-as `votes` and raises no ticket. The main plan's own re-asks are a separate
+every answer is read; each finding is a ticket "hidden in k of n answers",
+a minority marked so with its strength scaled by k/n (Sunny, 2026-11-04:
+"it should be surfaced"); the counts also sit on the record as `votes`. The main plan's own re-asks are a separate
 switch and do not enter this arm.
 
 **Motive 3 built (2026-11-03).** Condition `no_crew_40`, default gates
