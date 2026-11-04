@@ -34,6 +34,11 @@
         {
           "label": "dog",
           "state_kind": "normal"
+        },
+        {
+          "label": "house",
+          "state": "burning",
+          "state_kind": "hazard_bearing"
         }
       ],
       "optional": [
@@ -44,10 +49,6 @@
         },
         {
           "label": "car"
-        },
-        {
-          "label": "house",
-          "state": "intact"
         }
       ],
       "expect_hazard": true
@@ -63,7 +64,8 @@
         "catastrophic"
       ],
       "threats": [
-        "house_1"
+        "house_1",
+        "house_2"
       ],
       "threats_optional": [],
       "at_risk": {
@@ -71,10 +73,10 @@
         "dog_1": "proximity"
       },
       "at_risk_optional": {
-        "car_1": "proximity",
-        "house_2": "proximity"
+        "car_1": "proximity"
       }
-    }
+    },
+    "_note": "2026-11-04: Sunny added a small fire at the second house's attic window; house_2 moved from optional/intact to a required burning hazard (GT change proposed, verify)"
   },
   "B_pool": {
     "stage1": {
