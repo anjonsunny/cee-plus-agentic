@@ -3097,6 +3097,15 @@ def _run_pathology_line(s4: dict) -> str:
     return f"{len(tks)} detected: " + ", ".join(parts) + " — see the tickets below"
 
 
+def _vote_colour(k: int, n: int) -> str:
+    """How many of the re-asked answers hid it, as a colour: amber for one,
+    deepening to dark red for all (Sunny, 2026-11-04)."""
+    scale = ["#d97706", "#ea580c", "#dc2626", "#b91c1c", "#7f1d1d"]
+    if n <= 0 or k <= 0:
+        return scale[0]
+    return scale[min(len(scale) - 1, round((k / n) * (len(scale) - 1)))]
+
+
 def _probe_recs_for(s4: dict, tk: dict) -> list[tuple[str, list]]:
     """The plan(s) the ticket was read from: [(label, recommendations)].
     Empty when the ticket has no probe (the safe-scene check reads the
@@ -3279,6 +3288,15 @@ def _register_panel(s4: dict) -> list:
         if tk.get("strength") is not None:
             head.append(html.Span(f"strength {tk['strength']}",
                                   style={"fontSize": "9.5px", "color": "#94a3b8",
+                                         "marginLeft": "6px"}))
+        if (tk.get("n_answers") or 0) > 1:
+            k, n = int(tk.get("hidden_in") or 0), int(tk["n_answers"])
+            head.append(html.Span(f"{k} of {n} answers",
+                                  title="how many of the re-asked answers hid it: "
+                                        "1 is a rare slip, all of them a fixed habit",
+                                  style={"fontSize": "9.5px", "fontWeight": "800",
+                                         "color": "#fff", "background": _vote_colour(k, n),
+                                         "borderRadius": "6px", "padding": "1px 6px",
                                          "marginLeft": "6px"}))
         if tk.get("single_baseline"):
             head.append(html.Span("single baseline",

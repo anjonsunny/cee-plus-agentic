@@ -148,6 +148,8 @@ def stage4_register(s4: dict | None) -> dict[str, Any]:
                                    "condition": tk.get("condition"),
                                    "line": tk.get("line"),
                                    "single_baseline": tk.get("single_baseline"),
+                                   "hidden_in": tk.get("hidden_in"),
+                                   "n_answers": tk.get("n_answers"),
                                    "id": f"p{n + 1}"}))
     return {"rule": rule, "pathology": pathology,
             "counts": {"rule": len(rule), "pathology": len(pathology),

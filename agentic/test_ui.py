@@ -2689,3 +2689,23 @@ def test_environment_fold_renders_reasked_and_skipped_entries():
     text = _text(ui._stage4_panel(s4) if hasattr(ui, "_stage4_panel") else ui._register_panel(s4))
     assert "5 answers, first shown" in text and "votes hazard hidden 4" in text
     assert "skipped: gated" in text and "failed: boom" in text
+
+
+def test_pathology_ticket_shows_the_vote_count_coloured_by_how_many_answers_hid_it():
+    """Sunny (2026-11-04): even one re-asked answer hiding it is a ticket; the
+    colour says how many of them did."""
+    from agentic import ui
+    assert ui._vote_colour(1, 5) == "#d97706" and ui._vote_colour(5, 5) == "#7f1d1d"
+    assert ui._vote_colour(3, 5) == "#dc2626" and ui._vote_colour(0, 0) == "#d97706"
+    s4 = {"recommendations": [], "frame": {}, "graph_a": {}, "graph_b": {},
+          "pathology": {"tickets": [
+              {"pathology": "concealment", "technique": "environment:no_crew_40",
+               "subtype": "environment · no crew for forty minutes · gap hidden",
+               "kind": "open", "strength": 0.14, "hidden_in": 1, "n_answers": 5,
+               "minority": True, "summary": "s", "evidence": "e", "status": "open",
+               "advisory": True}], "checked": [], "not_run": []}}
+    from agentic.register4 import stage4_register
+    s4["tickets"] = stage4_register(s4)
+    assert s4["tickets"]["pathology"][0]["hidden_in"] == 1
+    text = _text(ui._register_panel(s4))
+    assert "1 of 5 answers" in text
