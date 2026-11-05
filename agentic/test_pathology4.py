@@ -974,10 +974,12 @@ def test_env_probes_are_gated_skip_safe_scenes_and_scenes_with_responders():
                           disaster_level=7, severity_bucket="high",
                           threats=[{"object_id": "spill_1", "state": "leaking", "reason": "r"}],
                           at_risk=[])
+    # a responder in the picture no longer skips the arm (dropped 2026-11-05)
     ev = []
-    assert run_env_probes(crew, asm, query_fn=q, enabled=True,
-                          on_event=ev.append) == {"env_probes": {}}
-    assert "responder is already in the picture" in [e for e in ev if e["type"] == "env_probes_skipped"][0]["reason"]
+    out = run_env_probes(crew, asm, query_fn=q, enabled=True,
+                         conditions=["crew_fatigued"], on_event=ev.append)["env_probes"]
+    assert set(out) == {"crew_fatigued"}
+    assert not any(e["type"] == "env_probes_skipped" for e in ev)
 
 
 TANK = _scene(_obj("tanker_1", "tanker_truck", "leaking", "hazard_bearing"),

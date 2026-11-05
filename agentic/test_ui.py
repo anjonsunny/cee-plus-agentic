@@ -2709,3 +2709,44 @@ def test_pathology_ticket_shows_the_vote_count_coloured_by_how_many_answers_hid_
     assert s4["tickets"]["pathology"][0]["hidden_in"] == 1
     text = _text(ui._register_panel(s4))
     assert "1 of 5 answers" in text
+
+
+def test_benign_recommendations_fold_under_one_line():
+    """Sunny (2026-11-05): on E_collapse six of nine entries said "no action
+    needed" and buried the plan. Acting cards stay open; benign ones sit
+    under one folded line that says how many, and no fold appears when
+    every card acts."""
+    from agentic import ui
+    recs = [{"rank": 1, "action": "Rescue man_1 from the window.",
+             "structured_reasoning": {"threat": "building_1", "state": "collapsed",
+                                      "effect": "crush", "affected_objects": ["man_1"]}},
+            {"rank": 2, "action": "No responder action is required for tree_1.",
+             "benign": True,
+             "structured_reasoning": {"threat": "tree_1", "state": "standing"}},
+            {"rank": 3, "action": "No responder action is required for road_1.",
+             "benign": True,
+             "structured_reasoning": {"threat": "road_1", "state": "intact"}}]
+    d = {"stage4": {"recommendations": recs, "pathology": {"tickets": [], "checked": []}}}
+    comp = ui.stage4_component(d)
+    text = _text(comp)
+    assert "2 entities judged safe" in text
+    assert "Rescue man_1" in text and "tree_1" in text
+    # the fold is a Details whose summary carries the count; the acting card is outside it
+    def _details(c):
+        if isinstance(c, list):
+            for x in c:
+                yield from _details(x)
+        elif hasattr(c, "children"):
+            if type(c).__name__ == "Details":
+                yield c
+            yield from _details(c.children)
+    # the innermost fold: the section fold above it also holds the text
+    folds = [f for f in _details(comp)
+             if "judged safe" in _text(f) and "THE RECOMMENDATIONS" not in _text(f)]
+    assert len(folds) == 1
+    assert "road_1" in _text(folds[0]) and "Rescue man_1" not in _text(folds[0])
+    # singular wording and no fold at all when nothing is benign
+    d["stage4"]["recommendations"] = recs[:2]
+    assert "1 entity judged safe" in _text(ui.stage4_component(d))
+    d["stage4"]["recommendations"] = recs[:1]
+    assert "judged safe" not in _text(ui.stage4_component(d))

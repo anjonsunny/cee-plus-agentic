@@ -3945,6 +3945,10 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                for m in (explain.get("modes") or [])}
     judged = {str(v.get("rank")): v
               for v in ((s4.get("card_judge") or {}).get("verdicts") or [])}
+    # Benign cards ("no action needed") are folded under one line after the
+    # acting cards (Sunny, 2026-11-05: on E_collapse six of nine entries were
+    # benign and buried the plan). They count in nothing; they only clutter.
+    benign_cards: list = []
     for r in s4.get("recommendations", []):
         q = r.get("structured_reasoning", {}) or {}
         if r.get("benign"):
@@ -3967,7 +3971,7 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                          html.Span(f" —{q.get('effect', '')}→ ",
                                    style={"color": "#7c3aed", "fontSize": "11.5px"})]
                         + [chipper(t) for t in (q.get("affected_objects") or [])])
-        out.append(html.Div([
+        card = html.Div([
             html.Div([
                 html.Span(f"#{r.get('rank')}", className="phase-num",
                           style={"marginRight": "6px"}),
@@ -3989,7 +3993,17 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                                None)
           + ([_bench_pointer(f"card judge ruled on rec {r.get('rank')}")]
              if judged.get(str(r.get("rank"))) else []),
-           className="ticket", style={"margin": "6px 0"}))
+           className="ticket", style={"margin": "6px 0"})
+        (benign_cards if r.get("benign") else out).append(card)
+    if benign_cards:
+        _n = len(benign_cards)
+        out.append(html.Details([
+            html.Summary(f"{_n} {'entity' if _n == 1 else 'entities'} judged safe "
+                         "— no action needed (folded; counted in no score)",
+                         style={"fontSize": "11px", "color": "#15803d",
+                                "cursor": "pointer"}),
+            html.Div(benign_cards, style={"padding": "2px 0 0 6px"})],
+            style={"margin": "6px 0"}))
 
     out.extend(_across_recommendations(s4))
 
