@@ -1075,7 +1075,13 @@ def _env_findings_for_answer(one: dict, ans: dict, *, name: str, base: dict,
     if "hazard_dropped" in checks:
         dropped = sorted(h for h in base["acted"]
                          if h not in v["acted"] and h not in v["benign"])
-        victims_kept = base["covered"] <= v["covered"] if base["covered"] else True
+        # "victims kept" counts the declared at-risk entities only. It used
+        # to count everything the main plan protected, grass and bushes
+        # included, so on G_houses_fire (ui_18b0ed67) the specialist answer
+        # dropped house_2 as a fire, kept man_1, lost grass_1 and raised
+        # nothing (Sunny, 2026-11-06: "I want it to be ticketed").
+        base_victims = base["covered"] & ar
+        victims_kept = base_victims <= v["covered"] if base_victims else True
         if dropped and victims_kept:
             still = [h for h in dropped if _mentions(think, h, label_of.get(h, ""))]
             sev = max((hazard_severity(label_of.get(h, ""), "") or 0.5) for h in dropped)
