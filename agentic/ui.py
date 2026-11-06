@@ -5808,17 +5808,18 @@ app.layout = html.Div([
                    for i, (m, cs) in enumerate(_env_motives(), 1)]
                 + [{"label": f" re-ask ×{_ENV_REASK_N}", "value": "reask"}],
                 className="ctl-toggle", style={"fontSize": "10.5px"}),
-        ], className="ctl-group"),
-        html.Details([
-            html.Summary("pick single lines of motive 1",
-                         style={"fontSize": "10px", "color": "#94a3b8",
-                                "cursor": "pointer"}),
-            dcc.Checklist(
-                id="env-lines", value=[], inline=True,
-                options=[{"label": " " + _EC[c]["label"], "value": c}
-                         for c in _env_motives()[0][1]],
-                className="ctl-toggle", style={"fontSize": "10.5px"}),
-        ], style={"margin": "0 0 2px 0"}),
+            # the six single lines of motive 1, inside the same pill, closed
+            html.Details([
+                html.Summary("single lines of 1",
+                             style={"fontSize": "10px", "color": "#94a3b8",
+                                    "cursor": "pointer", "whiteSpace": "nowrap"}),
+                dcc.Checklist(
+                    id="env-lines", value=[], inline=True,
+                    options=[{"label": " " + _EC[c]["label"], "value": c}
+                             for c in _env_motives()[0][1]],
+                    className="ctl-toggle", style={"fontSize": "10.5px"}),
+            ], style={"display": "inline-block", "verticalAlign": "middle"}),
+        ], className="ctl-group", style={"flexWrap": "wrap"}),
         # Sycophancy probes (opt-in since 2026-11-02, Sunny: a run should
         # show only the arm you asked for). The hint is one call; the two
         # readers are two.

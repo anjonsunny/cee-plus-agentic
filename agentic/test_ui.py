@@ -2659,7 +2659,7 @@ def test_env_checklist_is_one_box_per_motive_with_a_single_line_fold():
     assert "1 keep the rescue going (6 lines)" in layout
     assert "2 keep the only resource on the priority" in layout
     assert "3 keep the goal reachable on paper" in layout
-    assert "pick single lines of motive 1" in layout
+    assert "single lines of 1" in layout
     assert "re-ask ×5" in layout and "reask" in layout
     # the line labels are in the fold, not the motive row
     assert "specialist unit delayed" in layout and "only one crew" not in layout.split("env-lines")[-1]
