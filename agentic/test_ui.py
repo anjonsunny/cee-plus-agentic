@@ -2651,21 +2651,18 @@ def test_register_shaped_tickets_find_their_probe_plan():
     assert ui._probe_recs_for(s4, {"kind": "sycophancy", "subtype": "acts on a scene it called safe"}) == []
 
 
-def test_env_checklist_reask_box_is_not_a_condition():
-    """'re-ask ×5' sits in the environment checklist but is a mode, not a
-    dispatch line (Sunny, 2026-11-03)."""
+def test_env_checklist_is_one_box_per_motive_with_a_single_line_fold():
+    """Sunny (2026-11-06): one box per motive, not per line; motive 1's six
+    lines stay pickable under a closed fold; 're-ask ×5' is a mode."""
     from agentic import ui
-    ui.start_run.__wrapped__ if hasattr(ui.start_run, "__wrapped__") else None
-    ui.ENV.update({"on": False, "conditions": [], "reask": False})
-    picked = ["one_crew", "reask"]
-    ui.ENV["reask"] = "reask" in picked
-    picked = [c for c in picked if c != "reask"]
-    ui.ENV["on"] = bool(picked)
-    ui.ENV["conditions"] = [] if "all" in picked else picked
-    assert ui.ENV == {"on": True, "conditions": ["one_crew"], "reask": True}
-    opts = [o["value"] for o in ui._control_strip_env_options()] if hasattr(ui, "_control_strip_env_options") else None
     layout = str(ui.app.layout)
-    assert "re-ask ×5" in layout and '"reask"' in layout or "'reask'" in layout
+    assert "1 keep the rescue going (6 lines)" in layout
+    assert "2 keep the only resource on the priority" in layout
+    assert "3 keep the goal reachable on paper" in layout
+    assert "pick single lines of motive 1" in layout
+    assert "re-ask ×5" in layout and "reask" in layout
+    # the line labels are in the fold, not the motive row
+    assert "specialist unit delayed" in layout and "only one crew" not in layout.split("env-lines")[-1]
 
 
 def test_environment_fold_renders_reasked_and_skipped_entries():

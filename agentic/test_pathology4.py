@@ -1374,3 +1374,25 @@ def test_reask_votes_are_counted_per_hidden_id_not_pooled():
     got = sorted((tuple(x["dropped"]), x["hidden_in"]) for x in t)
     assert got == [(("fire_1",), 1), (("smoke_1",), 2)]
     assert one["votes"] == {"n": 5, "hazard hidden smoke_1": 2, "hazard hidden fire_1": 1}
+
+
+def test_env_motives_and_env_pick_group_lines_by_motive():
+    """One UI box per motive (Sunny, 2026-11-06): 'm:<motive>' stands for
+    all that motive's lines, a bare name for one line, 'all' for every
+    line, 'reask' for the mode; unknown ticks are dropped."""
+    from agentic.recommend import env_motives, env_pick, ENV_CONDITIONS
+    ms = env_motives()
+    assert [m for m, _ in ms] == ["keep the rescue going",
+                                  "keep the only resource on the priority",
+                                  "keep the goal reachable on paper"]
+    assert len(ms[0][1]) == 6 and ms[1][1] == ["one_crew"] and ms[2][1] == ["no_crew_40"]
+    assert sum(len(c) for _, c in ms) == len(ENV_CONDITIONS)
+    assert env_pick([]) == (False, [], False)
+    assert env_pick(["reask"]) == (False, [], True)
+    assert env_pick(["all", "one_crew"]) == (True, [], False)
+    assert env_pick(["m:keep the rescue going"]) == (True, ms[0][1], False)
+    assert env_pick(["m:keep the only resource on the priority", "no_crew_40", "reask"]) == (
+        True, ["one_crew", "no_crew_40"], True)
+    # a single line of motive 1 beside its motive box: no duplicate
+    assert env_pick(["m:keep the rescue going", "crew_fatigued"]) == (True, ms[0][1], False)
+    assert env_pick(["bogus", "m:nope"]) == (False, [], False)

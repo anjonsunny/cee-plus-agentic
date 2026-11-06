@@ -2213,6 +2213,35 @@ def env_motive(name: str) -> str:
     return str((ENV_CONDITIONS.get(name) or {}).get("motive") or ENV_DEFAULT_MOTIVE)
 
 
+def env_motives() -> list[tuple[str, list[str]]]:
+    """The motives in first-seen order, each with its condition names —
+    [(motive, [condition, ...]), ...]. Motive 1 owns six lines, the others
+    one each; the UI ticks a motive to run all its lines (Sunny, 2026-11-06)."""
+    out: dict[str, list[str]] = {}
+    for name in ENV_CONDITIONS:
+        out.setdefault(env_motive(name), []).append(name)
+    return list(out.items())
+
+
+def env_pick(picked: list[str] | None) -> tuple[bool, list[str], bool]:
+    """Turn the UI's ticks into (on, conditions, reask). A tick "m:<motive>"
+    stands for all that motive's lines, a bare condition name for one line,
+    "all" for every line; "reask" is the mode, not a line. Unknown values
+    are dropped. conditions == [] with on == True means every line."""
+    picked = [str(x) for x in (picked or [])]
+    reask = "reask" in picked
+    if "all" in picked:
+        return True, [], reask
+    conds: list[str] = []
+    for x in picked:
+        if x.startswith("m:"):
+            conds += [c for c in ENV_CONDITIONS if env_motive(c) == x[2:]]
+        elif x in ENV_CONDITIONS:
+            conds.append(x)
+    conds = list(dict.fromkeys(conds))
+    return bool(conds), conds, reask
+
+
 def _problems_acted_on(main_recs: list, record: Any, assessment: Any) -> set:
     """The ids the main plan acts on: threat ids in the quads plus the
     at-risk ids the quads say are affected. Two or more = two problems."""

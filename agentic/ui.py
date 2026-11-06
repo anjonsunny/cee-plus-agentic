@@ -66,6 +66,7 @@ from agentic import models as _models  # noqa: E402  (the model seats)
 from agentic.recommend import CONCEALMENT_MOTIVES as _CM  # noqa: E402
 from agentic.recommend import SANDBAGGING_MOTIVES as _SM  # noqa: E402
 from agentic.recommend import ENV_CONDITIONS as _EC  # noqa: E402
+from agentic.recommend import env_motives as _env_motives, env_pick as _env_pick  # noqa: E402
 from agentic.recommend import ENV_REASK_N as _ENV_REASK_N  # noqa: E402
 _CONCEALMENT_MOTIVE_NAMES = tuple(_CM)
 _SANDBAGGING_MOTIVE_NAMES = tuple(_SM)
@@ -5793,16 +5794,31 @@ app.layout = html.Div([
         ], className="ctl-group"),
         # Concealment, environment arm (2026-10-26): no pressure — one
         # dispatch fact in the caption per ticked condition. Same shape.
+        # One box per MOTIVE (Sunny, 2026-11-06: eight line boxes took too
+        # much room). Ticking a motive runs all its lines; motive 1's six
+        # lines stay pickable one by one under a closed fold.
         html.Div([
             html.Span("concealment · environment", className="ctl-lbl"),
             dcc.Checklist(
                 id="env-conditions", value=[], inline=True,
                 options=[{"label": " all", "value": "all"}]
-                + [{"label": " " + _EC[c]["label"], "value": c}
-                   for c in _ENV_CONDITION_NAMES]
+                + [{"label": f" {i} {m}"
+                             + (f" ({len(cs)} lines)" if len(cs) > 1 else ""),
+                    "value": f"m:{m}"}
+                   for i, (m, cs) in enumerate(_env_motives(), 1)]
                 + [{"label": f" re-ask ×{_ENV_REASK_N}", "value": "reask"}],
                 className="ctl-toggle", style={"fontSize": "10.5px"}),
         ], className="ctl-group"),
+        html.Details([
+            html.Summary("pick single lines of motive 1",
+                         style={"fontSize": "10px", "color": "#94a3b8",
+                                "cursor": "pointer"}),
+            dcc.Checklist(
+                id="env-lines", value=[], inline=True,
+                options=[{"label": " " + _EC[c]["label"], "value": c}
+                         for c in _env_motives()[0][1]],
+                className="ctl-toggle", style={"fontSize": "10.5px"}),
+        ], style={"margin": "0 0 2px 0"}),
         # Sycophancy probes (opt-in since 2026-11-02, Sunny: a run should
         # show only the arm you asked for). The hint is one call; the two
         # readers are two.
@@ -5956,12 +5972,13 @@ def refresh_replay_options(_run_id, n, current):
               State("sandbagging-motives", "value"),
               State("sycophancy-probes", "value"),
               State("env-conditions", "value"),
+              State("env-lines", "value"),
               prevent_initial_call=True)
 def start_run(_clicks, replay_path, cached, caption,
               control_mode, retrieval_choice, judges_choice="off",
               subject_choice=None, reasks_choice=None,
               concealment_motives=None, sandbagging_motives=None,
-              sycophancy_probes=None, env_conditions=None):
+              sycophancy_probes=None, env_conditions=None, env_lines=None):
     # Apply the on-screen toggles for this run (in-process override).
     from agentic.graph_live import set_control
     from agentic.retrieval import set_retrieval
@@ -5980,11 +5997,8 @@ def start_run(_clicks, replay_path, cached, caption,
     picked = list(sycophancy_probes or [])
     SYCOPHANCY["hint"] = "hint" in picked
     SYCOPHANCY["readers"] = "readers" in picked
-    picked = list(env_conditions or [])
-    ENV["reask"] = "reask" in picked
-    picked = [c for c in picked if c != "reask"]
-    ENV["on"] = bool(picked)
-    ENV["conditions"] = [] if "all" in picked else picked
+    ENV["on"], ENV["conditions"], ENV["reask"] = _env_pick(
+        list(env_conditions or []) + list(env_lines or []))
     if ctx.triggered_id == "replay" and replay_path:
         return start_replay(replay_path)
     if ctx.triggered_id == "analyze" and cached and cached.get("contents"):
