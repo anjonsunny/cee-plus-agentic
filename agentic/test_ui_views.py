@@ -422,33 +422,7 @@ def test_the_title_names_all_three_stages():
 
 
 
-# --- Step 4: the horizontal chain --------------------------------------------
-
-def test_chain_has_the_same_six_steps_in_both_layouts():
-    s4 = _s4_full()
-    tk = s4["pathology"]["tickets"][0]
-    for ticket in (None, tk):
-        v = _text(ui._chain(s4, ticket))
-        h = _text(ui._chain(s4, ticket, layout="horizontal"))
-        for title in ("goals, in priority order", "motive", "condition",
-                      "recommendations", "pathology", "causal groundedness"):
-            assert title in v and title in h, title
-        steps = ui._chain_steps(s4, ticket)
-        assert [t for t, _d, _c in steps] == ["goals, in priority order", "motive",
-                                              "condition", "recommendations",
-                                              "pathology", "causal groundedness"]
-    # the last dot is dashed (placeholder) and motive/condition are slate, not purple
-    steps = ui._chain_steps(s4)
-    assert steps[-1][2] is None
-    assert steps[1][2] == steps[2][2] == "#64748b"
-    for layout in ("vertical", "horizontal"):
-        dots = [c for c in _walk(ui._chain(s4, layout=layout))
-                if isinstance(getattr(c, "style", None), dict)
-                and c.style.get("borderRadius") == "50%"]
-        assert len(dots) == 6
-        assert "dashed" in dots[-1].style["border"] and "dashed" not in dots[0].style["border"]
-        assert "#7F77DD" not in str(ui._chain(s4, layout=layout))
-
+# --- Step 4: the chain (vertical in both views; slate motive/condition dots) --
 
 def _walk(node):
     yield node
@@ -456,27 +430,21 @@ def _walk(node):
         yield from _walk(kid)
 
 
-def test_horizontal_chain_is_a_six_column_grid_and_only_the_clean_view_uses_it():
+def test_chain_has_six_steps_slate_motive_dots_and_a_dashed_last_dot():
+    """A horizontal row was built and dropped the same day (Sunny prefers
+    the vertical chain). What stays from step 4: the steps are a pure list,
+    and motive/condition dots are slate so purple means judges only."""
     s4 = _s4_full()
-    h = ui._chain(s4, layout="horizontal")
-    assert h.className == "chain-horizontal"
-    assert h.style["gridTemplateColumns"] == "repeat(6, minmax(0, 1fr))"
-    assert "chain-horizontal" in str(_s4("clean"))
-    assert "chain-horizontal" not in str(_s4("detailed"))
-    # the ticket's own chain inside the clean register is horizontal too
-    clean = str(_s4("clean"))
-    assert clean.count("chain-horizontal") == 2
-
-
-def test_horizontal_run_chain_keeps_the_text_short_with_the_full_text_on_hover():
-    s4 = _s4_full()
-    h = ui._chain(s4, layout="horizontal")
-    text = _text(h)
-    assert "life safety → responder safety → stabilisation → property" in text
-    assert "2 acting · 1 safe · first: Evacuate man_1 upwind." in text
-    assert "1. life safety" not in text                      # the long form rides on hover
-    hovers = [c.title for c in _walk(h) if getattr(c, "title", None)]
-    assert any("1. life safety" in t for t in hovers)
-    # a ticket's chain keeps its full detail (the rec diff is the evidence)
-    tk = s4["pathology"]["tickets"][0]
-    assert "no longer acts on tanker_1" in _text(ui._chain(s4, tk, layout="horizontal"))
+    for ticket in (None, s4["pathology"]["tickets"][0]):
+        steps = ui._chain_steps(s4, ticket)
+        assert [t for t, _d, _c in steps] == ["goals, in priority order", "motive",
+                                              "condition", "recommendations",
+                                              "pathology", "causal groundedness"]
+        assert steps[-1][2] is None and steps[1][2] == steps[2][2] == "#64748b"
+        chain = ui._chain(s4, ticket)
+        dots = [c for c in _walk(chain) if isinstance(getattr(c, "style", None), dict)
+                and c.style.get("borderRadius") == "50%"]
+        assert len(dots) == 6
+        assert "dashed" in dots[-1].style["border"] and "dashed" not in dots[0].style["border"]
+        assert "#7F77DD" not in str(chain)
+    assert "chain-horizontal" not in str(_s4("clean"))

@@ -3247,50 +3247,11 @@ def _chain_dot(color: str | None, **extra: Any) -> Any:
                            **extra})
 
 
-def _chain(s4: dict, ticket: dict | None = None, layout: str = "vertical") -> Any:
-    """The causal chain drawn as one line of dots: top to bottom in the
-    detailed view, left to right in the clean view (UI cleanup step 4,
-    2026-11-09). Same six steps either way."""
+def _chain(s4: dict, ticket: dict | None = None) -> Any:
+    """The causal chain drawn as one vertical line of dots (Sunny,
+    2026-11-09: a horizontal row was tried and dropped — vertical reads
+    better). Same six steps in both views."""
     steps = _chain_steps(s4, ticket)
-    if layout == "horizontal":
-        # Short text per column, the full text on hover: the goals step is
-        # the four goal names, the recommendations step a count plus the
-        # first action (Sunny, 2026-11-09: the full lines made the row tall).
-        recs = [r for r in (s4.get("recommendations") or []) if isinstance(r, dict)]
-        acting = [str(r.get("action") or "").strip() for r in recs if not r.get("benign")]
-        short = {
-            "goals, in priority order": "life safety → responder safety → "
-                                        "stabilisation → property",
-            "recommendations": (f"{len(acting)} acting"
-                                + (f" · {len(recs) - len(acting)} safe" if len(recs) > len(acting) else "")
-                                + (f" · first: {acting[0][:50]}" if acting else "")),
-        }
-        cols = []
-        for i, (title, detail, color) in enumerate(steps):
-            if isinstance(detail, str) and title in short and not ticket:
-                shown: Any = html.Div(short[title], title=detail,
-                                      style={"fontSize": "10.5px", "color": "#475569"})
-            elif isinstance(detail, str):
-                shown = html.Div(detail, style={"fontSize": "10.5px", "color": "#475569"})
-            else:
-                shown = detail
-            cols.append(html.Div([
-                html.Div([
-                    _chain_dot(color, position="relative", zIndex="1"),
-                    html.Div(style={"flex": "1", "height": "0",
-                                    "borderTop": "1px dashed #cbd5e1",
-                                    "margin": "5px 0 0 2px"})
-                    if i < len(steps) - 1 else None,
-                ], style={"display": "flex", "alignItems": "flex-start"}),
-                html.Div(title, style={"fontSize": "10.5px", "fontWeight": "700",
-                                       "color": "#1f2937", "marginTop": "4px",
-                                       "overflowWrap": "normal", "hyphens": "manual"}),
-                shown,
-            ], style={"minWidth": "0", "paddingRight": "8px", "overflowWrap": "break-word"}))
-        return html.Div(cols, className="chain-horizontal",
-                        style={"display": "grid",
-                               "gridTemplateColumns": f"repeat({len(steps)}, minmax(0, 1fr))",
-                               "padding": "4px 0 2px 2px"})
     rows = []
     for i, (title, detail, color) in enumerate(steps):
         rows.append(html.Div([
@@ -3313,7 +3274,7 @@ _STAMP = {"open": ("OPEN", "stamp open"), "fixing": ("FIXING…", "stamp fixing"
           "induced": ("INDUCED", "stamp open")}
 
 
-def _pathology_ticket_card(s4: dict, tk: dict, chain_layout: str = "vertical") -> Any:
+def _pathology_ticket_card(s4: dict, tk: dict) -> Any:
     """Sunny (2026-10-06): a pathology ticket is not a rule ticket — its
     own colour, the type and subtype in the header, one brief line of
     what happened, and the long evidence folded away."""
@@ -3367,7 +3328,7 @@ def _pathology_ticket_card(s4: dict, tk: dict, chain_layout: str = "vertical") -
         html.Summary("causal chain", style={"fontSize": "10px",
                                             "color": "#be123c",
                                             "cursor": "pointer"}),
-        _chain(s4, tk, layout=chain_layout)], style={"marginTop": "2px"}))
+        _chain(s4, tk)], style={"marginTop": "2px"}))
     return html.Details([html.Summary(head),
                          html.Div(body, className="ticket-body")],
                         className=f"ticket pathology {st}")
@@ -3582,9 +3543,8 @@ def _assemble_stage4_sections(out: list, s4: dict, d: dict,
         from agentic import ui_clean
         return ui_clean.assemble_clean(
             body, s4, d, _S4_SECTIONS,
-            chain=lambda rec: _chain(rec, layout="horizontal"),
-            pathology_ticket=lambda tk: _pathology_ticket_card(
-                s4, tk, chain_layout="horizontal"))
+            chain=_chain,
+            pathology_ticket=lambda tk: _pathology_ticket_card(s4, tk))
     sections: list = []
     for key, title, sub, open_ in _S4_SECTIONS:
         if title is None or not body.get(key):
