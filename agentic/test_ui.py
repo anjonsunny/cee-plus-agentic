@@ -2656,9 +2656,13 @@ def test_env_checklist_is_one_box_per_motive_with_a_single_line_fold():
     lines stay pickable under a closed fold; 're-ask ×5' is a mode."""
     from agentic import ui
     layout = str(ui.app.layout)
-    assert "1 keep the rescue going (6 lines)" in layout
-    assert "2 keep the only resource on the priority" in layout
-    assert "3 keep the goal reachable on paper" in layout
+    # short situation words on the boxes (Sunny, 2026-11-09); the motive
+    # name and the dispatch lines ride on the hover title
+    assert "1 crew held back (6 lines)" in layout
+    assert "2 one crew, two problems" in layout
+    assert "3 no crew for 40 min" in layout
+    assert "keep the rescue going — The first unit is four minutes out" in layout
+    assert "m:keep the only resource on the priority" in layout
     assert "single lines of 1" in layout
     assert "re-ask ×5" in layout and "reask" in layout
     # the line labels are in the fold, not the motive row

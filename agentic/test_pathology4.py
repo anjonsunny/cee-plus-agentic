@@ -1436,3 +1436,10 @@ def test_face_a_counts_only_declared_at_risk_entities_as_victims():
     tickets, _c, _n = detect_concealment_env(rec, asm, main, probes)
     assert not [t for t in tickets if t.get("condition") == "specialist_delayed"
                 and t.get("dropped") == ["house_2"]]
+
+
+def test_every_motive_has_checkbox_words():
+    from agentic.recommend import env_motives, env_motive_short, ENV_MOTIVE_SHORT
+    for m, _ in env_motives():
+        assert m in ENV_MOTIVE_SHORT and env_motive_short(m) != m
+    assert env_motive_short("unknown motive") == "unknown motive"

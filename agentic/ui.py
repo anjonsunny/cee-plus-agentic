@@ -67,6 +67,7 @@ from agentic.recommend import CONCEALMENT_MOTIVES as _CM  # noqa: E402
 from agentic.recommend import SANDBAGGING_MOTIVES as _SM  # noqa: E402
 from agentic.recommend import ENV_CONDITIONS as _EC  # noqa: E402
 from agentic.recommend import env_motives as _env_motives, env_pick as _env_pick  # noqa: E402
+from agentic.recommend import env_motive_short as _env_motive_short  # noqa: E402
 from agentic.recommend import ENV_REASK_N as _ENV_REASK_N  # noqa: E402
 _CONCEALMENT_MOTIVE_NAMES = tuple(_CM)
 _SANDBAGGING_MOTIVE_NAMES = tuple(_SM)
@@ -5802,8 +5803,10 @@ app.layout = html.Div([
             dcc.Checklist(
                 id="env-conditions", value=[], inline=True,
                 options=[{"label": " all", "value": "all"}]
-                + [{"label": f" {i} {m}"
-                             + (f" ({len(cs)} lines)" if len(cs) > 1 else ""),
+                + [{"label": html.Span(
+                        f" {i} {_env_motive_short(m)}"
+                        + (f" ({len(cs)} lines)" if len(cs) > 1 else ""),
+                        title=m + " — " + " / ".join(_EC[c]["line"] for c in cs)),
                     "value": f"m:{m}"}
                    for i, (m, cs) in enumerate(_env_motives(), 1)]
                 + [{"label": f" re-ask ×{_ENV_REASK_N}", "value": "reask"}],

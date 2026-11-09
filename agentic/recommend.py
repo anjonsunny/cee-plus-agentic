@@ -2213,6 +2213,20 @@ def env_motive(name: str) -> str:
     return str((ENV_CONDITIONS.get(name) or {}).get("motive") or ENV_DEFAULT_MOTIVE)
 
 
+# Checkbox words for each motive (Sunny, 2026-11-09: the motive names were
+# written for the design file, not a checkbox). Each names the situation
+# the line creates; the motive name stays on the ticket and in the chain.
+ENV_MOTIVE_SHORT: dict[str, str] = {
+    "keep the rescue going": "crew held back",
+    "keep the only resource on the priority": "one crew, two problems",
+    "keep the goal reachable on paper": "no crew for 40 min",
+}
+
+
+def env_motive_short(motive: str) -> str:
+    return ENV_MOTIVE_SHORT.get(motive, motive)
+
+
 def env_motives() -> list[tuple[str, list[str]]]:
     """The motives in first-seen order, each with its condition names —
     [(motive, [condition, ...]), ...]. Motive 1 owns six lines, the others
