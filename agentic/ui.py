@@ -4434,6 +4434,19 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None,
     return _assemble_stage4_sections(out, s4, d, mode=mode)
 
 
+def findings_component(d: dict[str, Any], mode: str = "clean") -> list[Any]:
+    """The FINDINGS card body (clean view only). In the detailed view the
+    card is hidden by CSS and this returns nothing, so the detailed page
+    is unchanged byte for byte."""
+    if mode != "clean":
+        return []
+    from agentic import ui_clean
+    s4 = d.get("stage4") or {}
+    return ui_clean.findings(
+        s4, d, chain=_chain,
+        pathology_ticket=lambda tk: _pathology_ticket_card(s4, tk))
+
+
 def assess_component(d: dict[str, Any], unc_view: str = "both",
                      record_name: str | None = None,
                      judge_result: dict[str, Any] | None = None,
@@ -5769,6 +5782,12 @@ app.index_string = """<!DOCTYPE html>
   /* UI cleanup step 2: the view switch. The clientside callback sets the
      wrap div to "wrap mode-clean" / "wrap mode-detailed". */
   .mode-clean .only-detailed { display:none; }
+  .mode-detailed .only-clean { display:none; }
+  /* clean view: the agent dock is one input line; the transcript opens
+     only when there is one (UI_CLEANUP_PLAN.md §7) */
+  .mode-clean .agent-transcript:empty { display:none; }
+  .mode-clean .agent-dock { margin-bottom:14px; }
+  #findings-card { margin-top:14px; }
 </style></head>
 <body>{%app_entry%}<footer>{%config%}{%scripts%}{%renderer%}</footer></body></html>"""
 
@@ -6029,7 +6048,23 @@ app.layout = html.Div([
                           html.Button("ASK", id="agent-send", className="go",
                                       n_clicks=0),
                       ], className="agent-inputrow"),
-                  ], className="agent-dock", id="agent-dock")]),
+                  ], className="agent-dock", id="agent-dock"),
+                  # FINDINGS (UI cleanup step 5, Sunny 2026-11-09): the space
+                  # under the scene holds what we found out about the answer —
+                  # trust, the chain, pathology tickets, and the box reserved
+                  # for causal groundedness. Clean view only; the detailed
+                  # view keeps these in the Stage 4 card.
+                  html.Details([
+                      html.Summary([html.Span("FINDINGS", className="phase-title"),
+                                    html.Span("trust · chain · pathology · "
+                                              "causal groundedness",
+                                              className="agent-sub",
+                                              style={"marginLeft": "10px"}),
+                                    html.Span("▾", className="station-chev")],
+                                   className="phase-head"),
+                      html.Div(id="findings-body"),
+                  ], className="phase-card only-clean", open=True,
+                      id="findings-card")]),
         # Phase cards stack CHRONOLOGICALLY, pipeline order top-down (the
         # rail reads like the pipeline diagram; feeds scroll, flight plans
         # don't reorder). A finished phase auto-collapses once the next
@@ -6354,6 +6389,7 @@ def select_entity(box_clicks, close_clicks):
     Output("scrub", "max"), Output("scrub", "value"),
     Output("agent-transcript", "children"),
     Output("assess-body", "children"), Output("stage4-body", "children"),
+    Output("findings-body", "children"),
     Output("phase0-card", "open"),
     Output("phase0-status", "children"), Output("phase1-status", "children"),
     Output("phase2-status", "children"),
@@ -6375,7 +6411,7 @@ def render(_n, scrub_value, unc_view, mode, run_id, selected, scrub_max,
         key = ["empty", bool(cached and cached.get("contents")), agent_sig,
                unc_view, "pending", mode]
         if key == prev_key:
-            return (dash.no_update,) * 15
+            return (dash.no_update,) * 16
         # A picked-but-unanalyzed image previews in the scene immediately,
         # with a ribbon saying it's ready.
         if cached and cached.get("contents"):
@@ -6391,6 +6427,7 @@ def render(_n, scrub_value, unc_view, mode, run_id, selected, scrub_max,
                 agent_transcript_component(log),
                 assess_component(empty, unc_view, mode=mode),
                 stage4_component(empty, None, mode=mode),
+                findings_component(empty, mode=mode),
                 dash.no_update,
                 phase_status_span([]), phase_status_span([]),
                 html.Span("○ waiting", className="phase-status pending"), key)
@@ -6410,7 +6447,7 @@ def render(_n, scrub_value, unc_view, mode, run_id, selected, scrub_max,
                                         (run.get("judge") or {}).get("status")),
            mode]  # mode stays LAST: prev_key[6] is assess_status
     if key == prev_key and ctx.triggered_id != "scrub":
-        return (dash.no_update,) * 15
+        return (dash.no_update,) * 16
     # Auto-collapse Phase 0 exactly ONCE, at the moment Phase 1 starts
     # (comparing against prev_key keeps later renders from stomping the
     # user's manual re-open).
@@ -6486,6 +6523,7 @@ def render(_n, scrub_value, unc_view, mode, run_id, selected, scrub_max,
             total, total if following else k,
             agent_transcript_component(log),
             assess_view, stage4_component(d, run.get("image_src"), mode=mode),
+            findings_component(d, mode=mode),
             phase0_open, p0_badge, p1_badge, stage4_status_span(d), key)
 
 

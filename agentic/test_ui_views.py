@@ -228,7 +228,7 @@ def test_render_takes_view_mode_right_after_unc_view_and_keeps_15_outputs():
     assert "view-mode" in ids
     assert ids.index("view-mode") == ids.index("unc-view") + 1
     outs = cb["output"].strip(".").split("...")
-    assert len(outs) == 15
+    assert len(outs) == 16                 # 15 + findings-body (step 5)
 
 
 def test_mode_is_the_last_render_key_element_and_assess_status_stays_at_6():
@@ -238,7 +238,7 @@ def test_mode_is_the_last_render_key_element_and_assess_status_stays_at_6():
         for mode in ("clean", "detailed"):
             out = ui.render(1, None, "both", mode, run_id, None,
                                         None, None, None)
-            assert len(out) == 15
+            assert len(out) == 16
             key = out[-1]
             assert key[-1] == mode
             assert key[6] == "done"          # assess_status unchanged
@@ -331,19 +331,61 @@ def _details(c):
         yield from _details(c.children)
 
 
-def test_clean_stage4_shows_the_verdict_recs_alignment_and_register():
+def test_clean_stage4_shows_recs_alignment_and_the_register_chips():
     text = _text(_s4("clean"))
-    assert "0.62 · moderate" in text and "what to do" in text
-    assert "pulls down" in text and "acts on a danger it doesn't hold" in text
-    assert "+1 more in detailed view" in text                  # only the top two
-    assert "holds up: targets agree" in text
     for action in ("Evacuate man_1 upwind.", "Close the valves."):
         assert action in text
     assert "1 entity judged safe" in text
     assert "trust 0.81" in text and "consequence high" in text
-    assert "no longer acts on tanker_1" in text
-    assert "THE RUN'S CHAIN" in text
     assert "diverge" in text and "withheld from trust" in text
+    # the register is two chips and a pointer; the chain and tickets moved left
+    assert "1 pathology ticket" in text and "FINDINGS" in text
+    assert "THE RUN'S CHAIN" not in text and "no longer acts on tanker_1" not in text
+    # the verdict moved to FINDINGS and the footer says so
+    assert "0.62 · moderate" not in text
+    assert "in FINDINGS on the left: the verdict" in text
+
+
+def _findings(mode="clean", s4=None, extra=None):
+    d = ui.derive(([{"type": "stage4_result", "result": s4}] if s4 is not None else [])
+                  + (extra or []))
+    return ui.findings_component(d, mode=mode)
+
+
+def test_findings_card_holds_trust_chain_pathology_and_the_groundedness_box():
+    text = _text(_findings(s4=_s4_full()))
+    assert "0.62 · moderate" in text and "what to do" in text
+    assert "pulls down" in text and "acts on a danger it doesn't hold" in text
+    assert "+1 more in detailed view" in text
+    assert "holds up: targets agree" in text
+    assert "THE RUN'S CHAIN" in text and "PATHOLOGIES" in text
+    assert "no longer acts on tanker_1" in text and "causal chain" in text
+    assert "1 detector looked" in text
+    assert "CAUSAL GROUNDEDNESS" in text and "not yet ported" in text
+
+
+def test_findings_card_is_empty_in_detailed_view_and_waits_before_stage_4():
+    assert ui.findings_component(ui.derive([{"type": "stage4_result",
+                                             "result": _s4_full()}]),
+                                 mode="detailed") == []
+    assert "once stage 4 has run" in _text(_findings())
+    assert "stage 4 is running" in _text(_findings(extra=[{"type": "recommendations_ready"}]))
+    assert "boom" in _text(_findings(extra=[{"type": "stage4_error", "message": "boom"}]))
+    bare = {"recommendations": _s4_full()["recommendations"], "pathology": {"tickets": []}}
+    text = _text(_findings(s4=bare))
+    assert "trust not scored" in text and "no pathology ticket" in text
+
+
+def test_findings_card_sits_under_the_scene_and_only_in_clean_view():
+    card, ancestors = _find(ui.app.layout, "findings-card")
+    assert "only-clean" in card.className and "phase-card" in card.className
+    assert ".mode-detailed .only-clean { display:none; }" in ui.app.index_string
+    # same column as the scene and the agent dock
+    scene, scene_anc = _find(ui.app.layout, "scene")
+    dock, dock_anc = _find(ui.app.layout, "agent-dock")
+    assert ancestors[-1] is scene_anc[-1] is dock_anc[-1]
+    # the dock's transcript hides when empty in clean view
+    assert ".mode-clean .agent-transcript:empty { display:none; }" in ui.app.index_string
 
 
 def test_clean_stage4_marks_a_recommendation_named_by_a_pathology_ticket():
@@ -378,7 +420,7 @@ def test_clean_stage4_folds_stability_and_graphs_with_a_gist():
     assert "2 rule breaks" in _text(graphs[0].children[0])
     opened = [k for k, f in folds.items()
               if getattr(f, "open", False) and " · " in k and k[0].isdigit()]
-    assert any("1 · THE VERDICT" in k for k in opened)
+    assert not any("1 · THE VERDICT" in k for k in folds)   # moved to FINDINGS
     assert any("2 · THE RECOMMENDATIONS" in k for k in opened)
     assert any("7 · THE REGISTER" in k for k in opened)
 
@@ -404,7 +446,7 @@ def test_clean_stage4_survives_empty_error_and_live_states():
     # a record with recommendations but no trust yet: the detailed body stands in
     bare = {"recommendations": _s4_full()["recommendations"], "pathology": {"tickets": []}}
     text = _text(_s4("clean", bare))
-    assert "Evacuate man_1 upwind." in text and "no pathology ticket" in text
+    assert "Evacuate man_1 upwind." in text and "0 pathology tickets" in text
 
 
 def test_pathology_ticket_card_is_shared_by_both_views():
@@ -447,4 +489,4 @@ def test_chain_has_six_steps_slate_motive_dots_and_a_dashed_last_dot():
         assert len(dots) == 6
         assert "dashed" in dots[-1].style["border"] and "dashed" not in dots[0].style["border"]
         assert "#7F77DD" not in str(chain)
-    assert "chain-horizontal" not in str(_s4("clean"))
+    assert "THE RUN'S CHAIN" in _text(_findings(s4=s4))

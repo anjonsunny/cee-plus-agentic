@@ -20,8 +20,11 @@ from dash import html
 #   show  — swap the body for the clean builder
 #   fold  — keep the detailed body, closed, with a one-line gist
 #   hide  — drop it and name it in the footer
+#   move  — lives in the FINDINGS card on the left (Sunny, 2026-11-09:
+#           the right column is what the model said, the left column is
+#           what we found out about it)
 CLEAN_POLICY: dict[str, str] = {
-    "verdict": "show",
+    "verdict": "move",
     "recs": "show",
     "stability": "fold",
     "graphs": "fold",
@@ -288,43 +291,92 @@ def clean_alignment(s4: dict) -> list:
 
 # ── 7 · THE REGISTER ─────────────────────────────────────────────────────
 
-def clean_register(s4: dict, *, chain: Callable[[dict], Any],
-                   pathology_ticket: Callable[[dict], Any]) -> list:
-    """The run's chain, every pathology ticket (each with its own chain
-    inside), and the rule tickets as one count chip. The probe answers,
-    the thinking folds and "who looked" stay in the detailed view."""
-    s4 = s4 or {}
-    reg = s4.get("tickets")
+def _register_of(s4: dict) -> dict:
+    reg = (s4 or {}).get("tickets")
     if not reg:
         from agentic.register4 import stage4_register
-        reg = stage4_register(s4)
-    c = reg.get("counts") or {}
-    out: list = [html.Div("THE RUN'S CHAIN", style={
-        "fontSize": "10px", "fontWeight": "800", "letterSpacing": ".08em",
-        "color": "#64748b", "margin": "4px 0 2px"}), chain(s4)]
+        reg = stage4_register(s4 or {})
+    return reg
+
+
+def _heading(text: str) -> Any:
+    return html.Div(text, style={"fontSize": "10px", "fontWeight": "800",
+                                 "letterSpacing": ".08em", "color": "#64748b",
+                                 "margin": "8px 0 2px"})
+
+
+def clean_register(s4: dict, **_ignored: Any) -> list:
+    """In the Stage 4 card the register is one count chip for the rule
+    tickets and a pointer: the chain and the pathology tickets live in the
+    FINDINGS card on the left. The probe answers, the thinking folds and
+    "who looked" stay in the detailed view."""
+    c = _register_of(s4).get("counts") or {}
     n_rule = int(c.get("rule") or 0)
-    out.append(html.Div([
+    n_path = int(c.get("pathology") or 0)
+    return [html.Div([
         _chip(f"{n_rule} rule ticket{'s' if n_rule != 1 else ''}",
               "#b45309" if n_rule else "#94a3b8",
               title="code and judge rule violations; the detailed view lists them"),
-        html.Span("in detailed view" if n_rule else "clean", style=_SMALL),
-    ], style={"margin": "6px 0"}))
-    out.append(html.Div("PATHOLOGIES", style={
-        "fontSize": "10px", "fontWeight": "800", "letterSpacing": ".08em",
-        "color": "#64748b", "margin": "8px 0 2px"}))
-    path = reg.get("pathology") or []
+        _chip(f"{n_path} pathology ticket{'s' if n_path != 1 else ''}",
+              "#be123c" if n_path else "#94a3b8", fill=bool(n_path),
+              title="in FINDINGS, on the left"),
+        html.Span("rule tickets in detailed view · pathology tickets and the "
+                  "chain in FINDINGS on the left", style=_SMALL),
+    ], style={"margin": "6px 0"})]
+
+
+def findings(s4: dict, d: dict, *, chain: Callable[[dict], Any],
+             pathology_ticket: Callable[[dict], Any]) -> list:
+    """The FINDINGS card (clean view, left column, under the scene): what
+    we found out about the model's answer. Trust, the run's chain, every
+    pathology ticket with its own chain, and the causal-groundedness box
+    reserved for the intervention. Before Stage 4 has a result it says
+    what it is waiting for."""
+    s4 = s4 or {}
+    if d.get("stage4_error"):
+        return [html.Div(f"stage 4 failed: {d['stage4_error']}",
+                         style={"fontSize": "12px", "color": "#b91c1c"})]
+    if not s4:
+        waiting = ("stage 4 is running — findings arrive with the trust score"
+                   if d.get("stage4_started") else
+                   "findings arrive once stage 4 has run")
+        return [html.Div(waiting, className="ticket-empty")]
+    out: list = []
+    out += clean_verdict(s4) or [html.Div("trust not scored on this run",
+                                          className="ticket-empty")]
+    out.append(_heading("THE RUN'S CHAIN"))
+    out.append(chain(s4))
+    out.append(_heading("PATHOLOGIES"))
+    path = _register_of(s4).get("pathology") or []
     out += [pathology_ticket(tk) for tk in path] or [
         html.Div("no pathology ticket", className="ticket-empty")]
+    pa = s4.get("pathology") or {}
+    looked = pa.get("checked") or []
+    if looked:
+        out.append(html.Div(f"{len(looked)} detector{'s' if len(looked) != 1 else ''} looked"
+                            + (f" · {len(pa.get('not_run') or [])} did not run"
+                               if pa.get("not_run") else ""),
+                            style={"fontSize": "10.5px", "color": "#94a3b8"}))
+    out.append(_heading("CAUSAL GROUNDEDNESS"))
+    out.append(html.Div(
+        "reserved: suppress the hazard, see whether the plan moves "
+        "(the intervention is not yet ported)",
+        className="ticket-empty", style={"borderStyle": "dashed"}))
     return out
 
 
 # ── assembly ─────────────────────────────────────────────────────────────
 
-def hidden_note(hidden: list[str]) -> Any | None:
-    if not hidden:
+def hidden_note(hidden: list[str], moved: list[str] | None = None) -> Any | None:
+    if not hidden and not moved:
         return None
-    return html.Div("hidden in clean view: " + " · ".join(hidden)
-                    + " — switch to detailed to see them",
+    parts = []
+    if moved:
+        parts.append("in FINDINGS on the left: " + " · ".join(moved))
+    if hidden:
+        parts.append("hidden in clean view: " + " · ".join(hidden)
+                     + " — switch to detailed to see them")
+    return html.Div(" · ".join(parts),
                     className="only-clean",
                     style={"fontSize": "10.5px", "color": "#94a3b8",
                            "margin": "6px 2px 0"})
@@ -347,10 +399,14 @@ def assemble_clean(body: dict[str, list], s4: dict, d: dict, sections: tuple,
     }
     out: list = []
     hidden: list[str] = []
+    moved: list[str] = []
     for key, title, sub, open_ in sections:
         if title is None or not body.get(key):
             continue
         policy = CLEAN_POLICY.get(key, "fold")
+        if policy == "move":
+            moved.append(title.split("·", 1)[-1].strip().lower())
+            continue
         if policy == "hide":
             gist = section_gist(key, s4)
             hidden.append(title.split("·", 1)[-1].strip().lower()
@@ -375,7 +431,7 @@ def assemble_clean(body: dict[str, list], s4: dict, d: dict, sections: tuple,
                       "background": "#f1f5f9", "borderRadius": "6px"}),
             html.Div(content, style={"padding": "6px 0 2px 4px"}),
         ], open=is_open, style={"marginBottom": "8px"}))
-    note = hidden_note(hidden)
+    note = hidden_note(hidden, moved)
     if note is not None:
         out.append(note)
     return out

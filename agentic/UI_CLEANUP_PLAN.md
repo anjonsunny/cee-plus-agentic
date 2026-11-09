@@ -220,3 +220,20 @@ Total about 820 lines, about 40 new tests. Steps 1, 2, 4 are independent;
    pathology tickets; the full step list folded (my choice — the short
    line is what the clean view is for, and the fold keeps the detail one
    click away).
+
+## 9. Built so far, and one change of plan (2026-11-09)
+
+- Steps 1–3 built and merged: run-settings fold, the view switch (clean by
+  default), the Stage 4 clean view (agentic/ui_clean.py).
+- Step 4 (horizontal chain) was built and dropped the same day: Sunny
+  prefers the vertical chain. What stays: the chain's steps are a pure
+  list (`_chain_steps`), and the motive and condition dots are slate.
+- Step 5 changed: instead of moving the whole Stage 4 card under the
+  scene, a FINDINGS card sits there in clean view. Right column = what
+  the model said (Stage 1, 2, 4); left column = what we found out about
+  it: trust, the run's chain, the pathology tickets, and a box reserved
+  for causal groundedness (the intervention, when ported). In the Stage 4
+  card the register is two count chips and a pointer. The agent dock
+  hides its transcript until there is one. Detailed view unchanged.
+- Still to do: Stage 2 clean view, Stage 1 clean view + trimmed
+  instruments, the live run in clean view, tidy.
