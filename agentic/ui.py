@@ -3195,13 +3195,15 @@ def _rec_diff(base: list, probe: list) -> Any:
                                       style={"fontSize": "11px", "color": "#475569"})])
 
 
-def _chain(s4: dict, ticket: dict | None = None) -> Any:
-    """The causal chain (Sunny, 2026-10-30): goals -> motive -> condition
-    -> recommendations -> pathology -> groundedness, one vertical line, one
-    dot per step. Without a ticket it is the run's own chain and the
-    pathology step reads "none detected"; with a ticket, that ticket's
-    motive, condition and finding fill the steps. The last step is a
-    placeholder until the intervention is ported."""
+def _chain_steps(s4: dict, ticket: dict | None = None) -> list[tuple[str, Any, str | None]]:
+    """The six steps of the causal chain (Sunny, 2026-10-30): goals ->
+    motive -> condition -> recommendations -> pathology -> groundedness,
+    as (title, detail, dot colour). Without a ticket it is the run's own
+    chain and the pathology step reads "none detected"; with a ticket, that
+    ticket's motive, condition and finding fill the steps. The last step
+    is a placeholder until the intervention is ported. Motive and
+    condition dots are slate (UI cleanup, Sunny 2026-10-30: purple means
+    judges only)."""
     from agentic.recommend import ENV_CONDITIONS, GOAL_LINE
     tk = ticket or {}
     recs = [r for r in (s4.get("recommendations") or []) if isinstance(r, dict)]
@@ -3220,12 +3222,12 @@ def _chain(s4: dict, ticket: dict | None = None) -> Any:
         rec_line = html.Div(blocks)
     cond = ENV_CONDITIONS.get(str(tk.get("condition") or ""), {})
     motive = tk.get("motive") or (cond.get("motive", "keep the rescue going") if cond else "")
-    steps = [
+    return [
         ("goals, in priority order", GOAL_LINE.split(": ", 1)[-1], "#888780"),
-        ("motive", motive or "none applied on this run", "#7F77DD"),
+        ("motive", motive or "none applied on this run", "#64748b"),
         ("condition",
          (f"dispatch: {cond['line']}" if cond else
-          (tk.get("line") or "none — the scene as given")), "#7F77DD"),
+          (tk.get("line") or "none — the scene as given")), "#64748b"),
         ("recommendations", rec_line, "#1D9E75"),
         ("pathology",
          (f"{tk.get('pathology_kind') or tk.get('kind', '')} · "
@@ -3235,14 +3237,45 @@ def _chain(s4: dict, ticket: dict | None = None) -> Any:
          "placeholder: suppress the hazard, see whether the plan moves "
          "(intervention not yet ported)", None),
     ]
+
+
+def _chain_dot(color: str | None, **extra: Any) -> Any:
+    return html.Div(style={"width": "10px", "height": "10px", "borderRadius": "50%",
+                           "border": f"1px {'dashed' if color is None else 'solid'} "
+                                     f"{color or '#94a3b8'}",
+                           "background": color or "transparent", "flex": "none",
+                           **extra})
+
+
+def _chain(s4: dict, ticket: dict | None = None, layout: str = "vertical") -> Any:
+    """The causal chain drawn as one line of dots: top to bottom in the
+    detailed view, left to right in the clean view (UI cleanup step 4,
+    2026-11-09). Same six steps either way."""
+    steps = _chain_steps(s4, ticket)
+    if layout == "horizontal":
+        cols = []
+        for i, (title, detail, color) in enumerate(steps):
+            cols.append(html.Div([
+                html.Div([
+                    _chain_dot(color, position="relative", zIndex="1"),
+                    html.Div(style={"flex": "1", "height": "0",
+                                    "borderTop": "1px dashed #cbd5e1",
+                                    "margin": "5px 0 0 2px"})
+                    if i < len(steps) - 1 else None,
+                ], style={"display": "flex", "alignItems": "flex-start"}),
+                html.Div(title, style={"fontSize": "10.5px", "fontWeight": "700",
+                                       "color": "#1f2937", "marginTop": "4px"}),
+                (detail if not isinstance(detail, str) else
+                 html.Div(detail, style={"fontSize": "10.5px", "color": "#475569"})),
+            ], style={"minWidth": "0", "paddingRight": "8px", "overflowWrap": "anywhere"}))
+        return html.Div(cols, className="chain-horizontal",
+                        style={"display": "grid",
+                               "gridTemplateColumns": f"repeat({len(steps)}, minmax(0, 1fr))",
+                               "padding": "4px 0 2px 2px"})
     rows = []
     for i, (title, detail, color) in enumerate(steps):
         rows.append(html.Div([
-            html.Div(style={"width": "10px", "height": "10px", "borderRadius": "50%",
-                            "border": f"1px {'dashed' if color is None else 'solid'} "
-                                      f"{color or '#94a3b8'}",
-                            "background": color or "transparent",
-                            "marginTop": "4px", "flex": "none"}),
+            _chain_dot(color, marginTop="4px"),
             html.Div([html.Div(title, style={"fontSize": "11.5px", "fontWeight": "700",
                                             "color": "#1f2937"}),
                       (detail if not isinstance(detail, str) else
@@ -3261,7 +3294,7 @@ _STAMP = {"open": ("OPEN", "stamp open"), "fixing": ("FIXING…", "stamp fixing"
           "induced": ("INDUCED", "stamp open")}
 
 
-def _pathology_ticket_card(s4: dict, tk: dict) -> Any:
+def _pathology_ticket_card(s4: dict, tk: dict, chain_layout: str = "vertical") -> Any:
     """Sunny (2026-10-06): a pathology ticket is not a rule ticket — its
     own colour, the type and subtype in the header, one brief line of
     what happened, and the long evidence folded away."""
@@ -3315,7 +3348,7 @@ def _pathology_ticket_card(s4: dict, tk: dict) -> Any:
         html.Summary("causal chain", style={"fontSize": "10px",
                                             "color": "#be123c",
                                             "cursor": "pointer"}),
-        _chain(s4, tk)], style={"marginTop": "2px"}))
+        _chain(s4, tk, layout=chain_layout)], style={"marginTop": "2px"}))
     return html.Details([html.Summary(head),
                          html.Div(body, className="ticket-body")],
                         className=f"ticket pathology {st}")
@@ -3529,8 +3562,10 @@ def _assemble_stage4_sections(out: list, s4: dict, d: dict,
         # front of the same partition (agentic/ui_clean.py).
         from agentic import ui_clean
         return ui_clean.assemble_clean(
-            body, s4, d, _S4_SECTIONS, chain=_chain,
-            pathology_ticket=lambda tk: _pathology_ticket_card(s4, tk))
+            body, s4, d, _S4_SECTIONS,
+            chain=lambda rec: _chain(rec, layout="horizontal"),
+            pathology_ticket=lambda tk: _pathology_ticket_card(
+                s4, tk, chain_layout="horizontal"))
     sections: list = []
     for key, title, sub, open_ in _S4_SECTIONS:
         if title is None or not body.get(key):

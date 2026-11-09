@@ -419,3 +419,50 @@ def test_pathology_ticket_card_is_shared_by_both_views():
 def test_the_title_names_all_three_stages():
     assert "RECOMMENDATION" in _text(ui.app.layout.children[0])
     assert "STAGES 1-2" not in str(ui.app.layout.children[0])
+
+
+
+# --- Step 4: the horizontal chain --------------------------------------------
+
+def test_chain_has_the_same_six_steps_in_both_layouts():
+    s4 = _s4_full()
+    tk = s4["pathology"]["tickets"][0]
+    for ticket in (None, tk):
+        v = _text(ui._chain(s4, ticket))
+        h = _text(ui._chain(s4, ticket, layout="horizontal"))
+        for title in ("goals, in priority order", "motive", "condition",
+                      "recommendations", "pathology", "causal groundedness"):
+            assert title in v and title in h, title
+        steps = ui._chain_steps(s4, ticket)
+        assert [t for t, _d, _c in steps] == ["goals, in priority order", "motive",
+                                              "condition", "recommendations",
+                                              "pathology", "causal groundedness"]
+    # the last dot is dashed (placeholder) and motive/condition are slate, not purple
+    steps = ui._chain_steps(s4)
+    assert steps[-1][2] is None
+    assert steps[1][2] == steps[2][2] == "#64748b"
+    for layout in ("vertical", "horizontal"):
+        dots = [c for c in _walk(ui._chain(s4, layout=layout))
+                if isinstance(getattr(c, "style", None), dict)
+                and c.style.get("borderRadius") == "50%"]
+        assert len(dots) == 6
+        assert "dashed" in dots[-1].style["border"] and "dashed" not in dots[0].style["border"]
+        assert "#7F77DD" not in str(ui._chain(s4, layout=layout))
+
+
+def _walk(node):
+    yield node
+    for kid in _kids(node):
+        yield from _walk(kid)
+
+
+def test_horizontal_chain_is_a_six_column_grid_and_only_the_clean_view_uses_it():
+    s4 = _s4_full()
+    h = ui._chain(s4, layout="horizontal")
+    assert h.className == "chain-horizontal"
+    assert h.style["gridTemplateColumns"] == "repeat(6, minmax(0, 1fr))"
+    assert "chain-horizontal" in str(_s4("clean"))
+    assert "chain-horizontal" not in str(_s4("detailed"))
+    # the ticket's own chain inside the clean register is horizontal too
+    clean = str(_s4("clean"))
+    assert clean.count("chain-horizontal") == 2
