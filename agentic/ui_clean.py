@@ -435,3 +435,163 @@ def assemble_clean(body: dict[str, list], s4: dict, d: dict, sections: tuple,
     if note is not None:
         out.append(note)
     return out
+
+
+# ── Stage 2 · SCENE ASSESSMENT, clean view ───────────────────────────────
+
+def _entity_chips(entries: list, colour: str, with_kind: bool = False) -> list:
+    chips = []
+    for e in entries or []:
+        if not isinstance(e, dict):
+            continue
+        text = str(e.get("object_id") or "?")
+        if with_kind and e.get("kind"):
+            text += f" · {e['kind']}"
+        chips.append(html.Span(text, title=str(e.get("reason") or ""),
+                               style={"fontSize": "11px", "fontWeight": "700",
+                                      "color": colour, "border": f"1px solid {colour}",
+                                      "borderRadius": "6px", "padding": "1px 7px",
+                                      "marginRight": "6px", "whiteSpace": "nowrap",
+                                      "display": "inline-block", "marginBottom": "4px"}))
+    return chips
+
+
+def clean_assess(A: dict, d: dict, *, bucket_css: dict) -> list:
+    """Stage 2 in clean view (UI cleanup step 6, plan §1 "Stage 2"): the
+    derived-hazard notes, the verdict banner, threats and at-risk as
+    chips, one measured-uncertainty chip, the tickets as count chips with
+    the open ones named, reflection and petition folded with a gist and
+    the petition's final line visible. Per-entity votes, the self-reported
+    confidence, ghosts, the judges' roster, the RAG shadow, the GT overlay
+    and the timeline stay in the detailed view and are named in the
+    footer."""
+    A = A or {}
+    out: list = []
+    for line in A.get("derived_hazards") or []:
+        out.append(html.Div(f"⚑ DERIVED HAZARD — {line}",
+                            style={"background": "#fef2f2", "border": "1px solid #ef4444",
+                                   "borderRadius": "8px", "padding": "5px 10px",
+                                   "margin": "2px 0 6px", "fontSize": "12px",
+                                   "color": "#b91c1c", "fontWeight": "600"}))
+    v = A.get("verdict") or {}
+    if v:
+        colour = bucket_css.get(v.get("bucket"), "#64748b")
+        out.append(html.Div(
+            f"{'DISASTER' if v.get('scenario') == 'Yes' else 'NO DISASTER'}"
+            f" · {v.get('disaster_type')} · level {v.get('level')} · "
+            f"{str(v.get('bucket', '')).upper()}",
+            className="verdict-banner",
+            style={"background": f"{colour}18", "border": f"1px solid {colour}",
+                   "color": colour, "fontWeight": "700", "borderRadius": "10px",
+                   "padding": "8px 14px", "margin": "4px 0 8px"}))
+        threats = _entity_chips(v.get("threats") or [], "#ef4444")
+        at_risk = _entity_chips(v.get("at_risk") or [], "#f97316", with_kind=True)
+        out.append(html.Div(
+            [html.Span("threats: ", style={**_SMALL, "fontWeight": "700"})]
+            + (threats or [html.Span("none", style=_SMALL)]),
+            style={"margin": "2px 0"}))
+        out.append(html.Div(
+            [html.Span("at risk: ", style={**_SMALL, "fontWeight": "700"})]
+            + (at_risk or [html.Span("none", style=_SMALL)]),
+            style={"margin": "2px 0 6px"}))
+    elif A.get("status") == "active":
+        out.append(html.Div("assessing the scene…", className="ticket-empty"))
+    mu = A.get("uncertainty") or {}
+    chips: list = []
+    sc = mu.get("score")
+    if isinstance(sc, (int, float)):
+        chips.append(_chip(f"measured: {sc:.2f} unsure"
+                           + (f" · {mu['n_probes']} probes" if mu.get("n_probes") else ""),
+                           "#16a34a" if sc < 0.2 else "#b45309" if sc < 0.5 else "#b91c1c",
+                           title=str(mu.get("explanation") or
+                                     "how much the re-asked answers disagree; "
+                                     "rises as they split")))
+    elif A.get("status") == "done" and v:
+        chips.append(_chip("measured: off (no stage 2 re-asks)", "#94a3b8",
+                           title="tick re-asks · stage 2 in run settings to measure it"))
+    tickets = [t for t in (A.get("tickets") or {}).values() if isinstance(t, dict)]
+    if tickets:
+        by: dict[str, int] = {}
+        for t in tickets:
+            by[str(t.get("status") or "open")] = by.get(str(t.get("status") or "open"), 0) + 1
+        colour_of = {"open": "#b45309", "fixing": "#b45309", "fixed": "#16a34a",
+                     "stood": "#64748b"}
+        for st, n in by.items():
+            chips.append(_chip(f"{n} {st}", colour_of.get(st, "#64748b"),
+                               title="assessment tickets (rule checks S1–S8, G2, G4)"))
+        opens = [t for t in tickets if t.get("status") in ("open", "fixing")]
+        for t in opens:
+            chips.append(_chip(str(t.get("kind") or "").replace("_", " "), "#b45309",
+                               fill=True, title=str(t.get("evidence") or "")))
+    elif A.get("status") == "done":
+        chips.append(_chip("no ticket", "#94a3b8", title="rule checks S1–S8, G2, G4 all clean"))
+    if chips:
+        out.append(html.Div(chips, style={"margin": "4px 0 6px", "lineHeight": "2"}))
+    R = A.get("reflection") or {}
+    rounds = R.get("rounds") or []
+    if rounds or R.get("u_after") is not None:
+        changed = [r for r in rounds if r.get("changed")]
+        gist = (f"reflection: {len(rounds)} round{'s' if len(rounds) != 1 else ''} · "
+                + ("verdict revised" if changed else "verdict unchanged"))
+        if R.get("u_after") is not None and isinstance(mu.get("score"), (int, float)):
+            gist += f" · unsure {mu['score']:.2f} → {float(R['u_after']):.2f}"
+        out.append(html.Details([
+            html.Summary(gist, style={"fontSize": "11px", "color": "#475569",
+                                      "cursor": "pointer"}),
+            html.Div([html.Div(
+                f"round {r.get('round', i + 1)}: "
+                + ("revised" if r.get("changed") else
+                   "stood its ground" if r.get("changed") is False else "in progress")
+                + (f" — {str(r.get('instruction'))[:120]}"
+                   + ("…" if len(str(r.get("instruction"))) > 120 else "")
+                   if r.get("instruction") else ""),
+                style={"fontSize": "11px", "color": "#475569"})
+                for i, r in enumerate(rounds)], style={"padding": "2px 0 0 10px"}),
+        ], style={"margin": "4px 0"}))
+    P = A.get("petition") or {}
+    if P:
+        where = "re-looked at the image" if P.get("target") == "stage1" else "re-asked the question"
+        status = str(P.get("status") or "")
+        added = [str(x) for x in (P.get("added") or [])]
+        gist = f"petition: {where} · {status}"
+        if added:
+            gist += f" · added {', '.join(added)}"
+        elif status in ("merged", "failed"):
+            gist += " · nothing added"
+        oc = P.get("outcome") or {}
+        final = ""
+        if oc:
+            final = ("the second look settled it" if oc.get("resolved")
+                     else "the second look did not settle it")
+        if v:
+            final = (final + " · " if final else "") + (
+                f"final: {v.get('scenario')} · level {v.get('level')} · "
+                f"{str(v.get('bucket', '')).upper()}")
+        pcol = "#7c3aed"
+        out.append(html.Div([
+            html.Div(gist, style={"fontSize": "11px", "color": pcol, "fontWeight": "600"}),
+            html.Div(final, style={"fontSize": "11.5px", "fontWeight": "700",
+                                   "color": "#334155", "marginTop": "2px"}) if final else None,
+        ], style={"border": f"1px solid {pcol}", "borderRadius": "8px",
+                  "padding": "5px 10px", "margin": "4px 0"}))
+    hidden = []
+    if v and isinstance(v.get("self_confidence"), (int, float)):
+        hidden.append("the model's self-reported confidence and the calibration gap")
+    gran = mu.get("granular") or {}
+    if gran:
+        hidden.append("per-entity votes")
+        cited = {e.get("object_id") for e in (v.get("threats") or []) + (v.get("at_risk") or [])}
+        ghosts = [oid for table in (gran.get("threats") or {}, gran.get("at_risk") or {})
+                  for oid in table if oid not in cited]
+        if ghosts:
+            hidden.append(f"{len(ghosts)} entit{'y' if len(ghosts) == 1 else 'ies'} seen "
+                          "only in probe lists")
+    if d.get("retrieval_shadow"):
+        hidden.append("the RAG shadow")
+    if A.get("status") != "pending":
+        hidden.append("the judges' roster")
+        hidden.append("the timeline")
+    note = hidden_note(hidden)
+    if note is not None:
+        out.append(note)
+    return out

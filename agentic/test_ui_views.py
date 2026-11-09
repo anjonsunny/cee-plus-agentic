@@ -260,7 +260,9 @@ def test_every_renderer_is_identical_in_both_views_at_every_prefix():
                          ("stage4", ui.stage4_component)):
             base = str(fn(d))
             assert base == str(fn(d, mode="detailed")), (name, k)
-            if name != "stage4" or not d.get("stage4"):
+            has_content = {"stage4": bool(d.get("stage4")),
+                           "assess": d["assess"]["status"] != "pending"}.get(name, False)
+            if not has_content:
                 assert base == str(fn(d, mode="clean")), (name, k)
 
 
@@ -490,3 +492,91 @@ def test_chain_has_six_steps_slate_motive_dots_and_a_dashed_last_dot():
         assert "dashed" in dots[-1].style["border"] and "dashed" not in dots[0].style["border"]
         assert "#7F77DD" not in str(chain)
     assert "THE RUN'S CHAIN" in _text(_findings(s4=s4))
+
+
+
+# --- Step 6: Stage 2 clean view ----------------------------------------------
+
+def _assess(mode, extra=None):
+    from agentic.test_ui import ASSESS_EVENTS, EVENTS
+    d = ui.derive(EVENTS + ASSESS_EVENTS + (extra or []))
+    return ui.assess_component(d, "both", mode=mode)
+
+
+def test_clean_stage2_shows_banner_chips_and_one_uncertainty_chip():
+    text = _text(_assess("clean"))
+    assert "DISASTER · fire · level 7 · CATASTROPHIC" in text
+    assert "threats:" in text and "at risk:" in text
+    assert "measured: 0.20 unsure" in text
+    assert "no ticket" in text
+    # with stage 2 re-asks off the chip says so instead of vanishing
+    from agentic.test_ui import ASSESS_EVENTS, EVENTS
+    no_unc = [e for e in EVENTS + ASSESS_EVENTS if e["type"] != "assess_uncertainty"]
+    assert "measured: off" in _text(ui.assess_component(ui.derive(no_unc), "both", mode="clean"))
+    # detailed-only material is gone and named
+    body = text.split("hidden in clean view")[0]
+    for absent in ("model says", "calibration gap", "CODE CHECKS", "RULEBOOK"):
+        assert absent not in body, absent
+    assert "hidden in clean view" in text
+    assert "self-reported confidence" in text and "judges' roster" in text
+    # the detailed view still has it all
+    detailed = _text(_assess("detailed"))
+    assert "model says" in detailed and "CODE CHECKS" in detailed
+
+
+def test_clean_stage2_names_open_tickets_and_folds_reflection_with_a_gist():
+    from agentic.test_ui import ASSESS_EVENTS, EVENTS
+    events = EVENTS + ASSESS_EVENTS[:2] + [
+        {"type": "assess_violation", "kind": "scenario_no_level_gt0",
+         "evidence": "No but level=3"},
+        {"type": "assess_verdict", "scenario": "No", "disaster_type": "N/A",
+         "level": 3, "bucket": "minor", "self_confidence": 0.9, "n_violations": 1},
+        {"type": "reflect_round_started", "round": 1, "stage": "assess",
+         "triggers": [{"type": "violation", "kind": "scenario_no_level_gt0"}],
+         "instruction": "re-read your own words"},
+        {"type": "reflect_round_done", "round": 1, "stage": "assess", "changed": True},
+        {"type": "assess_verdict", "scenario": "Yes", "disaster_type": "fire",
+         "level": 3, "bucket": "minor", "self_confidence": 0.9, "n_violations": 0},
+        {"type": "stage_done", "stage": "assess"},
+    ]
+    d = ui.derive(events)
+    comp = ui.assess_component(d, "both", mode="clean")
+    text = _text(comp)
+    assert "1 open" in text or "1 fixed" in text or "1 fixing" in text
+    assert "reflection: 1 round · verdict revised" in text
+    folds = [f for f in _details(comp) if "reflection:" in _text(f)]
+    assert folds and getattr(folds[0], "open", None) in (None, False)
+    assert "round 1: revised" in _text(folds[0])
+
+
+def test_clean_stage2_petition_line_and_badge():
+    from agentic.test_ui import ASSESS_EVENTS, EVENTS
+    events = EVENTS + ASSESS_EVENTS + [
+        {"type": "petition_started", "target": "stage2", "reasons": []},
+        {"type": "petition_done", "added": ["smoke_1"], "removed": []},
+        {"type": "assess_verdict", "scenario": "Yes", "disaster_type": "fire",
+         "level": 7, "bucket": "catastrophic", "self_confidence": 0.95,
+         "n_violations": 0},
+        {"type": "stage_done", "stage": "assess"},
+    ]
+    d = ui.derive(events)
+    text = _text(ui.assess_component(d, "both", mode="clean"))
+    assert "petition: re-asked the question" in text and "added smoke_1" in text
+    assert "final: Yes · level 7 · CATASTROPHIC" in text
+    # before-petition snapshot becomes a one-line badge in clean view
+    run_id = "test-clean-petition"
+    ui.RUNS[run_id] = {"events": events}
+    try:
+        out = ui.render(1, None, "both", "clean", run_id, None, None, None, None)
+        assess_view = out[8]
+        assert "after a petition" in _text(assess_view)
+        assert "BEFORE PETITION" not in _text(assess_view)
+        out = ui.render(1, None, "both", "detailed", run_id, None, None, None, None)
+        assert "BEFORE PETITION" in _text(out[8])
+    finally:
+        ui.RUNS.pop(run_id, None)
+
+
+def test_clean_stage2_hides_the_uncertainty_view_toggle():
+    radio, _ = _find(ui.app.layout, "unc-view")
+    assert "only-detailed" in radio.className

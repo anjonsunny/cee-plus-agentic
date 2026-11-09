@@ -4459,6 +4459,10 @@ def assess_component(d: dict[str, Any], unc_view: str = "both",
     if A["status"] == "pending" and not A.get("petition"):
         return [html.Div("waiting for perception to finish...",
                          className="ticket-empty")]
+    if mode == "clean":
+        # UI cleanup step 6: the compact Stage 2 (agentic/ui_clean.py)
+        from agentic import ui_clean
+        return ui_clean.clean_assess(A, d, bucket_css=BUCKET_CSS)
     out: list[Any] = []
 
     # RAG SHADOW (rag/both retrieval mode only): exact-key vs RAG top-1 for
@@ -6092,7 +6096,7 @@ app.layout = html.Div([
                     options=[{"label": "self-reported", "value": "self"},
                              {"label": "measured", "value": "measured"},
                              {"label": "both (calibration)", "value": "both"}],
-                    className="unc-toggle"),
+                    className="unc-toggle only-detailed"),
                 html.Div(id="assess-body"),
             ], className="phase-card", open=True, id="phase1-card"),
             html.Details([
@@ -6500,7 +6504,12 @@ def render(_n, scrub_value, unc_view, mode, run_id, selected, scrub_max,
                          style={"color": "#7c3aed", "margin": "2px 0"}),
                 rail_view])
         stage2 = "stages" not in e0
-        assess_view = [
+        assess_view = ([html.Div(
+            "re-asked fresh after a petition" if stage2
+            else "re-assessed after a petition",
+            className="unc-tag",
+            style={"color": "#7c3aed", "margin": "2px 0 6px"})] + assess_view
+        ) if mode == "clean" else [
             html.Details([
                 html.Summary("BEFORE PETITION — original assessment",
                              className="unc-tag",

@@ -237,3 +237,10 @@ Total about 820 lines, about 40 new tests. Steps 1, 2, 4 are independent;
   hides its transcript until there is one. Detailed view unchanged.
 - Still to do: Stage 2 clean view, Stage 1 clean view + trimmed
   instruments, the live run in clean view, tidy.
+- Stage 2 clean view built (2026-11-09): derived-hazard notes, the
+  verdict banner, threats and at-risk as chips, one measured-uncertainty
+  chip ("measured: off" when stage 2 re-asks were off), tickets as count
+  chips with the open ones named, reflection folded with a gist,
+  petition as a one-line box with the final verdict, the before-petition
+  snapshot as a one-line badge. The uncertainty-view toggle is
+  detailed-only. Footer names what is hidden.
