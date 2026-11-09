@@ -3253,8 +3253,27 @@ def _chain(s4: dict, ticket: dict | None = None, layout: str = "vertical") -> An
     2026-11-09). Same six steps either way."""
     steps = _chain_steps(s4, ticket)
     if layout == "horizontal":
+        # Short text per column, the full text on hover: the goals step is
+        # the four goal names, the recommendations step a count plus the
+        # first action (Sunny, 2026-11-09: the full lines made the row tall).
+        recs = [r for r in (s4.get("recommendations") or []) if isinstance(r, dict)]
+        acting = [str(r.get("action") or "").strip() for r in recs if not r.get("benign")]
+        short = {
+            "goals, in priority order": "life safety → responder safety → "
+                                        "stabilisation → property",
+            "recommendations": (f"{len(acting)} acting"
+                                + (f" · {len(recs) - len(acting)} safe" if len(recs) > len(acting) else "")
+                                + (f" · first: {acting[0][:50]}" if acting else "")),
+        }
         cols = []
         for i, (title, detail, color) in enumerate(steps):
+            if isinstance(detail, str) and title in short and not ticket:
+                shown: Any = html.Div(short[title], title=detail,
+                                      style={"fontSize": "10.5px", "color": "#475569"})
+            elif isinstance(detail, str):
+                shown = html.Div(detail, style={"fontSize": "10.5px", "color": "#475569"})
+            else:
+                shown = detail
             cols.append(html.Div([
                 html.Div([
                     _chain_dot(color, position="relative", zIndex="1"),
@@ -3264,10 +3283,10 @@ def _chain(s4: dict, ticket: dict | None = None, layout: str = "vertical") -> An
                     if i < len(steps) - 1 else None,
                 ], style={"display": "flex", "alignItems": "flex-start"}),
                 html.Div(title, style={"fontSize": "10.5px", "fontWeight": "700",
-                                       "color": "#1f2937", "marginTop": "4px"}),
-                (detail if not isinstance(detail, str) else
-                 html.Div(detail, style={"fontSize": "10.5px", "color": "#475569"})),
-            ], style={"minWidth": "0", "paddingRight": "8px", "overflowWrap": "anywhere"}))
+                                       "color": "#1f2937", "marginTop": "4px",
+                                       "overflowWrap": "normal", "hyphens": "manual"}),
+                shown,
+            ], style={"minWidth": "0", "paddingRight": "8px", "overflowWrap": "break-word"}))
         return html.Div(cols, className="chain-horizontal",
                         style={"display": "grid",
                                "gridTemplateColumns": f"repeat({len(steps)}, minmax(0, 1fr))",

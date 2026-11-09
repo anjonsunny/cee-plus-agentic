@@ -466,3 +466,17 @@ def test_horizontal_chain_is_a_six_column_grid_and_only_the_clean_view_uses_it()
     # the ticket's own chain inside the clean register is horizontal too
     clean = str(_s4("clean"))
     assert clean.count("chain-horizontal") == 2
+
+
+def test_horizontal_run_chain_keeps_the_text_short_with_the_full_text_on_hover():
+    s4 = _s4_full()
+    h = ui._chain(s4, layout="horizontal")
+    text = _text(h)
+    assert "life safety → responder safety → stabilisation → property" in text
+    assert "2 acting · 1 safe · first: Evacuate man_1 upwind." in text
+    assert "1. life safety" not in text                      # the long form rides on hover
+    hovers = [c.title for c in _walk(h) if getattr(c, "title", None)]
+    assert any("1. life safety" in t for t in hovers)
+    # a ticket's chain keeps its full detail (the rec diff is the evidence)
+    tk = s4["pathology"]["tickets"][0]
+    assert "no longer acts on tanker_1" in _text(ui._chain(s4, tk, layout="horizontal"))
