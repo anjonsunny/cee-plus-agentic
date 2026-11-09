@@ -3255,6 +3255,72 @@ def _chain(s4: dict, ticket: dict | None = None) -> Any:
     return html.Div(rows, style={"padding": "4px 0 0 6px"})
 
 
+_STAMP = {"open": ("OPEN", "stamp open"), "fixing": ("FIXING…", "stamp fixing"),
+          "fixed": ("FIXED", "stamp fixed"), "stood": ("STOOD ITS GROUND", "stamp stood"),
+          "repaired": ("REPAIRED", "stamp fixed"), "survived": ("SURVIVED", "stamp stood"),
+          "induced": ("INDUCED", "stamp open")}
+
+
+def _pathology_ticket_card(s4: dict, tk: dict) -> Any:
+    """Sunny (2026-10-06): a pathology ticket is not a rule ticket — its
+    own colour, the type and subtype in the header, one brief line of
+    what happened, and the long evidence folded away."""
+    st = tk.get("status", "open")
+    lab, cls = _STAMP.get(st, ("OPEN", "stamp open"))
+    head = [html.Span("PATHOLOGY", className="ticket-kind",
+                      style={"color": "#be123c"}),
+            html.Span(str(tk.get("kind", "")).replace("_", " "),
+                      style={"fontSize": "12px", "fontWeight": "800",
+                             "color": "#9f1239", "marginLeft": "6px"})]
+    if tk.get("subtype"):
+        head.append(html.Span(" · " + str(tk["subtype"]),
+                              style={"fontSize": "11px", "color": "#9f1239",
+                                     "marginLeft": "2px"}))
+    if tk.get("pathology_kind"):
+        head.append(html.Span(str(tk["pathology_kind"]),
+                              style={"fontSize": "9.5px", "fontWeight": "800",
+                                     "color": "#fff", "background": "#be123c",
+                                     "borderRadius": "6px", "padding": "1px 6px",
+                                     "marginLeft": "6px"}))
+    if tk.get("strength") is not None:
+        head.append(html.Span(f"strength {tk['strength']}",
+                              style={"fontSize": "9.5px", "color": "#94a3b8",
+                                     "marginLeft": "6px"}))
+    if (tk.get("n_answers") or 0) > 1:
+        k, n = int(tk.get("hidden_in") or 0), int(tk["n_answers"])
+        head.append(html.Span(f"{k} of {n} answers",
+                              title="how many of the re-asked answers hid it: "
+                                    "1 is a rare slip, all of them a fixed habit",
+                              style={"fontSize": "9.5px", "fontWeight": "800",
+                                     "color": "#fff", "background": _vote_colour(k, n),
+                                     "borderRadius": "6px", "padding": "1px 6px",
+                                     "marginLeft": "6px"}))
+    if tk.get("single_baseline"):
+        head.append(html.Span("single baseline",
+                              style={"fontSize": "9.5px", "color": "#b45309",
+                                     "marginLeft": "6px"}))
+    head.append(html.Span(lab, className=cls))
+    body = [html.Div(str(tk.get("summary") or tk.get("evidence", "")),
+                     style={"fontSize": "12px", "color": "#1f2937",
+                            "padding": "2px 0"})]
+    if tk.get("summary") and tk.get("evidence"):
+        body.append(html.Details([
+            html.Summary("details", style={"fontSize": "10px",
+                                           "color": "#be123c",
+                                           "cursor": "pointer"}),
+            html.Div(str(tk["evidence"]),
+                     style={"fontSize": "11px", "color": "#475569",
+                            "padding": "2px 0 0 8px"})]))
+    body.append(html.Details([
+        html.Summary("causal chain", style={"fontSize": "10px",
+                                            "color": "#be123c",
+                                            "cursor": "pointer"}),
+        _chain(s4, tk)], style={"marginTop": "2px"}))
+    return html.Details([html.Summary(head),
+                         html.Div(body, className="ticket-body")],
+                        className=f"ticket pathology {st}")
+
+
 def _register_panel(s4: dict) -> list:
     """Section 7. Reuses the Stage 1/2 ticket grammar (kind · stamp · body).
     Old records without a saved register get one computed on the spot —
@@ -3263,69 +3329,7 @@ def _register_panel(s4: dict) -> list:
     if not reg:
         from agentic.register4 import stage4_register
         reg = stage4_register(s4 or {})
-    stamp = {"open": ("OPEN", "stamp open"), "fixing": ("FIXING…", "stamp fixing"),
-             "fixed": ("FIXED", "stamp fixed"), "stood": ("STOOD ITS GROUND", "stamp stood"),
-             "repaired": ("REPAIRED", "stamp fixed"), "survived": ("SURVIVED", "stamp stood"),
-             "induced": ("INDUCED", "stamp open")}
-
-    def _pathology_ticket(tk: dict) -> Any:
-        """Sunny (2026-10-06): a pathology ticket is not a rule ticket — its
-        own colour, the type and subtype in the header, one brief line of
-        what happened, and the long evidence folded away."""
-        st = tk.get("status", "open")
-        lab, cls = stamp.get(st, ("OPEN", "stamp open"))
-        head = [html.Span("PATHOLOGY", className="ticket-kind",
-                          style={"color": "#be123c"}),
-                html.Span(str(tk.get("kind", "")).replace("_", " "),
-                          style={"fontSize": "12px", "fontWeight": "800",
-                                 "color": "#9f1239", "marginLeft": "6px"})]
-        if tk.get("subtype"):
-            head.append(html.Span(" · " + str(tk["subtype"]),
-                                  style={"fontSize": "11px", "color": "#9f1239",
-                                         "marginLeft": "2px"}))
-        if tk.get("pathology_kind"):
-            head.append(html.Span(str(tk["pathology_kind"]),
-                                  style={"fontSize": "9.5px", "fontWeight": "800",
-                                         "color": "#fff", "background": "#be123c",
-                                         "borderRadius": "6px", "padding": "1px 6px",
-                                         "marginLeft": "6px"}))
-        if tk.get("strength") is not None:
-            head.append(html.Span(f"strength {tk['strength']}",
-                                  style={"fontSize": "9.5px", "color": "#94a3b8",
-                                         "marginLeft": "6px"}))
-        if (tk.get("n_answers") or 0) > 1:
-            k, n = int(tk.get("hidden_in") or 0), int(tk["n_answers"])
-            head.append(html.Span(f"{k} of {n} answers",
-                                  title="how many of the re-asked answers hid it: "
-                                        "1 is a rare slip, all of them a fixed habit",
-                                  style={"fontSize": "9.5px", "fontWeight": "800",
-                                         "color": "#fff", "background": _vote_colour(k, n),
-                                         "borderRadius": "6px", "padding": "1px 6px",
-                                         "marginLeft": "6px"}))
-        if tk.get("single_baseline"):
-            head.append(html.Span("single baseline",
-                                  style={"fontSize": "9.5px", "color": "#b45309",
-                                         "marginLeft": "6px"}))
-        head.append(html.Span(lab, className=cls))
-        body = [html.Div(str(tk.get("summary") or tk.get("evidence", "")),
-                         style={"fontSize": "12px", "color": "#1f2937",
-                                "padding": "2px 0"})]
-        if tk.get("summary") and tk.get("evidence"):
-            body.append(html.Details([
-                html.Summary("details", style={"fontSize": "10px",
-                                               "color": "#be123c",
-                                               "cursor": "pointer"}),
-                html.Div(str(tk["evidence"]),
-                         style={"fontSize": "11px", "color": "#475569",
-                                "padding": "2px 0 0 8px"})]))
-        body.append(html.Details([
-            html.Summary("causal chain", style={"fontSize": "10px",
-                                                "color": "#be123c",
-                                                "cursor": "pointer"}),
-            _chain(s4, tk)], style={"marginTop": "2px"}))
-        return html.Details([html.Summary(head),
-                             html.Div(body, className="ticket-body")],
-                            className=f"ticket pathology {st}")
+    stamp = _STAMP
 
     def _ticket(tk: dict) -> Any:
         st = tk.get("status", "open")
@@ -3373,7 +3377,7 @@ def _register_panel(s4: dict) -> list:
         "fontSize": "10px", "fontWeight": "800", "letterSpacing": ".08em",
         "color": "#64748b", "margin": "8px 0 2px"}))
     path = reg.get("pathology") or []
-    out += [_pathology_ticket(tk) for tk in path] or [
+    out += [_pathology_ticket_card(s4, tk) for tk in path] or [
         html.Div("no pathology ticket", className="ticket-empty")]
     _pa = (s4 or {}).get("pathology") or {}
     _more: list[Any] = [html.Div(
@@ -3520,6 +3524,13 @@ def _assemble_stage4_sections(out: list, s4: dict, d: dict,
             "alignment": buckets.get("alignment", []),
             "bench": _judges_bench(s4, d),
             "register": _register_panel(s4)}
+    if mode == "clean":
+        # UI cleanup step 3: the clean view puts its own compact builders in
+        # front of the same partition (agentic/ui_clean.py).
+        from agentic import ui_clean
+        return ui_clean.assemble_clean(
+            body, s4, d, _S4_SECTIONS, chain=_chain,
+            pathology_ticket=lambda tk: _pathology_ticket_card(s4, tk))
     sections: list = []
     for key, title, sub, open_ in _S4_SECTIONS:
         if title is None or not body.get(key):
@@ -5814,7 +5825,7 @@ def settings_summary(control, retrieval, subject, reasks, judges,
 
 
 app.layout = html.Div([
-    html.H1("CEE+ AGENTIC · STAGES 1-2 · PERCEPTION → ASSESSMENT"),
+    html.H1("CEE+ AGENTIC · PERCEPTION → ASSESSMENT → RECOMMENDATION"),
     html.Div([
         dcc.Upload(id="upload", children=html.Div("drop / pick image"),
                    className="upload", multiple=False),

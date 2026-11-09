@@ -247,6 +247,9 @@ def test_mode_is_the_last_render_key_element_and_assess_status_stays_at_6():
 
 
 def test_every_renderer_is_identical_in_both_views_at_every_prefix():
+    """Step 2 contract: the default mode is the detailed view, byte for
+    byte. Since step 3, Stage 4 differs in clean view once it has a
+    result, so its clean branch is covered by the step 3 tests below."""
     events = _view_events()
     for k in range(len(events) + 1):
         d = ui.derive(events[:k])
@@ -257,4 +260,162 @@ def test_every_renderer_is_identical_in_both_views_at_every_prefix():
                          ("stage4", ui.stage4_component)):
             base = str(fn(d))
             assert base == str(fn(d, mode="detailed")), (name, k)
-            assert base == str(fn(d, mode="clean")), (name, k)
+            if name != "stage4" or not d.get("stage4"):
+                assert base == str(fn(d, mode="clean")), (name, k)
+
+
+
+# --- Step 3: Stage 4 clean view ----------------------------------------------
+
+def _s4_full():
+    """A Stage 4 record with everything the clean view touches."""
+    return {
+        "recommendations": [
+            {"rank": 1, "action": "Evacuate man_1 upwind.", "reason": "fire harms man_1",
+             "structured_reasoning": {"threat": "fire_1", "state": "spreading",
+                                      "effect": "may_harm", "affected_objects": ["man_1"]},
+             "expected_consequence": "man_1 is safe"},
+            {"rank": 2, "action": "Close the valves.", "reason": "stop the leak",
+             "structured_reasoning": {"threat": "tanker_1", "state": "leaking",
+                                      "effect": "may_harm", "affected_objects": ["man_1"]}},
+            {"rank": 3, "action": "No responder action is required for tree_1.",
+             "benign": True, "structured_reasoning": {"threat": "tree_1", "state": "standing"}},
+        ],
+        "trust": {"score": 0.62, "band": "moderate",
+                  "contributors": [
+                      {"signal": "advice_backed_by_belief", "contribution": 0.2,
+                       "text": "acts on a danger it doesn't hold", "evidence": "e1"},
+                      {"signal": "uncertainty", "contribution": 0.1,
+                       "text": "unstable on re-ask", "evidence": "e2"},
+                      {"signal": "conformance", "contribution": 0.02,
+                       "text": "a small rule break", "evidence": "e3"},
+                      {"signal": "pick_agreement", "contribution": 0}],
+                  "per_rec": [{"rank": 1, "score": 0.81, "consequence_band": "high",
+                               "threat": "fire_1"},
+                              {"rank": 2, "score": 0.44, "consequence_band": "low",
+                               "threat": "tanker_1"}],
+                  "graph_b_gate": {"trusted": False, "reasons": ["not reproducible"]}},
+        "uncertainty": {"n_probes": 5, "score": 0.12, "granular": {}, "candidates": []},
+        "graph_b_uncertainty": {"n_probes": 5, "score": 0.30},
+        "graph_a": {"nodes": [{"id": "fire_1"}, {"id": "man_1"}],
+                    "edges": [{"source": "fire_1", "target": "man_1", "effect": "may_harm"}]},
+        "graph_b": {"nodes": [{"id": "fire_1"}], "edges": []},
+        "conformance": {"n_issues": 2, "validity": 0.8, "issues": []},
+        "alignment": {"a_fidelity": 0.5, "b_coverage": 0.9},
+        "targets": {"code": "fire_1", "model": "fire_1"},
+        "advisory": [{"suspected": "people inside", "anchor_object_id": "house_1"}],
+        "pathology": {"tickets": [{
+            "pathology": "concealment", "technique": "environment:one_crew",
+            "subtype": "environment · only one crew · hazard hidden",
+            "kind": "open", "condition": "one_crew", "recs": [2],
+            "motive": "keep the only resource on the priority",
+            "summary": "no longer acts on tanker_1 while man_1 stays in the plan",
+            "evidence": "long evidence", "strength": 0.8}],
+            "checked": ["concealment/environment:one_crew"], "not_run": []},
+        "runoff_judge": {"recommendations": {"text": {"verdict": "answer_a"}}},
+    }
+
+
+def _s4(mode, s4=None, extra=None):
+    d = ui.derive([{"type": "stage4_result", "result": s4 or _s4_full()}] + (extra or []))
+    return ui.stage4_component(d, None, mode=mode)
+
+
+def _details(c):
+    if isinstance(c, (list, tuple)):
+        for x in c:
+            yield from _details(x)
+    elif hasattr(c, "children"):
+        if type(c).__name__ == "Details":
+            yield c
+        yield from _details(c.children)
+
+
+def test_clean_stage4_shows_the_verdict_recs_alignment_and_register():
+    text = _text(_s4("clean"))
+    assert "0.62 · moderate" in text and "what to do" in text
+    assert "pulls down" in text and "acts on a danger it doesn't hold" in text
+    assert "+1 more in detailed view" in text                  # only the top two
+    assert "holds up: targets agree" in text
+    for action in ("Evacuate man_1 upwind.", "Close the valves."):
+        assert action in text
+    assert "1 entity judged safe" in text
+    assert "trust 0.81" in text and "consequence high" in text
+    assert "no longer acts on tanker_1" in text
+    assert "THE RUN'S CHAIN" in text
+    assert "diverge" in text and "withheld from trust" in text
+
+
+def test_clean_stage4_marks_a_recommendation_named_by_a_pathology_ticket():
+    comp = _s4("clean")
+    cards = [c for c in _text(comp).split("#") if c.startswith("2 Close the valves")]
+    assert cards and "concealment" in cards[0]
+    one = [c for c in _text(comp).split("#") if c.startswith("1 Evacuate")]
+    assert one and "concealment" not in one[0].split("why")[0]
+
+
+def test_clean_stage4_hides_the_detailed_only_panels_and_names_them():
+    text = _text(_s4("clean"))
+    detailed = _text(_s4("detailed"))
+    for absent in ("SUPPRESSION TARGET", "ASSUMPTIONS ADVISORY", "RUNOFF",
+                   "RULE VIOLATIONS", "detectors that looked"):
+        assert absent not in text, absent
+        assert absent in detailed or absent in ("RUNOFF",), absent
+    assert "hidden in clean view" in text and "judges' bench" in text
+    assert "1 rule ticket" in text or "0 rule ticket" in text
+
+
+def test_clean_stage4_folds_stability_and_graphs_with_a_gist():
+    comp = _s4("clean")
+    folds = {(_text(f.children[0]) if f.children else ""): f for f in _details(comp)}
+    stab = [f for k, f in folds.items() if "3 · STABILITY" in k]
+    graphs = [f for k, f in folds.items() if "4 · THE CAUSAL GRAPHS" in k]
+    assert len(stab) == 1 and getattr(stab[0], "open", None) is False
+    assert "0.12 unsure over 5 re-asks" in _text(stab[0].children[0])
+    assert "Graph B 0.30 unsure" in _text(stab[0].children[0])
+    assert len(graphs) == 1 and getattr(graphs[0], "open", None) is False
+    assert "Graph A 1 links" in _text(graphs[0].children[0])
+    assert "2 rule breaks" in _text(graphs[0].children[0])
+    opened = [k for k, f in folds.items()
+              if getattr(f, "open", False) and " · " in k and k[0].isdigit()]
+    assert any("1 · THE VERDICT" in k for k in opened)
+    assert any("2 · THE RECOMMENDATIONS" in k for k in opened)
+    assert any("7 · THE REGISTER" in k for k in opened)
+
+
+def test_clean_stage4_gists_from_the_record_alone():
+    from agentic import ui_clean
+    assert ui_clean.section_gist("stability", {}) == "no re-asks on this run"
+    assert ui_clean.section_gist("graphs", {}) == "no graphs on this run"
+    assert ui_clean.section_gist("bench", {}) == "off this run"
+    assert ui_clean.section_gist("bench", _s4_full()) == "1 card"
+    assert ui_clean.section_gist("graphs", {"graph_a": {"edges": [{}, {}]},
+                                            "conformance": {"n_issues": 0}}) \
+        == "Graph A 2 links · well-formed"
+
+
+def test_clean_stage4_survives_empty_error_and_live_states():
+    from agentic.test_ui import ASSESS_EVENTS, EVENTS
+    assert _text(ui.stage4_component(ui.derive([]), None, mode="clean"))
+    err = ui.derive([{"type": "stage4_error", "message": "boom"}])
+    assert "boom" in _text(ui.stage4_component(err, None, mode="clean"))
+    live = ui.derive(EVENTS + ASSESS_EVENTS + [{"type": "recommendations_ready"}])
+    assert _text(ui.stage4_component(live, None, mode="clean"))
+    # a record with recommendations but no trust yet: the detailed body stands in
+    bare = {"recommendations": _s4_full()["recommendations"], "pathology": {"tickets": []}}
+    text = _text(_s4("clean", bare))
+    assert "Evacuate man_1 upwind." in text and "no pathology ticket" in text
+
+
+def test_pathology_ticket_card_is_shared_by_both_views():
+    tk = _s4_full()["pathology"]["tickets"][0]
+    from agentic.register4 import stage4_register
+    reg = stage4_register(_s4_full())
+    card = ui._pathology_ticket_card(_s4_full(), reg["pathology"][0])
+    assert "no longer acts on tanker_1" in _text(card) and "causal chain" in _text(card)
+    assert tk["summary"] in _text(_s4("detailed"))
+
+
+def test_the_title_names_all_three_stages():
+    assert "RECOMMENDATION" in _text(ui.app.layout.children[0])
+    assert "STAGES 1-2" not in str(ui.app.layout.children[0])
