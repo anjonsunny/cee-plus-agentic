@@ -260,9 +260,10 @@ def test_every_renderer_is_identical_in_both_views_at_every_prefix():
                          ("stage4", ui.stage4_component)):
             base = str(fn(d))
             assert base == str(fn(d, mode="detailed")), (name, k)
-            has_content = {"stage4": bool(d.get("stage4")),
-                           "assess": d["assess"]["status"] != "pending"}.get(name, False)
-            if not has_content:
+            # the clean branch of each renderer has its own tests below
+            if name in ("assess", "stage4") and not (
+                    d.get("stage4") if name == "stage4"
+                    else d["assess"]["status"] != "pending"):
                 assert base == str(fn(d, mode="clean")), (name, k)
 
 
@@ -580,3 +581,67 @@ def test_clean_stage2_petition_line_and_badge():
 def test_clean_stage2_hides_the_uncertainty_view_toggle():
     radio, _ = _find(ui.app.layout, "unc-view")
     assert "only-detailed" in radio.className
+
+
+
+# --- Step 7: Stage 1 clean view and the four tiles ---------------------------
+
+def test_clean_rail_is_one_gist_line_with_the_full_rail_folded():
+    from agentic.test_ui import EVENTS
+    d = ui.derive(EVENTS)
+    comp = ui.rail_component(d, mode="clean")
+    text = _text(comp)
+    from agentic import ui_clean
+    gist = ui_clean.stage1_gist(d, ui.STAGES)
+    assert gist in text and "steps done" in gist and "found" in gist
+    # the counts come from the derived state itself
+    done = sum(1 for s in ui.STAGES if d["stages"][s]["status"] == "done")
+    assert f"{done}/{len(ui.STAGES)} steps done" in gist
+    folds = [f for f in _details(comp) if "how perception went" in _text(f)]
+    assert len(folds) == 1 and getattr(folds[0], "open", None) in (None, False)
+    assert _text(ui.rail_component(d)) in _text(folds[0])   # the detailed rail inside
+
+
+def test_clean_rail_keeps_a_failed_station_as_a_red_line():
+    from agentic.test_ui import _DEAD
+    d = ui.derive(_DEAD)
+    text = _text(ui.rail_component(d, mode="clean"))
+    assert "Perceive failed" in text and "Connection refused" in text
+
+
+def test_clean_tickets_are_chips_with_the_full_tickets_folded():
+    from agentic.test_ui import EVENTS
+    d = ui.derive(EVENTS)
+    viol = list(d["violations"].values())
+    comp = ui.tickets_component(d, mode="clean")
+    text = _text(comp)
+    if viol:
+        opens = [v for v in viol if v["status"] == "open"]
+        for v in opens:
+            assert v["kind"].replace("_", " ") in text.split("the tickets in full")[0]
+        others = [v for v in viol if v["status"] != "open"]
+        for st in {v["status"] for v in others}:
+            assert f" {st}" in text
+        assert "the tickets in full" in text
+    else:
+        assert "clean" in text or "no violations" in text
+    # a clean run keeps the detailed empty-state line
+    clean_run = [e for e in EVENTS if e["type"] not in ("violation_found",)]
+    d2 = ui.derive(clean_run)
+    if not d2["violations"]:
+        assert _text(ui.tickets_component(d2)) in _text(ui.tickets_component(d2, mode="clean"))
+
+
+def test_clean_instruments_are_four_tiles_entities_open_bucket_trust():
+    events = _view_events()
+    d = ui.derive(events)
+    comp = ui.instruments_component(d, mode="clean")
+    labels = [_text(t.children[1]) for t in comp.children]
+    assert labels == ["entities", "open", "bucket", "trust"]
+    values = [_text(t.children[0]) for t in comp.children]
+    assert values[2] == "CATASTROPHIC" and values[3] == "0.6"
+    # detailed keeps every tile
+    assert len(ui.instruments_component(d).children) >= 6
+    # before any run: dashes, no crash
+    empty = ui.instruments_component(ui.derive([]), mode="clean")
+    assert [_text(t.children[0]) for t in empty.children][2:] == ["–", "–"]

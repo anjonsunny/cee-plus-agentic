@@ -244,3 +244,9 @@ Total about 820 lines, about 40 new tests. Steps 1, 2, 4 are independent;
   petition as a one-line box with the final verdict, the before-petition
   snapshot as a one-line badge. The uncertainty-view toggle is
   detailed-only. Footer names what is hidden.
+- Stage 1 clean view built (2026-11-09): the rail is one gist line
+  ("6/6 steps done · 9 found · 2 fixed, 1 stood") with a failed or
+  active station as its own line and the full rail folded under "how
+  perception went"; open tickets as amber chips with the rule's words on
+  hover, fixed/stood as count chips, the full tickets folded; four tiles
+  (entities, open, bucket, trust). Left to do: the live run line, tidy.

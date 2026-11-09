@@ -595,3 +595,107 @@ def clean_assess(A: dict, d: dict, *, bucket_css: dict) -> list:
     if note is not None:
         out.append(note)
     return out
+
+
+# ── Stage 1 · PERCEPTION, clean view ─────────────────────────────────────
+
+def stage1_gist(d: dict, stages: list[str]) -> str:
+    """One line: "6/6 steps done · 9 found · 2 fixed, 1 stood"."""
+    st = d.get("stages") or {}
+    done = sum(1 for s in stages if (st.get(s) or {}).get("status") == "done")
+    found = (len((d.get("result") or {}).get("detected_objects") or [])
+             if d.get("result") else
+             len(d.get("anchors") or []) or len(d.get("repair_entities_latest") or []))
+    parts = [f"{done}/{len(stages)} steps done"]
+    if found:
+        parts.append(f"{found} found")
+    viol = list((d.get("violations") or {}).values())
+    if viol:
+        by: dict[str, int] = {}
+        for v in viol:
+            by[str(v.get("status") or "open")] = by.get(str(v.get("status") or "open"), 0) + 1
+        order = ("open", "fixing", "fixed", "stood")
+        parts.append(", ".join(f"{by[k]} {k}" for k in order if by.get(k)))
+    elif done == len(stages):
+        parts.append("clean on arrival")
+    return " · ".join(parts)
+
+
+def clean_rail(d: dict, stages: list[str], detailed_rail: Any) -> Any:
+    """The six-station rail as one gist line; a failed station stays as
+    a red line; the full rail sits closed under "how perception went"."""
+    st = d.get("stages") or {}
+    rows: list = [html.Div(stage1_gist(d, stages),
+                           style={"fontSize": "12px", "fontWeight": "600",
+                                  "color": "#334155", "margin": "2px 0 4px"})]
+    for s in stages:
+        one = st.get(s) or {}
+        if one.get("status") == "failed":
+            rows.append(html.Div(f"✖ {s} failed — {one.get('info') or 'no message'}",
+                                 style={"fontSize": "11.5px", "color": "#b91c1c",
+                                        "fontWeight": "600", "margin": "2px 0"}))
+        elif one.get("status") == "active":
+            rows.append(html.Div(f"● {s} — {one.get('info') or 'working'}",
+                                 style={"fontSize": "11.5px", "color": "#2563eb",
+                                        "margin": "2px 0"}))
+    rows.append(html.Details([
+        html.Summary("how perception went", style={"fontSize": "10.5px",
+                                                   "color": "#64748b",
+                                                   "cursor": "pointer"}),
+        detailed_rail,
+    ], style={"marginTop": "2px"}))
+    return html.Div(rows, className="rail rail-clean")
+
+
+def clean_tickets(d: dict, detailed_tickets: Any) -> Any:
+    """Open (or fixing) tickets as amber chips with the rule's words on
+    hover; fixed and stood as count chips; the full tickets under a
+    closed fold. The empty-state line of the detailed view is kept."""
+    viol = [v for v in (d.get("violations") or {}).values() if isinstance(v, dict)]
+    chips: list = []
+    fixing = bool(d.get("round_in_progress"))
+    counts: dict[str, int] = {}
+    for v in viol:
+        status = str(v.get("status") or "open")
+        if status == "open" and fixing:
+            status = "fixing"
+        if status in ("open", "fixing"):
+            chips.append(_chip(str(v.get("kind") or "").replace("_", " ")
+                               + (" · fixing" if status == "fixing" else ""),
+                               "#b45309", fill=True,
+                               title=str(v.get("instruction") or v.get("evidence") or "")))
+        else:
+            counts[status] = counts.get(status, 0) + 1
+    for status, n in counts.items():
+        chips.append(_chip(f"{n} {status}", "#16a34a" if status == "fixed" else "#64748b"))
+    if not viol:
+        return html.Div([detailed_tickets], className="tickets tickets-clean")
+    return html.Div([
+        html.Div(chips, style={"lineHeight": "2", "margin": "2px 0"}),
+        html.Details([
+            html.Summary("the tickets in full", style={"fontSize": "10.5px",
+                                                      "color": "#64748b",
+                                                      "cursor": "pointer"}),
+            detailed_tickets,
+        ]),
+    ], className="tickets tickets-clean")
+
+
+def clean_instruments(d: dict, tile: Callable[..., Any]) -> Any:
+    """Four tiles: entities, open tickets, bucket, trust."""
+    found = (len((d.get("result") or {}).get("detected_objects") or [])
+             if d.get("result") else
+             len(d.get("anchors") or []) or len(d.get("repair_entities_latest") or []))
+    open_v = sum(1 for v in (d.get("violations") or {}).values()
+                 if isinstance(v, dict) and v.get("status") == "open")
+    v = ((d.get("assess") or {}).get("verdict")) or {}
+    trust = ((d.get("stage4") or {}).get("trust")) or {}
+    score = trust.get("score")
+    band = str(trust.get("band") or "")
+    return html.Div([
+        tile(found, "entities"),
+        tile(open_v, "open", "amber" if open_v else ""),
+        tile(str(v.get("bucket", "–")).upper() if v else "–", "bucket"),
+        tile(f"{score}" if score is not None else "–", "trust",
+             {"high": "green", "moderate": "amber", "low": "amber"}.get(band, "")),
+    ], className="instruments instruments-clean")

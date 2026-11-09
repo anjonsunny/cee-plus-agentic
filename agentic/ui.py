@@ -1439,7 +1439,11 @@ def rail_component(d: dict[str, Any], mode: str = "detailed") -> html.Div:
                                             "color": "#b45309"}))
         items.append(html.Div(rows, className="unc-panel",
                               style={"borderColor": "#16a34a"}))
-    return html.Div(items, className="rail")
+    rail = html.Div(items, className="rail")
+    if mode == "clean":
+        from agentic import ui_clean
+        return ui_clean.clean_rail(d, STAGES, rail)
+    return rail
 
 
 def _verdict_to_assessment(v: dict[str, Any]) -> dict[str, Any]:
@@ -5188,7 +5192,11 @@ def tickets_component(d: dict[str, Any], mode: str = "detailed") -> html.Div:
                              backend_reason=d.get("retrieval_backend_reason"))
     if panel is not None:
         cards = [panel] + cards
-    return html.Div(cards, className="tickets")
+    tickets = html.Div(cards, className="tickets")
+    if mode == "clean":
+        from agentic import ui_clean
+        return ui_clean.clean_tickets(d, tickets)
+    return tickets
 
 
 def pipeline_steps(d: dict[str, Any]) -> tuple[list[tuple[str, str]],
@@ -5315,6 +5323,9 @@ def instruments_component(d: dict[str, Any], mode: str = "detailed") -> html.Div
                          html.Div(label, className="tile-label")],
                         className=f"tile {cls}")
 
+    if mode == "clean":
+        from agentic import ui_clean
+        return ui_clean.clean_instruments(d, tile)
     tiles = [
         tile(n_entities, "entities"),
         tile(open_v, "open", "amber" if open_v else ""),
