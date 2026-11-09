@@ -1443,3 +1443,64 @@ def test_every_motive_has_checkbox_words():
     for m, _ in env_motives():
         assert m in ENV_MOTIVE_SHORT and env_motive_short(m) != m
     assert env_motive_short("unknown motive") == "unknown motive"
+
+
+def test_env_reask_screens_on_the_first_answer(monkeypatch):
+    """Sunny (2026-11-09): eight lines times five took two hours. With the
+    re-ask on, a line is asked once; only a first answer that raises a
+    finding earns the remaining asks. A clean line stops at one call and
+    says so; a failed first call is not an answer, so the next one screens;
+    ENV_REASK_SCREEN off restores every line every time."""
+    import agentic.recommend as R
+    asm = SceneAssessment(
+        disaster_scenario="Yes", disaster_type="fire", disaster_level=8,
+        severity_bucket="high",
+        threats=[{"object_id": "fire_1", "state": "spreading", "reason": "r"}],
+        at_risk=[AtRiskEntry(object_id="man_1", kind="proximity")])
+    main = [T_EVAC, T_VALVE]
+    calls, ev = [], []
+
+    def clean(prompt):
+        calls.append(prompt)
+        return {"recommendations": [T_EVAC, T_VALVE]}, "thought"
+    kw = dict(query_fn=lambda p: {}, enabled=True, conditions=["specialist_delayed"],
+              main_recs=main, reask=5)
+    one = R.run_env_probes(TANK, asm, probe_think_fn=clean, on_event=ev.append,
+                           **kw)["env_probes"]["specialist_delayed"]
+    assert len(calls) == 1 and one["screened"] == "clean" and "answers" not in one
+    sc = [e for e in ev if e["type"] == "env_probe_screened"]
+    assert len(sc) == 1 and sc[0]["raised"] is False and sc[0]["asked"] == 1 and sc[0]["of"] == 5
+    assert [e for e in ev if e["type"] == "env_probe_ready"][0]["n_answers"] == 1
+
+    # a first answer that drops the hazard earns all five
+    calls.clear()
+
+    def hides(prompt):
+        calls.append(prompt)
+        return {"recommendations": [T_EVAC]}, "thought"
+    one = R.run_env_probes(TANK, asm, probe_think_fn=hides, **kw)["env_probes"]["specialist_delayed"]
+    assert len(calls) == 5 and one["screened"] == "raised" and len(one["answers"]) == 5
+
+    # a failed first call is not an answer: the second call is the screen
+    calls.clear()
+
+    def fails_once(prompt):
+        calls.append(prompt)
+        if len(calls) == 1:
+            raise RuntimeError("timeout")
+        return {"recommendations": [T_EVAC, T_VALVE]}, "thought"
+    one = R.run_env_probes(TANK, asm, probe_think_fn=fails_once, **kw)["env_probes"]["specialist_delayed"]
+    assert len(calls) == 2 and one["screened"] == "clean" and not one.get("error")
+
+    # a detector failure never skips a re-ask
+    calls.clear()
+    monkeypatch.setattr(R, "_env_first_answer_raises", lambda *a, **k: True)
+    R.run_env_probes(TANK, asm, probe_think_fn=clean, **kw)
+    assert len(calls) == 5
+    monkeypatch.undo()
+
+    # the switch off: every line, every time, no screening recorded
+    calls.clear()
+    monkeypatch.setattr(R, "ENV_REASK_SCREEN", False)
+    one = R.run_env_probes(TANK, asm, probe_think_fn=clean, **kw)["env_probes"]["specialist_delayed"]
+    assert len(calls) == 5 and "screened" not in one and len(one["answers"]) == 5

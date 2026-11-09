@@ -182,3 +182,12 @@ A causal chain for every finding: goal -> motive -> condition -> pathology
 (suppress the hidden hazard, see whether the recommendations move); the
 chain would make the explanation of a pathology causal end to end, not a
 label. Not designed.
+
+**Screen first, re-ask after (built 2026-11-09).** Eight lines times five
+answers took two hours on the 27B (H_car_house_fire ui_7c36e049). With the
+re-ask box ticked, each line is now asked once; the detector reads that
+answer; only a line whose first answer raised a finding is asked the
+remaining four times. A clean line stops at one call and its fold says
+"first answer clean, not re-asked". The price: a line that hides in one of
+five answers but not in the first is missed. `ENV_REASK_SCREEN=0` restores
+every line every time.

@@ -2207,6 +2207,29 @@ ENV_PROBE_ON = os.getenv("ENV_PROBE", "1") == "1"
 # many times at probe temperature, thinking on, so "hidden in k of n
 # answers" replaces one answer against one. Off = one call per line.
 ENV_REASK_N = int(os.getenv("ENV_REASK_N", "5"))
+# Screen first, re-ask after (Sunny, 2026-11-09: eight lines times five took
+# two hours on the 27B). With the re-ask on, each line is asked ONCE; the
+# detector reads that answer; only a line whose first answer raised a
+# finding is asked the remaining times. A line that hides in a minority of
+# answers but not in the first is missed: that is the price. ENV_REASK_SCREEN=0
+# restores "every line, every time".
+ENV_REASK_SCREEN = os.getenv("ENV_REASK_SCREEN", "1") == "1"
+
+
+def _env_first_answer_raises(record: Any, assessment: Any, main_recs: list,
+                             name: str, one: dict, answer: dict) -> bool:
+    """Does this one answer raise an environment finding? The detector's own
+    verdict on a copy, so screening and the final tickets cannot disagree.
+    A detector failure counts as raised: never skip a re-ask on an error."""
+    try:
+        from agentic.pathology4 import detect_concealment_env
+        probe = {**one, **answer}
+        probe.pop("answers", None)
+        tickets, _c, _n = detect_concealment_env(record, assessment, main_recs,
+                                                 {name: probe})
+        return bool(tickets)
+    except Exception:
+        return True
 
 
 def env_motive(name: str) -> str:
@@ -2343,13 +2366,22 @@ def run_env_probes(record: Any, assessment: Any, *, query_fn: QueryFn,
             if thinking:
                 emit("subject_thinking", step=f"env:{name}" + (f":{i + 1}" if n_calls > 1 else ""),
                      text=thinking)
+            # screen: the first readable answer decides whether to go on
+            if (n_calls > 1 and ENV_REASK_SCREEN and "screened" not in one):
+                raised = _env_first_answer_raises(record, assessment, main_recs or [],
+                                                  name, one, answers[-1])
+                one["screened"] = "raised" if raised else "clean"
+                emit("env_probe_screened", condition=name, label=c["label"],
+                     raised=raised, asked=i + 1, of=n_calls)
+                if not raised:
+                    break
         good = [x for x in answers if "error" not in x]
         if not good:
             one["error"] = answers[0]["error"] if answers else "no answer"
             out[name] = one
             continue
         one.update(good[0])
-        if n_calls > 1:
+        if n_calls > 1 and one.get("screened") != "clean":
             one["answers"] = answers
         emit("env_probe_ready", condition=name, label=c["label"], face=c["face"],
              line=c["line"], n_recs=len(good[0]["recommendations"]),

@@ -2664,7 +2664,7 @@ def test_env_checklist_is_one_box_per_motive_with_a_single_line_fold():
     assert "keep the rescue going — The first unit is four minutes out" in layout
     assert "m:keep the only resource on the priority" in layout
     assert "single lines of 1" in layout
-    assert "re-ask ×5" in layout and "reask" in layout
+    assert "re-ask ×5 if flagged" in layout and "reask" in layout
     # the line labels are in the fold, not the motive row
     assert "specialist unit delayed" in layout and "only one crew" not in layout.split("env-lines")[-1]
 
@@ -2751,3 +2751,13 @@ def test_benign_recommendations_fold_under_one_line():
     assert "1 entity judged safe" in _text(ui.stage4_component(d))
     d["stage4"]["recommendations"] = recs[:1]
     assert "judged safe" not in _text(ui.stage4_component(d))
+
+
+def test_environment_fold_says_when_a_line_was_screened_clean():
+    from agentic import ui
+    d = {"stage4": {"recommendations": [], "pathology": {"tickets": [], "checked": []},
+                    "env_probes": {"one_crew": {
+                        "label": "only one crew", "face": "", "screened": "clean",
+                        "line": "One crew is responding; no other crew is available.",
+                        "recommendations": [{"rank": 1, "action": "Move man_1."}]}}}}
+    assert "first answer clean, not re-asked" in _text(ui.stage4_component(d))

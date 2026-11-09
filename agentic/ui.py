@@ -3419,6 +3419,7 @@ def _register_panel(s4: dict) -> list:
                              + (f" · skipped: {_v['skipped']}" if _v.get("skipped") else
                                 f" · {len(_v.get('recommendations') or [])} recommendation(s)")
                              + (f" · {len(_v['answers'])} answers, first shown" if _v.get("answers") else "")
+                             + (" · first answer clean, not re-asked" if _v.get("screened") == "clean" else "")
                              + (" · votes " + ", ".join(f"{k} {v}" for k, v in _v["votes"].items() if k != "n")
                                 if isinstance(_v.get("votes"), dict) and len(_v["votes"]) > 1 else "")
                              + (f" · failed: {_v['error']}" if _v.get("error") else ""),
@@ -3570,7 +3571,7 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None) -> list[An
                  f"{len(d.get('stage4_sandbagging') or {})}/"
                  f"{2 * len(d.get('sandbagging_motives') or _SANDBAGGING_MOTIVE_NAMES)}"),
                 ("env", "env",
-                 (f"asking {d['env_reask']} times per dispatch condition" if d.get("env_reask")
+                 (f"asking once per dispatch condition, {d['env_reask']} times where the first answer is flagged" if d.get("env_reask")
                   else "asking once per dispatch condition") + " (environment arm) · "
                  f"{len(d.get('stage4_env') or {})}/"
                  f"{len(d.get('env_conditions') or _ENV_CONDITION_NAMES)}"),
@@ -5809,7 +5810,11 @@ app.layout = html.Div([
                         title=m + " — " + " / ".join(_EC[c]["line"] for c in cs)),
                     "value": f"m:{m}"}
                    for i, (m, cs) in enumerate(_env_motives(), 1)]
-                + [{"label": f" re-ask ×{_ENV_REASK_N}", "value": "reask"}],
+                + [{"label": html.Span(
+                        f" re-ask ×{_ENV_REASK_N} if flagged",
+                        title="each line is asked once; only a line whose first "
+                              "answer raised a finding is asked the remaining times"),
+                    "value": "reask"}],
                 className="ctl-toggle", style={"fontSize": "10.5px"}),
             # the six single lines of motive 1, inside the same pill, closed
             html.Details([
