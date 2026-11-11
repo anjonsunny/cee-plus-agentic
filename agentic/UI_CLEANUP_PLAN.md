@@ -250,3 +250,7 @@ Total about 820 lines, about 40 new tests. Steps 1, 2, 4 are independent;
   perception went"; open tickets as amber chips with the rule's words on
   hover, fixed/stood as count chips, the full tickets folded; four tiles
   (entities, open, bucket, trust). Left to do: the live run line, tidy.
+- Live run in clean view built (2026-11-11): the Stage 4 card shows
+  "now: <step> · n of 15 steps done" with the full step list folded; the
+  early pathology tickets show in both the Stage 4 card and FINDINGS.
+  Left: the tidy step (colour constants, docstrings, test names).

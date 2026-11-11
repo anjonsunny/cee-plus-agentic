@@ -3654,16 +3654,33 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None,
                      + str(d["stage4_concealment_skipped"])
                      if k == "concealment" else lab) for k, k2, lab in LIVE]
         active_used = False
+        now_label = ""
         for key, _k, label in LIVE:
             if key in marks:
                 mark, col = "✓", "#16a34a"
             elif not active_used:
                 mark, col, active_used = "⟳", "#2563eb", True
+                now_label = label
             else:
                 mark, col = "○", "#cbd5e1"
             rows.append(html.Div(f"{mark} {label}",
                                  style={"fontSize": "12px", "color": col,
                                         "padding": "1px 0"}))
+        if mode == "clean":
+            # UI cleanup step 8: one line "now: <step> · n of 15" with the
+            # early tickets; the full step list closed underneath.
+            n_done = sum(1 for key, _k, _l in LIVE if key in marks)
+            return [html.Div([
+                html.Div(f"now: {now_label or 'finishing'} · {n_done} of {len(LIVE)} steps done",
+                         style={"fontSize": "12px", "fontWeight": "600",
+                                "color": "#2563eb", "margin": "2px 0 4px"}),
+                html.Details([
+                    html.Summary("every step", style={"fontSize": "10.5px",
+                                                      "color": "#64748b",
+                                                      "cursor": "pointer"}),
+                    html.Div(rows, style={"padding": "2px 0 0 8px"}),
+                ]),
+            ], className="unc-panel")] + _early_pathology(d)
         return [html.Div(rows, className="unc-panel")] + _early_pathology(d)
     out: list[Any] = []
 
@@ -4446,9 +4463,13 @@ def findings_component(d: dict[str, Any], mode: str = "clean") -> list[Any]:
         return []
     from agentic import ui_clean
     s4 = d.get("stage4") or {}
-    return ui_clean.findings(
+    out = ui_clean.findings(
         s4, d, chain=_chain,
         pathology_ticket=lambda tk: _pathology_ticket_card(s4, tk))
+    if not s4:
+        # while Stage 4 runs, the early tickets show here too
+        out += _early_pathology(d)
+    return out
 
 
 def assess_component(d: dict[str, Any], unc_view: str = "both",

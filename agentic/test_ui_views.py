@@ -645,3 +645,40 @@ def test_clean_instruments_are_four_tiles_entities_open_bucket_trust():
     # before any run: dashes, no crash
     empty = ui.instruments_component(ui.derive([]), mode="clean")
     assert [_text(t.children[0]) for t in empty.children][2:] == ["–", "–"]
+
+
+
+# --- Step 8: the live run in clean view ---------------------------------------
+
+def test_clean_live_stage4_is_one_now_line_with_the_steps_folded():
+    from agentic.test_ui import ASSESS_EVENTS, EVENTS
+    events = EVENTS + ASSESS_EVENTS + [
+        {"type": "recommendations_ready", "ranks": [1], "n_recs": 1, "n_advisory": 0},
+        {"type": "recommend_probe", "index": 0, "n_recs": 1, "top_threat": "house_1"}]
+    d = ui.derive(events)
+    comp = ui.stage4_component(d, None, mode="clean")
+    text = _text(comp)
+    assert text.startswith("now: re-asking to measure uncertainty")
+    assert "of 15 steps done" in text
+    folds = [f for f in _details(comp) if "every step" in _text(f)]
+    assert len(folds) == 1 and getattr(folds[0], "open", None) in (None, False)
+    assert "writing the plan" in _text(folds[0])
+    # detailed keeps the open list
+    detailed = _text(ui.stage4_component(d, None))
+    assert "now:" not in detailed and "writing the plan" in detailed
+
+
+def test_clean_live_views_carry_the_early_pathology_tickets():
+    from agentic.test_ui import ASSESS_EVENTS, EVENTS
+    events = EVENTS + ASSESS_EVENTS + [
+        {"type": "recommendations_ready", "ranks": [1], "n_recs": 1, "n_advisory": 0},
+        {"type": "pathology_detected", "pathology": "concealment",
+         "technique": "environment:one_crew", "subtype": "environment · only one crew · hazard hidden",
+         "kind": "open", "strength": 0.8, "recs": [2],
+         "summary": "no longer acts on house_2 while man_1 stays in the plan"},
+        {"type": "pathology_ready", "n_tickets": 1, "checked": [], "not_run": []}]
+    d = ui.derive(events)
+    for text in (_text(ui.stage4_component(d, None, mode="clean")),
+                 _text(ui.findings_component(d, mode="clean"))):
+        assert "PATHOLOGY · early result" in text
+        assert "no longer acts on house_2" in text
