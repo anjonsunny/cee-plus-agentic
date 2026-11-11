@@ -3226,12 +3226,24 @@ def _chain_steps(s4: dict, ticket: dict | None = None) -> list[tuple[str, Any, s
         rec_line = html.Div(blocks)
     cond = ENV_CONDITIONS.get(str(tk.get("condition") or ""), {})
     motive = tk.get("motive") or (cond.get("motive", "keep the rescue going") if cond else "")
+    run_motive = run_cond = ""
+    if not tk:
+        # the run's own chain: which dispatch conditions this run applied
+        from agentic.recommend import env_motive
+        ran = [k for k, one in (s4.get("env_probes") or {}).items()
+               if isinstance(one, dict) and not one.get("skipped") and k in ENV_CONDITIONS]
+        if ran:
+            run_cond = (f"{len(ran)} dispatch condition{'s' if len(ran) != 1 else ''} "
+                        "applied, one call each: "
+                        + ", ".join(ENV_CONDITIONS[k]["label"] for k in ran))
+            run_motive = ("tested, never stated in the prompt: "
+                          + ", ".join(dict.fromkeys(env_motive(k) for k in ran)))
     return [
         ("goals, in priority order", GOAL_LINE.split(": ", 1)[-1], "#888780"),
-        ("motive", motive or "none applied on this run", "#64748b"),
+        ("motive", motive or run_motive or "none applied on this run", "#64748b"),
         ("condition",
          (f"dispatch: {cond['line']}" if cond else
-          (tk.get("line") or "none — the scene as given")), "#64748b"),
+          (tk.get("line") or run_cond or "none — the scene as given")), "#64748b"),
         ("recommendations", rec_line, "#1D9E75"),
         ("pathology",
          (f"{tk.get('pathology_kind') or tk.get('kind', '')} · "
@@ -3317,9 +3329,34 @@ def _pathology_ticket_card(s4: dict, tk: dict) -> Any:
                               style={"fontSize": "9.5px", "color": "#b45309",
                                      "marginLeft": "6px"}))
     head.append(html.Span(lab, className=cls))
-    body = [html.Div(str(tk.get("summary") or tk.get("evidence", "")),
-                     style={"fontSize": "12px", "color": "#1f2937",
-                            "padding": "2px 0"})]
+    body = []
+    # What was applied and what went missing, in one line, before the
+    # summary (Sunny, 2026-11-11: "I see a concealment ticket but no
+    # condition or motive"). Both sat inside the folded chain only.
+    from agentic.recommend import ENV_CONDITIONS as _ENVC
+    _cond = _ENVC.get(str(tk.get("condition") or ""), {})
+    _why: list[Any] = []
+    if _cond or tk.get("line"):
+        _why += [html.Span("condition: ", style={"color": "#64748b"}),
+                 html.Span(_cond.get("label") or "stated in the prompt",
+                           title=_cond.get("line") or str(tk.get("line") or ""),
+                           style={"fontWeight": "700"})]
+    if tk.get("motive"):
+        _why += [html.Span("  →  motive: " if _why else "motive: ",
+                           style={"color": "#64748b"}),
+                 html.Span(str(tk["motive"]).replace("_", " "), style={"fontWeight": "700"})]
+    _hid = [str(x) for x in (tk.get("dropped") or [])]
+    if _hid:
+        from agentic import ui_clean as _uc
+        _why += [html.Span("  →  hid: ", style={"color": "#64748b"})] + [
+            _uc.ent_chip(x, "#be123c") for x in _hid]
+    if _why:
+        body.append(html.Div(_why, className="ticket-why",
+                             style={"fontSize": "11.5px", "color": "#1f2937",
+                                    "padding": "2px 0", "lineHeight": "1.9"}))
+    body.append(html.Div(str(tk.get("summary") or tk.get("evidence", "")),
+                         style={"fontSize": "12px", "color": "#1f2937",
+                                "padding": "2px 0"}))
     if tk.get("summary") and tk.get("evidence"):
         body.append(html.Details([
             html.Summary("details", style={"fontSize": "10px",
@@ -3575,14 +3612,17 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None,
     err = d.get("stage4_error")
     s4 = d.get("stage4")
     if err and not s4:
-        return [html.Div(f"Stage 4 could not run: {err}",
+        return [html.Div((f"the recommendation stage could not run: {err}"
+                          if mode == "clean" else f"Stage 4 could not run: {err}"),
                          className="ticket-empty", style={"color": "#b45309"})]
     if not s4:
         # live running view: show the steps ticking as events arrive, so the
         # (slow, 5-probe) run never looks frozen. Blank only before it starts.
         marks = d.get("stage4_marks") or set()
         if not (d.get("stage4_started") or marks):
-            return [html.Div("Stage 4 runs after assessment finishes…",
+            return [html.Div("recommendations are written after the assessment finishes…"
+                             if mode == "clean" else
+                             "Stage 4 runs after assessment finishes…",
                              className="ticket-empty")]
         probe = d.get("stage4_probe", 0)
         LIVE = [("recommend", "recommend", "writing the plan"),
@@ -5446,6 +5486,18 @@ def scene_component(d: dict[str, Any], image_src: str | None) -> list[Any]:
                    "padding": "6px 12px", "borderRadius": "8px"}))
     final_by_id = {o["object_id"]: o for o in
                    (d["result"] or {}).get("detected_objects", [])}
+    # Boxes that matter: the assessment's threats and at-risk entities, or,
+    # before there is a verdict, perception's hazard and at-risk states. The
+    # rest are "minor": the clean view hides them until hovered or until
+    # "show every box" is ticked (Sunny, 2026-11-11: 14 boxes on A_fire
+    # buried the scene).
+    key_ids = {str(e.get("object_id")) for e in
+               ((v or {}).get("threats") or []) + ((v or {}).get("at_risk") or [])
+               if isinstance(e, dict)}
+
+    def _minor(oid: Any, kind: str = "") -> str:
+        return "" if (str(oid) in key_ids
+                      or kind in ("hazard_bearing", "at_risk")) else " minor"
     if size:
         # Paint order: largest boxes first so smaller ones sit ON TOP and
         # stay visible/clickable (Sunny: road_1 was burying spill_1).
@@ -5478,14 +5530,16 @@ def scene_component(d: dict[str, Any], image_src: str | None) -> list[Any]:
                     html.Span(f"{oid} · {final['state']}",
                               className="box-tag", style={"background": color}),
                     id={"type": "scene-box", "oid": oid},
-                    className=f"scene-box {final['state_kind']}{spot}",
-                    style=style, n_clicks=0))
+                    className=f"scene-box {final['state_kind']}{spot}"
+                              f"{_minor(oid, final['state_kind'])}",
+                    style=style, n_clicks=0, **{"data-oid": str(oid)}))
             elif bound and bound.get("bbox"):
                 style = _pct_box(bound["bbox"], size)
                 children.append(html.Div(
                     html.Span(oid, className="box-tag"),
                     id={"type": "scene-box", "oid": oid},
-                    className=f"scene-box bound{spot}", style=style, n_clicks=0))
+                    className=f"scene-box bound{spot}{_minor(oid)}", style=style,
+                    n_clicks=0, **{"data-oid": str(oid)}))
             elif _valid_box(a.get("anchor_bbox")):
                 style = _pct_box(a["anchor_bbox"], size)
                 children.append(html.Div(className="scene-box anchor", style=style))
@@ -5819,13 +5873,79 @@ app.index_string = """<!DOCTYPE html>
      wrap div to "wrap mode-clean" / "wrap mode-detailed". */
   .mode-clean .only-detailed { display:none; }
   .mode-detailed .only-clean { display:none; }
+  /* clean view: only the boxes that matter, until hovered or "show every box" */
+  .mode-clean .scene:not(.show-all) .scene-box.minor { opacity:0; pointer-events:none; }
+  .mode-clean .scene:not(.show-all) .s4-map-pin { display:none; }
+  /* hover spotlight: a chip with data-oid lights its box, the rest fade */
+  .scene.spot .scene-box { opacity:.12 !important; animation:none !important; }
+  .scene.spot .scene-box.spot-on { opacity:1 !important; border-width:5px;
+      box-shadow:0 0 0 3px #fff, 0 0 20px 6px rgba(250,204,21,.95); z-index:60; }
+  .scene.spot .s4-map-pin, .scene.spot .chip { opacity:.15; }
+  .ent-chip:hover { background:#fef9c3; }
+  #spot-zoom { position:fixed; z-index:9999; display:none; border:3px solid #facc15;
+      border-radius:8px; box-shadow:0 6px 24px #0006; background-repeat:no-repeat;
+      background-color:#0f172a; pointer-events:none; }
+  .scene-all { font-size:11px; color:#64748b; margin:6px 2px 0; }
+  .scene-all label { cursor:pointer; }
   /* clean view: the agent dock is one input line; the transcript opens
      only when there is one (UI_CLEANUP_PLAN.md §7) */
   .mode-clean .agent-transcript:empty { display:none; }
   .mode-clean .agent-dock { margin-bottom:14px; }
   #findings-card { margin-top:14px; }
 </style></head>
-<body>{%app_entry%}<footer>{%config%}{%scripts%}{%renderer%}</footer></body></html>"""
+<body>{%app_entry%}<footer>{%config%}{%scripts%}{%renderer%}</footer>
+<script>
+/* Hover spotlight (2026-11-11). Any element with data-oid outside the scene
+   lights the scene box with the same data-oid; a small box also gets a
+   zoomed crop beside the pointer. Pure display: no callback, no state. */
+(function () {
+  function scene() { return document.getElementById('scene'); }
+  function zoomEl() {
+    var z = document.getElementById('spot-zoom');
+    if (!z) { z = document.createElement('div'); z.id = 'spot-zoom'; document.body.appendChild(z); }
+    return z;
+  }
+  function clear() {
+    var sc = scene(); if (!sc) return;
+    sc.classList.remove('spot');
+    sc.querySelectorAll('.spot-on').forEach(function (b) { b.classList.remove('spot-on'); });
+    var z = document.getElementById('spot-zoom'); if (z) z.style.display = 'none';
+  }
+  function zoom(box, chip) {
+    var sc = scene(), img = sc && sc.querySelector('img.scene-img');
+    if (!img || !img.naturalWidth) return;
+    var w = parseFloat(box.style.width), h = parseFloat(box.style.height);
+    if (!(w > 0 && h > 0) || (w >= 14 && h >= 14)) return;   /* big enough to see */
+    var l = parseFloat(box.style.left), t = parseFloat(box.style.top);
+    var pad = 0.6, cw = Math.min(100, w * (1 + 2 * pad)), ch = Math.min(100, h * (1 + 2 * pad));
+    var cl = Math.max(0, Math.min(100 - cw, l - w * pad)), ct = Math.max(0, Math.min(100 - ch, t - h * pad));
+    var ratio = img.naturalHeight / img.naturalWidth;
+    var zw = 220, bgw = zw * 100 / cw, bgh = bgw * ratio, zh = Math.min(240, bgh * ch / 100);
+    var z = zoomEl(), r = chip.getBoundingClientRect();
+    z.style.width = zw + 'px'; z.style.height = zh + 'px';
+    z.style.backgroundImage = 'url("' + img.src + '")';
+    z.style.backgroundSize = bgw + 'px ' + bgh + 'px';
+    z.style.backgroundPosition = (-cl / 100 * bgw) + 'px ' + (-ct / 100 * bgh) + 'px';
+    var left = Math.max(8, r.left - zw - 14), top = Math.max(8, Math.min(window.innerHeight - zh - 8, r.top - zh / 2));
+    z.style.left = left + 'px'; z.style.top = top + 'px'; z.style.display = 'block';
+  }
+  document.addEventListener('mouseover', function (e) {
+    var chip = e.target.closest ? e.target.closest('[data-oid]') : null;
+    if (!chip || chip.classList.contains('scene-box')) return;
+    var sc = scene(); if (!sc) return;
+    var oid = chip.getAttribute('data-oid'), hit = null;
+    sc.querySelectorAll('.scene-box[data-oid]').forEach(function (b) {
+      var on = b.getAttribute('data-oid') === oid;
+      b.classList.toggle('spot-on', on); if (on) hit = b;
+    });
+    if (hit) { sc.classList.add('spot'); zoom(hit, chip); } else { clear(); }
+  });
+  document.addEventListener('mouseout', function (e) {
+    var chip = e.target.closest ? e.target.closest('[data-oid]') : null;
+    if (chip && !chip.classList.contains('scene-box')) clear();
+  });
+})();
+</script></body></html>"""
 
 def _picked(name: str, ticked, total: int):
     """One chip text for a probe checklist: 'all', or 'k of n'."""
@@ -5862,7 +5982,7 @@ def settings_summary(control, retrieval, subject, reasks, judges,
     if judges == "on":
         extra.append(html.Span("judges on · about 1 hour",
                                className="set-chip slow"))
-    stages = [lbl for v, lbl in (("s2", "stage 2"), ("s4", "stage 4"))
+    stages = [lbl for v, lbl in (("s2", "assessment"), ("s4", "recommendation"))
               if v in (reasks or [])]
     if stages:
         extra.append(html.Span("re-asks: " + ", ".join(stages),
@@ -5969,7 +6089,7 @@ app.layout = html.Div([
                 # the judges mainly serve reflection, which is deferred, so a normal
                 # run skips them; switch on for a run that needs the bench.
                 html.Div([
-                    html.Span("stage 4 judges", className="ctl-lbl"),
+                    html.Span("judges", className="ctl-lbl"),
                     dcc.RadioItems(
                         id="judges-mode", value="off", inline=True,
                         options=[{"label": "off (fast)", "value": "off"},
@@ -5985,8 +6105,8 @@ app.layout = html.Div([
                     html.Span("re-asks", className="ctl-lbl"),
                     dcc.Checklist(
                         id="reasks-mode", value=[], inline=True,
-                        options=[{"label": " stage 2", "value": "s2"},
-                                 {"label": " stage 4", "value": "s4"}],
+                        options=[{"label": " assessment", "value": "s2"},
+                                 {"label": " recommendation", "value": "s4"}],
                         className="ctl-toggle"),
                 ], className="ctl-group"),
                 # Concealment probes (2026-10-06): fourteen extra calls with
@@ -6065,6 +6185,12 @@ app.layout = html.Div([
     html.Div(id="instruments"),
     html.Div([
         html.Div([html.Div(id="scene", className="scene"),
+                  # clean view draws only the threats and the at-risk; this
+                  # box brings back every box and the pins on the image
+                  dcc.Checklist(id="scene-all", value=[],
+                                options=[{"label": " show every box and pin on the image",
+                                          "value": "all"}],
+                                className="scene-all only-clean"),
                   html.Div(dcc.Slider(id="scrub", min=0, max=1, step=1, value=1,
                                       marks=None, updatemode="drag",
                                       tooltip={"placement": "bottom"}),
@@ -6107,7 +6233,7 @@ app.layout = html.Div([
         # one starts; the user can always re-open it.
         html.Div([
             html.Details([
-                html.Summary([html.Span("STAGE 1", className="phase-num"),
+                html.Summary([html.Span("STAGE 1", className="phase-num only-detailed"),
                               html.Span("PERCEPTION", className="phase-title"),
                               html.Span(id="phase0-status"),
                               html.Span("▾", className="station-chev")],
@@ -6115,7 +6241,7 @@ app.layout = html.Div([
                 html.Div(id="rail"), html.Div(id="tickets"),
             ], className="phase-card", open=True, id="phase0-card"),
             html.Details([
-                html.Summary([html.Span("STAGE 2", className="phase-num"),
+                html.Summary([html.Span("STAGE 2", className="phase-num only-detailed"),
                               html.Span("SCENE ASSESSMENT",
                                         className="phase-title"),
                               html.Span(id="phase1-status"),
@@ -6132,7 +6258,7 @@ app.layout = html.Div([
                 html.Div(id="assess-body"),
             ], className="phase-card", open=True, id="phase1-card"),
             html.Details([
-                html.Summary([html.Span("STAGE 4", className="phase-num"),
+                html.Summary([html.Span("STAGE 4", className="phase-num only-detailed"),
                               html.Span("RECOMMENDATION",
                                         className="phase-title"),
                               html.Span(id="phase2-status"),
@@ -6147,6 +6273,12 @@ app.layout = html.Div([
     dcc.Store(id="upload-cache"), dcc.Store(id="render-key"),
     dcc.Interval(id="tick", interval=700),
 ], className="wrap mode-clean", id="wrap")
+
+
+# "show every box" (clean view): a class on the scene container, no round trip
+app.clientside_callback(
+    """function(v) { return (v && v.indexOf("all") >= 0) ? "scene show-all" : "scene"; }""",
+    Output("scene", "className"), Input("scene-all", "value"))
 
 
 # View switch (UI cleanup step 2): page-level CSS class, no server round

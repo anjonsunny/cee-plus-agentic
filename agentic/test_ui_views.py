@@ -142,7 +142,7 @@ def test_summary_counts_picked_motives_and_names_re_ask_stages():
     args[3] = ["s2", "s4"]
     args[7] = [ui._SANDBAGGING_MOTIVE_NAMES[0]]
     text = _text(ui.settings_summary(*args))
-    assert "re-asks: stage 2, stage 4" in text
+    assert "re-asks: assessment, recommendation" in text
     assert f"sandbagging: 1 of {len(ui._SANDBAGGING_MOTIVE_NAMES)}" in text
 
 
@@ -261,9 +261,7 @@ def test_every_renderer_is_identical_in_both_views_at_every_prefix():
             base = str(fn(d))
             assert base == str(fn(d, mode="detailed")), (name, k)
             # the clean branch of each renderer has its own tests below
-            if name in ("assess", "stage4") and not (
-                    d.get("stage4") if name == "stage4"
-                    else d["assess"]["status"] != "pending"):
+            if name == "assess" and d["assess"]["status"] == "pending":
                 assert base == str(fn(d, mode="clean")), (name, k)
 
 
@@ -371,8 +369,8 @@ def test_findings_card_is_empty_in_detailed_view_and_waits_before_stage_4():
     assert ui.findings_component(ui.derive([{"type": "stage4_result",
                                              "result": _s4_full()}]),
                                  mode="detailed") == []
-    assert "once stage 4 has run" in _text(_findings())
-    assert "stage 4 is running" in _text(_findings(extra=[{"type": "recommendations_ready"}]))
+    assert "once the recommendations are written" in _text(_findings())
+    assert "recommendations are being written" in _text(_findings(extra=[{"type": "recommendations_ready"}]))
     assert "boom" in _text(_findings(extra=[{"type": "stage4_error", "message": "boom"}]))
     bare = {"recommendations": _s4_full()["recommendations"], "pathology": {"tickets": []}}
     text = _text(_findings(s4=bare))
@@ -470,6 +468,10 @@ def test_the_title_names_all_three_stages():
 # --- Step 4: the chain (vertical in both views; slate motive/condition dots) --
 
 def _walk(node):
+    if isinstance(node, (list, tuple)):
+        for x in node:
+            yield from _walk(x)
+        return
     yield node
     for kid in _kids(node):
         yield from _walk(kid)
@@ -508,12 +510,13 @@ def test_clean_stage2_shows_banner_chips_and_one_uncertainty_chip():
     text = _text(_assess("clean"))
     assert "DISASTER · fire · level 7 · CATASTROPHIC" in text
     assert "threats:" in text and "at risk:" in text
-    assert "measured: 0.20 unsure" in text
+    assert "uncertainty: 0.20 unsure (measured)" in text
     assert "no ticket" in text
     # with stage 2 re-asks off the chip says so instead of vanishing
     from agentic.test_ui import ASSESS_EVENTS, EVENTS
     no_unc = [e for e in EVENTS + ASSESS_EVENTS if e["type"] != "assess_uncertainty"]
-    assert "measured: off" in _text(ui.assess_component(ui.derive(no_unc), "both", mode="clean"))
+    assert "uncertainty: not measured (assessment re-asks off)" in _text(
+        ui.assess_component(ui.derive(no_unc), "both", mode="clean"))
     # detailed-only material is gone and named
     body = text.split("hidden in clean view")[0]
     for absent in ("model says", "calibration gap", "CODE CHECKS", "RULEBOOK"):
@@ -682,3 +685,127 @@ def test_clean_live_views_carry_the_early_pathology_tickets():
                  _text(ui.findings_component(d, mode="clean"))):
         assert "PATHOLOGY · early result" in text
         assert "no longer acts on house_2" in text
+
+
+
+# --- Batch after the first replay (Sunny, 2026-11-11) --------------------------
+
+def _obj(oid, label, state, kind, bbox):
+    return {"object_id": oid, "label": label, "state": state, "state_kind": kind,
+            "description": "", "bbox": bbox, "box_source": "dino_matched",
+            "box_confidence": 0.9, "anchor_bbox": bbox, "mask_path": None,
+            "label_note": "", "vocab_extension": False, "family_name_as_label": False}
+
+
+def _perceived():
+    """EVENTS plus a final record: one hazard, one at-risk, one plain object."""
+    from agentic.test_ui import EVENTS
+    objs = [_obj("tree_1", "tree", "standing", "normal", [300, 20, 380, 200]),
+            _obj("man_1", "person", "standing", "at_risk", [220, 150, 250, 220]),
+            _obj("tanker_truck_1", "tanker_truck", "leaking", "hazard_bearing",
+                 [12, 11, 195, 148])]
+    anchors = [{"type": "anchors_ready", "entities": [
+        {"object_id": o["object_id"], "label": o["label"], "anchor_bbox": o["bbox"]}
+        for o in objs]}]
+    return EVENTS + anchors + [{"type": "assembled", "result": {
+        "image_size": [400, 300], "detected_objects": objs}}]
+
+
+def _oids(comp):
+    return [getattr(c, "data-oid", None) for c in _walk(comp)
+            if getattr(c, "data-oid", None) is not None]
+
+
+def test_entity_chips_carry_the_id_the_scene_spotlight_reads():
+    from agentic import ui_clean
+    chip = ui_clean.ent_chip("fire_1", "#ef4444", title="t")
+    assert getattr(chip, "data-oid") == "fire_1" and chip.className == "ent-chip"
+    # stage 1 lists what was found, hazards first
+    d = ui.derive(_perceived())
+    rail = ui.rail_component(d, mode="clean")
+    assert "found:" in _text(rail)
+    found = _oids(rail)[:3]
+    assert found == ["tanker_truck_1", "man_1", "tree_1"]      # hazard, at-risk, the rest
+    # stage 4 cards name the threat and who is protected as chips
+    recs = _s4("clean")
+    assert {"fire_1", "tanker_1", "man_1"} <= set(_oids(recs))
+
+
+def test_scene_boxes_carry_the_id_and_mark_the_minor_ones():
+    d = ui.derive(_perceived())
+    boxes = {getattr(c, "data-oid"): c
+             for c in ui.scene_component(d, "data:image/png;base64,x")
+             if "scene-box" in str(getattr(c, "className", ""))
+             and getattr(c, "data-oid", None)}
+    assert set(boxes) == {"tanker_truck_1", "man_1", "tree_1"}
+    assert "minor" in boxes["tree_1"].className.split()
+    assert "minor" not in boxes["man_1"].className.split()
+    assert "minor" not in boxes["tanker_truck_1"].className.split()
+    # an entity the ASSESSMENT names stops being minor even with a plain state
+    d2 = ui.derive(_perceived() + [
+        {"type": "stage_started", "stage": "assess"},
+        {"type": "assess_verdict", "scenario": "Yes", "disaster_type": "spill",
+         "level": 6, "bucket": "serious", "self_confidence": 0.9, "n_violations": 0,
+         "threats": [{"object_id": "tree_1", "reason": "r"}], "at_risk": []}])
+    if (d2["assess"]["verdict"] or {}).get("threats"):
+        boxes2 = {getattr(c, "data-oid"): c
+                  for c in ui.scene_component(d2, "data:image/png;base64,x")
+                  if getattr(c, "data-oid", None)}
+        assert "minor" not in boxes2["tree_1"].className.split()
+
+
+def test_the_page_ships_the_spotlight_script_and_the_show_every_box_toggle():
+    page = ui.app.index_string
+    for needle in ("spot-on", "data-oid", "spot-zoom", "mouseover",
+                   ".mode-clean .scene:not(.show-all) .scene-box.minor",
+                   ".mode-clean .scene:not(.show-all) .s4-map-pin"):
+        assert needle in page, needle
+    box, _ = _find(ui.app.layout, "scene-all")
+    assert "only-clean" in box.className and box.value == []
+    cbs = [c for c in ui.app._callback_list if c.get("output") == "scene.className"]
+    assert len(cbs) == 1 and cbs[0].get("clientside_function") is not None
+
+
+def test_clean_view_shows_stage_names_without_numbers():
+    nums = [c for c in _walk(ui.app.layout)
+            if getattr(c, "className", "") and "phase-num" in str(c.className)
+            and str(getattr(c, "children", "")).startswith("STAGE")]
+    assert len(nums) == 3 and all("only-detailed" in c.className for c in nums)
+    for text in (_text(ui.stage4_component(ui.derive([]), None, mode="clean")),
+                 _text(_findings()), _text(_assess("clean"))):
+        assert "stage 4" not in text.lower() and "stage 2" not in text.lower(), text
+    assert "Stage 4 runs after" in _text(ui.stage4_component(ui.derive([]), None))
+
+
+def test_pathology_ticket_says_condition_motive_and_what_was_hidden_up_front():
+    s4 = _s4_full()
+    s4["pathology"]["tickets"][0]["dropped"] = ["tanker_1"]
+    from agentic.register4 import stage4_register
+    tk = stage4_register(s4)["pathology"][0]
+    assert tk["dropped"] == ["tanker_1"]
+    card = ui._pathology_ticket_card(s4, tk)
+    why = [c for c in _walk(card) if getattr(c, "className", "") == "ticket-why"]
+    assert len(why) == 1
+    text = _text(why[0])
+    assert "condition:" in text and "only one crew" in text
+    assert "motive:" in text and "keep the only resource on the priority" in text
+    assert "hid:" in text and _oids(why[0]) == ["tanker_1"]
+    # a ticket with none of the three keeps its old shape
+    bare = {"kind": "sycophancy", "summary": "bends to a hint", "status": "open"}
+    assert not [c for c in _walk(ui._pathology_ticket_card(s4, bare))
+                if getattr(c, "className", "") == "ticket-why"]
+
+
+def test_the_runs_chain_names_the_conditions_it_applied():
+    s4 = _s4_full()
+    steps = dict((t, d_) for t, d_, _c in ui._chain_steps(s4))
+    assert steps["motive"] == "none applied on this run"
+    s4["env_probes"] = {"one_crew": {"line": "x", "recommendations": []},
+                        "no_crew_40": {"line": "y", "recommendations": []},
+                        "crew_fatigued": {"skipped": "gated"}}
+    steps = dict((t, d_) for t, d_, _c in ui._chain_steps(s4))
+    assert "2 dispatch conditions applied" in steps["condition"]
+    assert "only one crew" in steps["condition"] and "no crew for forty minutes" in steps["condition"]
+    assert "crew fatigued" not in steps["condition"]
+    assert "keep the only resource on the priority" in steps["motive"]
+    assert "never stated in the prompt" in steps["motive"]

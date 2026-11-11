@@ -72,6 +72,24 @@ def _chip(text: str, colour: str, *, fill: bool = False, title: str = "") -> Any
     return html.Span(text, style=style, title=title or None)
 
 
+def ent_chip(oid: str, colour: str, text: str | None = None, title: str = "") -> Any:
+    """An entity named on the page. Hovering it spotlights that entity's
+    box on the scene image (the script in ui.py's index_string looks for
+    `data-oid`); Sunny, 2026-11-11: "the image should reflect which one I
+    am pointing at"."""
+    return html.Span(text or str(oid), title=title or None, className="ent-chip",
+                     **{"data-oid": str(oid)},
+                     style={"fontSize": "11px", "fontWeight": "700", "color": colour,
+                            "border": f"1px solid {colour}", "borderRadius": "6px",
+                            "padding": "1px 7px", "marginRight": "6px",
+                            "whiteSpace": "nowrap", "display": "inline-block",
+                            "marginBottom": "4px", "cursor": "crosshair"})
+
+
+ROLE_COLOUR = {"hazard_bearing": "#ef4444", "at_risk": "#f97316"}
+_OTHER_COLOUR = "#64748b"
+
+
 # ── 1 · THE VERDICT ──────────────────────────────────────────────────────
 
 def clean_verdict(s4: dict) -> list:
@@ -182,6 +200,16 @@ def clean_recs(s4: dict) -> list:
                                      "see THE REGISTER"))
         quad = (f"{q.get('threat', '')} —{q.get('effect', '')}→ "
                 f"{', '.join(q.get('affected_objects') or [])}") if q else ""
+        link: list = []
+        if q.get("threat"):
+            link.append(ent_chip(str(q["threat"]), ROLE_COLOUR["hazard_bearing"],
+                                 title="the threat this recommendation answers"))
+            if q.get("affected_objects"):
+                link.append(html.Span("→ ", style={"color": "#94a3b8", "fontSize": "11px",
+                                                    "marginRight": "6px"}))
+            link += [ent_chip(str(x), ROLE_COLOUR["at_risk"],
+                              title="who or what this recommendation protects")
+                     for x in (q.get("affected_objects") or [])]
         why = [html.Div(str(r.get("reason") or ""), style={"fontSize": "11.5px",
                                                          "color": "#334155"})]
         if quad.strip(" —→"):
@@ -194,6 +222,7 @@ def clean_recs(s4: dict) -> list:
                                 style={"marginRight": "6px"}),
                       html.Span(str(r.get("action") or ""), style={"fontWeight": "700"})],
                      style={"marginBottom": "3px"}),
+            html.Div(link, style={"marginBottom": "2px"}) if link else None,
             html.Div(chips, style={"marginBottom": "2px"}) if chips else None,
             html.Details([html.Summary("why", style={"fontSize": "10px",
                                                      "color": "#64748b",
@@ -334,12 +363,12 @@ def findings(s4: dict, d: dict, *, chain: Callable[[dict], Any],
     what it is waiting for."""
     s4 = s4 or {}
     if d.get("stage4_error"):
-        return [html.Div(f"stage 4 failed: {d['stage4_error']}",
+        return [html.Div(f"the recommendation stage failed: {d['stage4_error']}",
                          style={"fontSize": "12px", "color": "#b91c1c"})]
     if not s4:
-        waiting = ("stage 4 is running — findings arrive with the trust score"
-                   if d.get("stage4_started") else
-                   "findings arrive once stage 4 has run")
+        waiting = ("recommendations are being written — findings arrive with "
+                   "the trust score" if d.get("stage4_started") else
+                   "findings arrive once the recommendations are written")
         return [html.Div(waiting, className="ticket-empty")]
     out: list = []
     out += clean_verdict(s4) or [html.Div("trust not scored on this run",
@@ -444,15 +473,9 @@ def _entity_chips(entries: list, colour: str, with_kind: bool = False) -> list:
     for e in entries or []:
         if not isinstance(e, dict):
             continue
-        text = str(e.get("object_id") or "?")
-        if with_kind and e.get("kind"):
-            text += f" · {e['kind']}"
-        chips.append(html.Span(text, title=str(e.get("reason") or ""),
-                               style={"fontSize": "11px", "fontWeight": "700",
-                                      "color": colour, "border": f"1px solid {colour}",
-                                      "borderRadius": "6px", "padding": "1px 7px",
-                                      "marginRight": "6px", "whiteSpace": "nowrap",
-                                      "display": "inline-block", "marginBottom": "4px"}))
+        oid = str(e.get("object_id") or "?")
+        text = oid + (f" · {e['kind']}" if with_kind and e.get("kind") else "")
+        chips.append(ent_chip(oid, colour, text, title=str(e.get("reason") or "")))
     return chips
 
 
@@ -500,15 +523,16 @@ def clean_assess(A: dict, d: dict, *, bucket_css: dict) -> list:
     chips: list = []
     sc = mu.get("score")
     if isinstance(sc, (int, float)):
-        chips.append(_chip(f"measured: {sc:.2f} unsure"
+        chips.append(_chip(f"uncertainty: {sc:.2f} unsure (measured)"
                            + (f" · {mu['n_probes']} probes" if mu.get("n_probes") else ""),
                            "#16a34a" if sc < 0.2 else "#b45309" if sc < 0.5 else "#b91c1c",
                            title=str(mu.get("explanation") or
                                      "how much the re-asked answers disagree; "
                                      "rises as they split")))
     elif A.get("status") == "done" and v:
-        chips.append(_chip("measured: off (no stage 2 re-asks)", "#94a3b8",
-                           title="tick re-asks · stage 2 in run settings to measure it"))
+        chips.append(_chip("uncertainty: not measured (assessment re-asks off)", "#94a3b8",
+                           title="tick re-asks · assessment in run settings to measure "
+                                 "it; the model's own confidence is in the detailed view"))
     tickets = [t for t in (A.get("tickets") or {}).values() if isinstance(t, dict)]
     if tickets:
         by: dict[str, int] = {}
@@ -638,6 +662,22 @@ def clean_rail(d: dict, stages: list[str], detailed_rail: Any) -> Any:
             rows.append(html.Div(f"● {s} — {one.get('info') or 'working'}",
                                  style={"fontSize": "11.5px", "color": "#2563eb",
                                         "margin": "2px 0"}))
+    objs = ((d.get("result") or {}).get("detected_objects")
+            or d.get("repair_entities_latest") or d.get("anchors") or [])
+    ents = []
+    order = {"hazard_bearing": 0, "at_risk": 1}
+    for o in sorted((o for o in objs if isinstance(o, dict)),
+                    key=lambda o: order.get(str(o.get("state_kind")), 2)):
+        oid = str(o.get("object_id") or o.get("label") or "?")
+        kind = str(o.get("state_kind") or "")
+        ents.append(ent_chip(
+            oid, ROLE_COLOUR.get(kind, _OTHER_COLOUR),
+            title=" · ".join(x for x in (str(o.get("label") or ""), str(o.get("state") or ""),
+                                         kind.replace("_", " ")) if x)))
+    if ents:
+        rows.append(html.Div(
+            [html.Span("found: ", style={**_SMALL, "fontWeight": "700"})] + ents,
+            style={"margin": "2px 0 4px", "lineHeight": "2"}))
     rows.append(html.Details([
         html.Summary("how perception went", style={"fontSize": "10.5px",
                                                    "color": "#64748b",

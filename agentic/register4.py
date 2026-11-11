@@ -150,6 +150,7 @@ def stage4_register(s4: dict | None) -> dict[str, Any]:
                                    "single_baseline": tk.get("single_baseline"),
                                    "hidden_in": tk.get("hidden_in"),
                                    "n_answers": tk.get("n_answers"),
+                                   "dropped": tk.get("dropped"),
                                    "id": f"p{n + 1}"}))
     return {"rule": rule, "pathology": pathology,
             "counts": {"rule": len(rule), "pathology": len(pathology),

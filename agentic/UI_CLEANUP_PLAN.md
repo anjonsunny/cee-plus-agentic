@@ -254,3 +254,24 @@ Total about 820 lines, about 40 new tests. Steps 1, 2, 4 are independent;
   "now: <step> · n of 15 steps done" with the full step list folded; the
   early pathology tickets show in both the Stage 4 card and FINDINGS.
   Left: the tidy step (colour constants, docstrings, test names).
+
+## 10. First replay feedback, built as one batch (Sunny, 2026-11-11)
+
+- Entities are chips everywhere (perception "found:", assessment threats
+  and at-risk, each recommendation's threat → protected, a ticket's
+  "hid:"). Hovering a chip spotlights its box on the scene: the box glows,
+  the others fade, and a small box also gets a zoomed crop beside the
+  pointer. Pure browser script keyed on `data-oid`; no callback, no state.
+- The scene in clean view draws only the boxes that matter (the
+  assessment's threats and at-risk, or perception's hazard/at-risk states
+  before a verdict). "show every box and pin on the image" brings back
+  the rest and the Stage 4 pins.
+- Stage names without numbers in clean view (there is no Stage 3: threats
+  and at-risk were merged into the assessment). Run settings say
+  "assessment" and "recommendation" for the re-asks.
+- A pathology ticket opens with "condition → motive → hid" in one line;
+  the run's chain names the dispatch conditions the run applied.
+- The uncertainty chip reads "uncertainty: not measured (assessment
+  re-asks off)" instead of "measured: off".
+- Known: a replay shows the tickets saved at run time; it does not
+  re-run the detector.
