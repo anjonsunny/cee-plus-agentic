@@ -530,3 +530,26 @@ frozen arm's own numbers; ours only picks the other one, and the screen
 says which. C: tanker 0.39, spill 0.39, fire 0.21 (was 0.33 each).
 Third try on C the same day: tanker_truck_1 removed (after run
 ui_93d632bd), all three core hazards now tested.
+
+## 19. One message on the FINDINGS card (Sunny's screenshots, 2026-11-13)
+
+Three things were stale or contradictory on the C run after the day's work:
+
+- The trust card of a SAVED run still named only brush_1 after F55. A
+  saved run shows the trust computed when it ran. Now a line under "lost
+  points" says what today's rule adds: "under today's rule this run would
+  also lose: protected, but never treated as a source of danger:
+  tanker_truck_1 (−0.08)". The saved score is not changed
+  (`errors4.new_under_todays_rule`, only for the error kind added later).
+- The run's chain still ended in "placeholder: ... intervention not yet
+  ported". Its last step now reads the tries: "3 hazards removed (...) ·
+  the scene: grounded · the distribution: misproportioned (overlap 0.62)",
+  or "not tested yet" (`ui_intervene.scene_summary` / `summary_line`).
+- The headline came from trust alone and ignored the tries. It now ends
+  with one sentence from them ("Tested by removing 3 hazards: the advice
+  depends on the right ones, with the wrong emphasis.") and also names
+  what today's rule adds. The number of tries is part of the redraw key,
+  so the headline and the chain update when a try is saved.
+- The "by chain" line in the table is grey; the signed shift under it
+  carries the colour (a red "grew" above a green "eased" read as a
+  conflict, and the signed shift already includes the chain reading).

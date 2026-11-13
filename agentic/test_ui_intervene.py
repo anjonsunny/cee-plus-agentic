@@ -964,3 +964,110 @@ def test_ground_truth_hazards_are_weighed_by_consequence_not_by_arrow_count(gt):
     assert "should matter: by consequence" in text and "double when it reaches a person" in text
     assert "should matter: by arrow count" in _flat(ui_iv.synthesis_component(
         iv4.synthesis(before, pairs, core_basis="edge")))
+
+
+# ── one message on the page (Sunny's screenshots, 2026-11-13): the trust
+#    card still missed the tanker on the saved run, the chain still said
+#    "not yet ported", and the headline ignored the tries ─────────────────
+
+def _events(record, at_risk, s4):
+    return [{"type": "assembled", "result": record},
+            {"type": "assess_verdict", "scenario": "Yes", "disaster_type": "Fire",
+             "level": 8, "bucket": "catastrophic", "threats": [], "at_risk": at_risk},
+            {"type": "stage4_result", "result": s4}]
+
+
+C_RECORD = {"detected_objects": [
+    {"object_id": "fire_1", "label": "fire", "state": "spreading", "state_kind": "hazard_bearing"},
+    {"object_id": "tanker_1", "label": "tanker", "state": "leaking", "state_kind": "hazard_bearing"},
+    {"object_id": "man_1", "label": "man", "state": "standing", "state_kind": "normal"}]}
+C_S4 = {"recommendations": [
+            {"rank": 1, "action": "Extract man_1 upwind.",
+             "structured_reasoning": {"threat": "fire_1", "state": "spreading",
+                                      "effect": "may_harm", "affected_objects": ["man_1"]}},
+            {"rank": 2, "action": "Knock down fire_1 to stop it reaching tanker_1.",
+             "structured_reasoning": {"threat": "fire_1", "state": "spreading",
+                                      "effect": "may_spread_to",
+                                      "affected_objects": ["tanker_1"]}}],
+        "graph_b": {"edges": []},
+        "trust": {"score": 0.43, "band": "low", "contributors": [], "singular_errors": []},
+        "pathology": {"tickets": []}}
+
+
+def test_a_saved_run_shows_what_todays_rule_would_also_charge():
+    from agentic.errors4 import new_under_todays_rule
+    extra = new_under_todays_rule(C_RECORD, [{"object_id": "man_1", "kind": "proximity"}],
+                                  C_S4["recommendations"], C_S4["graph_b"], [])
+    assert [(e["id"], e["entities"]) for e in extra] == [("hazard_protected_only", ["tanker_1"])]
+    # a run that already carries it gets nothing extra
+    assert new_under_todays_rule(C_RECORD, [], C_S4["recommendations"], {}, extra) == []
+    for bad in (None, "x", {}, {"detected_objects": "y"}, {"detected_objects": [None]}):
+        assert new_under_todays_rule(bad, bad, bad, bad, bad) == []
+
+    d = ui.derive(_events(C_RECORD, [{"object_id": "man_1", "kind": "proximity"}], C_S4))
+    card = ui.findings_component(d, mode="clean")
+    (line,) = _by_class(card, "trust-rule-update")
+    text = _flat(line)
+    assert "under today's rule this run would also lose" in text
+    assert "protected, but never treated as a source of danger" in text
+    from agentic.test_ui_views import _oids
+    assert "tanker_1" in _oids(line)
+    assert "0.43 · low" in _flat(card)                   # the saved score is untouched
+    assert "saved score above is unchanged" in line.title
+    # and the headline names it too
+    assert "Protected, but never treated as a source of danger: tanker_1" in _flat(card[0])
+
+
+def test_the_tries_reach_the_headline_and_the_runs_chain(gt, monkeypatch):
+    (gt["verified"] / "push_09.jpg.gt.json").write_text(json.dumps(GT_FILE))
+    monkeypatch.setattr(ui, "UI_RUNS_DIR", gt["tmp"])
+    base, after = _run_dir(gt["tmp"]), _after_dir(gt["tmp"])
+    d = ui.derive(_events(RECORD, [], {**S4, "pathology": {"tickets": []}}))
+    # before any try: the chain says so, the headline says nothing about tries
+    card = ui.findings_component(d, mode="clean", record_name="ui_base")
+    assert "not tested yet: remove a hazard under CAUSAL GROUNDEDNESS" in _flat(card)
+    assert "Tested by removing" not in _flat(card)
+    ui_iv.save_try(base, ui_iv.finish_try(base, after, PENDING))
+    sm = ui_iv.scene_summary(base, gt["tmp"])
+    assert sm["n"] == 1 and sm["targets"] == ["fire_1"] and sm["available"] is True
+    d = ui.derive(_events(RECORD, [], {**S4, "pathology": {"tickets": []}}))
+    card = ui.findings_component(d, mode="clean", record_name="ui_base")
+    text = _flat(card)
+    assert "Tested by removing 1 hazard:" in _flat(card[0])          # in the headline
+    assert "1 hazard removed (fire_1) · the scene:" in text          # in the chain
+    assert "not yet ported" not in text and "placeholder" not in text
+    # a run opened without its folder (an example record) just has no summary
+    card = ui.findings_component(ui.derive(_events(RECORD, [], S4)), mode="clean")
+    assert "Tested by removing" not in _flat(card)
+
+
+def test_the_summary_sentences_cover_every_outcome():
+    s, line = ui_iv.summary_sentence, ui_iv.summary_line
+    assert s(None) == "" and s({}) == "" and s({"n": 0}) == ""
+    assert "not tested yet" in line(None)
+    base = {"n": 3, "targets": ["fire_1", "spill_1", "tanker_1"], "available": True}
+    assert s({**base, "cell": "grounded", "distribution": "misproportioned"}) == (
+        "Tested by removing 3 hazards: the advice depends on the right ones, "
+        "with the wrong emphasis.")
+    assert s({**base, "cell": "grounded", "distribution": "grounded"}).endswith(
+        "the advice depends on the right ones.")
+    assert "does not depend on the hazard that matters most" in s({**base, "cell": "masquerade"})
+    assert "leans most on a wrong hazard" in s({**base, "cell": "spurious_grounding"})
+    assert "not every core hazard has been removed yet" in s({**base, "cell": "pending"})
+    assert "no ground truth" in s({"n": 2, "available": False})
+    assert line({**base, "cell": "grounded", "distribution": "misproportioned",
+                 "overlap": 0.623}) == (
+        "3 hazards removed (fire_1, spill_1, tanker_1) · the scene: grounded · "
+        "the distribution: misproportioned (overlap 0.623)")
+    assert "needs ground truth" in line({"n": 1, "targets": ["x"], "available": False})
+    assert ui_iv.scene_summary(None, None) is None
+
+
+def test_the_chain_reading_is_grey_and_the_signed_shift_carries_the_colour():
+    cell = ui_iv.direction_cell({"before": 15.0, "after": 17.0, "direction": "grew",
+                                 "frozen_count": {"before": 7.5, "after": 11.0,
+                                                  "direction": "escalated"}})
+    assert cell[0].style["color"] == "#475569"            # not red
+    from agentic import chain4 as c
+    signed = ui_iv.signed_cell(c.signed_shift(SPILL, {"direction": "eased"}))
+    assert signed[0].style["color"] == "#16a34a"

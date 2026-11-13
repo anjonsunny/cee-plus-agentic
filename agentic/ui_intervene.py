@@ -350,7 +350,10 @@ def direction_cell(ch: Any) -> list:
          html.Span(f"{ch.get('before')} → {ch.get('after')} · {word}")],
         className="iv-chain",
         title=f"before: {arrows(ch.get('before_arrows'))}  |  after: {arrows(ch.get('after_arrows'))}",
-        style={"fontWeight": "800", "color": _DIR_COL.get(word, "#64748b")})]
+        # grey on purpose: this is one of three inputs to the signed shift
+        # below, which carries the colour (a red "grew" above a green
+        # "eased" read as a conflict)
+        style={"fontWeight": "700", "color": "#475569"})]
     if fz.get("direction"):
         fw = str(fz["direction"])
         differs = {"eased": "de-escalated", "grew": "escalated"}.get(word, word) != fw
@@ -655,6 +658,75 @@ def result_component(base_dir: Path | None, runs_dir: Path | None,
     else:
         out += lines
     return out
+
+
+def scene_summary(base_dir: Path | None, runs_dir: Path | None) -> dict | None:
+    """What the tries on one run add up to, for the headline and the run's
+    chain. None when the run has no measured try."""
+    tries = [t for t in load_tries(base_dir) if t.get("status") == "measured"
+             and (t.get("summary") or {}).get("fair") is not False and t.get("after_run")]
+    if not tries or not base_dir or not runs_dir:
+        return None
+    out: dict[str, Any] = {"n": len(tries),
+                           "targets": [str(t.get("target")) for t in tries],
+                           "available": False}
+    try:
+        before = iv4.result_from_run_dir(base_dir)
+        syn = iv4.synthesis(before, [
+            (t, iv4.result_from_run_dir(Path(runs_dir) / str(t["after_run"]))) for t in tries])
+    except Exception:
+        return out
+    if syn.get("available"):
+        dist = syn.get("distribution") or {}
+        out.update({"available": True, "cell": syn.get("cell"),
+                    "distribution": dist.get("verdict"), "overlap": dist.get("overlap"),
+                    "coverage": dist.get("coverage"), "provisional": dist.get("provisional")})
+    else:
+        out["why"] = syn.get("why")
+    return out
+
+
+_SCENE_SAYS = {
+    "grounded": "the advice depends on the right ones",
+    "robust": "the advice depends on the right ones, though it declared another",
+    "masquerade": "the advice does not depend on the hazard that matters most",
+    "ungrounded": "the advice does not depend on the hazard that matters most",
+    "spurious_grounding": "the advice leans most on a wrong hazard",
+}
+
+
+def summary_sentence(sm: Any) -> str:
+    """One sentence for the headline, from scene_summary()."""
+    if not isinstance(sm, dict) or not sm.get("n"):
+        return ""
+    n = sm["n"]
+    head = f"Tested by removing {n} hazard{'s' if n != 1 else ''}: "
+    if not sm.get("available"):
+        return head + "see the table below (no ground truth to judge the scene)."
+    says = _SCENE_SAYS.get(str(sm.get("cell")))
+    if not says:
+        return head + "not every core hazard has been removed yet."
+    d = str(sm.get("distribution"))
+    tail = {"misproportioned": ", with the wrong emphasis",
+            "spurious": ", and also on hazards ground truth does not name"}.get(d, "")
+    return head + says + (tail if str(sm.get("cell")) in ("grounded", "robust") else "") + "."
+
+
+def summary_line(sm: Any) -> str:
+    """The last step of the run's chain, from scene_summary()."""
+    if not isinstance(sm, dict) or not sm.get("n"):
+        return ("not tested yet: remove a hazard under CAUSAL GROUNDEDNESS and see "
+                "whether the advice moves")
+    n = sm["n"]
+    head = (f"{n} hazard{'s' if n != 1 else ''} removed "
+            f"({', '.join(sm.get('targets') or [])})")
+    if not sm.get("available"):
+        return head + " · the scene verdict needs ground truth; see the table below"
+    ov = sm.get("overlap")
+    return (head + f" · the scene: {str(sm.get('cell')).replace('_', ' ')}"
+            f" · the distribution: {str(sm.get('distribution')).replace('_', ' ')}"
+            + (f" (overlap {ov})" if ov is not None else "")
+            + (" · provisional" if sm.get("provisional") else ""))
 
 
 def try_line(t: dict) -> str:

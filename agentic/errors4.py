@@ -206,6 +206,44 @@ def _touched(recommendations: list, record: Any) -> set:
     return out
 
 
+def new_under_todays_rule(record: Any, at_risk: Any, recommendations: Any,
+                          graph_b: Any, saved_errors: Any) -> list[dict]:
+    """The singular errors TODAY's rules find on a saved run that its saved
+    trust does not carry. A saved run shows the trust computed when it ran,
+    so a rule fixed afterwards was invisible on it (Sunny, 2026-11-13: the
+    C run still named only brush_1 after F55). The saved score is never
+    changed; this only reports what the new rule adds.
+
+    `record` is the saved perception record (a dict), `at_risk` the saved
+    assessment's at-risk list. Returns [] on anything unreadable."""
+    from types import SimpleNamespace as NS
+    try:
+        objs = [NS(**{k: o.get(k) for k in ("object_id", "label", "state", "state_kind")})
+                for o in ((record or {}).get("detected_objects") or [])
+                if isinstance(o, dict)]
+        risk = [NS(object_id=a.get("object_id"), kind=a.get("kind"))
+                for a in (at_risk or []) if isinstance(a, dict)]
+        if not objs:
+            return []
+        now = singular_errors(NS(detected_objects=objs),
+                              NS(at_risk=risk, disaster_scenario="Yes"),
+                              recommendations if isinstance(recommendations, list) else [],
+                              graph_b if isinstance(graph_b, dict) else None)
+    except Exception:
+        return []
+    have = {(str(e.get("id")), tuple(sorted(str(x) for x in (e.get("entities") or []))))
+            for e in (saved_errors or []) if isinstance(e, dict)}
+    out = []
+    for e in now:
+        key = (str(e.get("id")), tuple(sorted(str(x) for x in (e.get("entities") or []))))
+        # only the error kinds the saved run could not have known: a kind
+        # the saved trust already carries (with other entities) is left to it
+        if e.get("waived") or key in have or e.get("id") != "hazard_protected_only":
+            continue
+        out.append(e)
+    return out
+
+
 def _quad(rec: dict) -> dict:
     """A recommendation's reason as a dict with a LIST of affected objects,
     whatever the model wrote there (a string, a bare id, nothing)."""

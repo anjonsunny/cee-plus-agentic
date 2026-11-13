@@ -92,7 +92,7 @@ _OTHER_COLOUR = "#64748b"
 
 # ── 1 · THE VERDICT ──────────────────────────────────────────────────────
 
-def clean_verdict(s4: dict) -> list:
+def clean_verdict(s4: dict, rule_update: list | None = None) -> list:
     """Score, band, a bar, what to do, the two biggest pull-downs, and what
     holds up. Minor factors, the per-recommendation list and the footnotes
     stay in the detailed view."""
@@ -149,6 +149,22 @@ def clean_verdict(s4: dict) -> list:
             + ([html.Span(f"(−{e['deduction']})", style={"color": "#b91c1c"})]
                if e.get("deduction") is not None else []),
             className="trust-lost",
+            style={"fontSize": "11px", "marginBottom": "2px", "lineHeight": "1.9"}))
+    # what TODAY's rules find on this saved run beyond its saved trust
+    for e in (rule_update or []):
+        if not isinstance(e, dict):
+            continue
+        text = str(e.get("detail") or e.get("id") or "").split(":")[0].strip()
+        ents = [str(x) for x in (e.get("entities") or [])]
+        rows.append(html.Div(
+            [html.Span("under today's rule this run would also lose: ",
+                       style={"fontWeight": "700", "color": "#64748b"}),
+             html.Span(text + (": " if ents else ""), style={"color": "#b45309"})]
+            + [ent_chip(x, "#b45309") for x in ents]
+            + ([html.Span(f"(−{e['deduction']})", style={"color": "#b45309"})]
+               if e.get("deduction") is not None else []),
+            className="trust-rule-update",
+            title="the saved score above is unchanged; this rule was added after the run",
             style={"fontSize": "11px", "marginBottom": "2px", "lineHeight": "1.9"}))
     clean = [c for c in (trust.get("contributors") or [])
              if isinstance(c, dict) and (c.get("contribution") or 0) == 0]
@@ -428,7 +444,7 @@ def findings(s4: dict, d: dict, *, chain: Callable[[dict], Any],
         return head + [html.Div(waiting, className="ticket-empty")]
     line = headline(s4, d)
     out: list = ([line] if line is not None else []) + head
-    out += clean_verdict(s4) or [html.Div("trust not scored on this run",
+    out += clean_verdict(s4, d.get("rule_update")) or [html.Div("trust not scored on this run",
                                           className="ticket-empty")]
     out.append(_heading("THE RUN'S CHAIN"))
     out.append(chain(s4))
@@ -471,7 +487,7 @@ def headline_parts(s4: dict, d: dict) -> tuple[str, list]:
               if isinstance(r, dict) and not r.get("benign")]
 
     problems: list[list] = []
-    for e in (trust.get("singular_errors") or []):
+    for e in list(trust.get("singular_errors") or []) + list(d.get("rule_update") or []):
         if not isinstance(e, dict):
             continue
         ents = [str(x) for x in (e.get("entities") or [])]
@@ -537,6 +553,13 @@ def headline_parts(s4: dict, d: dict) -> tuple[str, list]:
                  or (d.get("run_settings") or {}).get("env"))
     if d.get("stage4_env_skipped") and asked and not (calm and not acting):
         parts.append(f" Concealment was not checked: {d['stage4_env_skipped']}.")
+    if d.get("intervention"):
+        # what removing hazards showed, so the headline and the table below
+        # do not give two messages
+        from agentic.ui_intervene import summary_sentence
+        said = summary_sentence(d["intervention"])
+        if said:
+            parts.append(" " + said)
     return tone, parts
 
 

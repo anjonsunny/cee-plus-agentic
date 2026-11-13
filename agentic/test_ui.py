@@ -2543,7 +2543,8 @@ def test_the_causal_chain_is_always_visible_and_per_ticket():
     text = _text(ui._register_panel(s4))
     assert "THE RUN'S CHAIN" in text and "none detected" in text
     assert "life safety" in text and "Evacuate man_1 upwind" in text
-    assert "intervention not yet ported" in text
+    assert "not tested yet: remove a hazard under CAUSAL GROUNDEDNESS" in text
+    assert "not yet ported" not in text                  # the intervention is ported
     s4["pathology"]["tickets"] = [{
         "pathology": "concealment", "technique": "environment:specialist_delayed",
         "subtype": "environment · specialist unit delayed · face A · hazard hidden",

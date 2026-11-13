@@ -3243,7 +3243,8 @@ def _rec_diff(base: list, probe: list) -> Any:
                                       style={"fontSize": "11px", "color": "#475569"})])
 
 
-def _chain_steps(s4: dict, ticket: dict | None = None) -> list[tuple[str, Any, str | None]]:
+def _chain_steps(s4: dict, ticket: dict | None = None,
+                 intervention: dict | None = None) -> list[tuple[str, Any, str | None]]:
     """The six steps of the causal chain (Sunny, 2026-10-30): goals ->
     motive -> condition -> recommendations -> pathology -> groundedness,
     as (title, detail, dot colour). Without a ticket it is the run's own
@@ -3294,9 +3295,8 @@ def _chain_steps(s4: dict, ticket: dict | None = None) -> list[tuple[str, Any, s
          (f"{tk.get('pathology_kind') or tk.get('kind', '')} · "
           f"{tk.get('subtype', '')} — {tk.get('summary', '')}"
           if tk else _run_pathology_line(s4)), "#D85A30"),
-        ("causal groundedness",
-         "placeholder: suppress the hazard, see whether the plan moves "
-         "(intervention not yet ported)", None),
+        ("causal groundedness", _grounded_line(intervention),
+         "#16a34a" if (intervention or {}).get("n") else None),
     ]
 
 
@@ -3308,11 +3308,17 @@ def _chain_dot(color: str | None, **extra: Any) -> Any:
                            **extra})
 
 
-def _chain(s4: dict, ticket: dict | None = None) -> Any:
+def _grounded_line(intervention: dict | None) -> str:
+    """The chain's last step: what the tries on this run add up to."""
+    from agentic.ui_intervene import summary_line
+    return summary_line(intervention)
+
+
+def _chain(s4: dict, ticket: dict | None = None, intervention: dict | None = None) -> Any:
     """The causal chain drawn as one vertical line of dots (Sunny,
     2026-11-09: a horizontal row was tried and dropped — vertical reads
     better). Same six steps in both views."""
-    steps = _chain_steps(s4, ticket)
+    steps = _chain_steps(s4, ticket, intervention)
     rows = []
     for i, (title, detail, color) in enumerate(steps):
         rows.append(html.Div([
@@ -4584,7 +4590,8 @@ def stage4_component(d: dict[str, Any], image_src: str | None = None,
     return _assemble_stage4_sections(out, s4, d, mode=mode)
 
 
-def findings_component(d: dict[str, Any], mode: str = "clean") -> list[Any]:
+def findings_component(d: dict[str, Any], mode: str = "clean",
+                       record_name: str | None = None) -> list[Any]:
     """The FINDINGS card body (clean view only). In the detailed view the
     card is hidden by CSS and this returns nothing, so the detailed page
     is unchanged byte for byte."""
@@ -4592,8 +4599,21 @@ def findings_component(d: dict[str, Any], mode: str = "clean") -> list[Any]:
         return []
     from agentic import ui_clean
     s4 = d.get("stage4") or {}
+    if s4:
+        # two things the event stream does not hold: what today's rules add
+        # to a saved run's trust, and what the tries on this run add up to
+        from agentic.errors4 import new_under_todays_rule
+        d["rule_update"] = new_under_todays_rule(
+            d.get("result"), ((d.get("assess") or {}).get("verdict") or {}).get("at_risk"),
+            s4.get("recommendations"), s4.get("graph_b"),
+            (s4.get("trust") or {}).get("singular_errors")
+            if isinstance(s4.get("trust"), dict) else None)
+        base = UI_RUNS_DIR / record_name if record_name else None
+        if base is not None and base.is_dir():
+            from agentic import ui_intervene
+            d["intervention"] = ui_intervene.scene_summary(base, UI_RUNS_DIR)
     out = ui_clean.findings(
-        s4, d, chain=_chain,
+        s4, d, chain=lambda s, tk=None: _chain(s, tk, d.get("intervention")),
         pathology_ticket=lambda tk: _pathology_ticket_card(s4, tk))
     if not s4:
         # while Stage 4 runs, the early tickets show here too
@@ -7025,9 +7045,17 @@ def render(_n, scrub_value, unc_view, mode, run_id, selected, scrub_max,
     # Render cache: when nothing changed since the last tick, leave the DOM
     # alone. This is what preserves the user's collapse/expand toggles
     # (re-rendering identical children would reset every <details>).
+    # the tries on this run change without any new event, and the headline
+    # and the chain read them: count them into the key
+    _iv_dir = _iv_base_dir(run_id)
+    _iv_n = 0
+    if _iv_dir is not None:
+        from agentic.ui_intervene import load_tries as _load_tries
+        _iv_n = len(_load_tries(_iv_dir))
     key = [run_id, total, k, selected, agent_sig, unc_view, assess_status,
            (run.get("judge") or {}).get("winner",
                                         (run.get("judge") or {}).get("status")),
+           _iv_n,
            mode]  # mode stays LAST: prev_key[6] is assess_status
     if key == prev_key and ctx.triggered_id != "scrub":
         return (dash.no_update,) * 16
@@ -7111,7 +7139,7 @@ def render(_n, scrub_value, unc_view, mode, run_id, selected, scrub_max,
             total, total if following else k,
             agent_transcript_component(log),
             assess_view, stage4_component(d, run.get("image_src"), mode=mode),
-            findings_component(d, mode=mode),
+            findings_component(d, mode=mode, record_name=run.get("record_name")),
             phase0_open, p0_badge, p1_badge, stage4_status_span(d), key)
 
 

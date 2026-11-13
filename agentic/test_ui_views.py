@@ -362,7 +362,8 @@ def test_findings_card_holds_trust_chain_pathology_and_the_groundedness_box():
     assert "THE RUN'S CHAIN" in text and "PATHOLOGIES" in text
     assert "no longer acts on tanker_1" in text and "causal chain" in text
     assert "1 detector looked" in text
-    assert "CAUSAL GROUNDEDNESS" in text and "not yet ported" in text
+    assert "CAUSAL GROUNDEDNESS" in text and "not yet ported" not in text
+    assert "not tested yet: remove a hazard" in text     # the chain's last step
 
 
 def test_findings_card_is_empty_in_detailed_view_and_waits_before_stage_4():
