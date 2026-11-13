@@ -890,8 +890,9 @@ def saved_records() -> list[dict[str, str]]:
         for p in runs:
             img, when = "", ""
             try:
-                first = p.open().readline()
-                head = json.loads(first) if first else {}
+                # run_settings is now the first event, so look past it
+                from agentic.ui_scenes import run_head
+                head = run_head(p)
                 img = str(head.get("image_name") or "").rsplit(".", 1)[0]
                 when = _dt.datetime.fromtimestamp(
                     float(head.get("t") or p.stat().st_mtime)).strftime("%b %d %H:%M")
@@ -6260,6 +6261,21 @@ app.layout = html.Div([
             ], className="set-row"),
         ], className="run-settings", open=False, id="run-settings"),
     ], className="controls"),
+    # The page across scenes (Sunny, 2026-11-13): the latest finished run
+    # of every scene in one table, closed by default. Built from the saved
+    # records (agentic/ui_scenes.py); nothing is re-run.
+    html.Details([
+        html.Summary([html.Span("all scenes", className="set-head"),
+                      html.Span("  the latest finished run of each scene, side by side",
+                                style={"fontSize": "10.5px", "color": "#94a3b8"})],
+                     style={"cursor": "pointer"}),
+        html.Button("refresh", id="scenes-refresh", n_clicks=0,
+                    style={"fontSize": "10px", "margin": "6px 0", "cursor": "pointer"}),
+        html.Div(id="scenes-body"),
+    ], id="scenes-fold", className="scenes-fold",
+        style={"margin": "6px 0 10px", "padding": "6px 10px",
+               "background": "#f8fafc", "border": "1px solid #e2e8f0",
+               "borderRadius": "8px"}),
     html.Div(id="instruments"),
     html.Div([
         html.Div([html.Div(id="scene", className="scene"),
@@ -6402,6 +6418,32 @@ def cache_upload(contents, filename):
         html.Span(filename or "image", className="upload-name"),
     ], className="upload-inner")
     return {"contents": contents, "filename": filename}, picked, ""
+
+
+def scenes_component(runs_dir: Path | None = None) -> list[Any]:
+    """The all-scenes table and its patterns, from the saved runs."""
+    from agentic import ui_scenes
+    rows = ui_scenes.scene_rows(runs_dir or UI_RUNS_DIR, derive)
+    return ui_scenes.table(rows, lambda path: {"type": "scene-open", "path": path})
+
+
+@app.callback(Output("scenes-body", "children"),
+              Input("scenes-refresh", "n_clicks"),
+              prevent_initial_call=False)
+def refresh_scenes(_clicks):
+    """Rebuilt on page load and on "refresh"."""
+    return scenes_component()
+
+
+@app.callback(Output("replay", "value"),
+              Input({"type": "scene-open", "path": ALL}, "n_clicks"),
+              prevent_initial_call=True)
+def open_scene(clicks):
+    """A row's "open" button loads that run through the replay list."""
+    trig = ctx.triggered_id
+    if not isinstance(trig, dict) or not any(clicks or []):
+        return dash.no_update
+    return trig.get("path") or dash.no_update
 
 
 @app.callback(Output("replay", "options"),

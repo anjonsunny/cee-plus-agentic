@@ -336,3 +336,24 @@ a result.
 Known limit: the headline says only what the pipeline measures. On
 D_aerial and E_collapse it reads "The advice looks sound" although the
 plan moves on-duty responders away; that is the parked on-duty item.
+
+## 13. The page across scenes (Sunny, 2026-11-13: "build it")
+
+A fold "all scenes" under the control strip, closed by default, in both
+views (`agentic/ui_scenes.py`, pure; wiring in ui.py). One row per scene
+(a scene is its image name), from that scene's latest FINISHED run:
+verdict, trust, ticket count, minutes, the same headline the single-run
+page shows, the run id, and an "open" button that loads the run through
+the replay list. Under the table, "seen across scenes": the plain facts
+that repeat (a dispatch line made the model drop the same danger, a named
+danger left without action, concealment not checked, every dispatch line
+clean, no disaster seen), most scenes first. Built from the saved
+records; nothing is re-run and nothing feeds a prompt or a score.
+
+Also fixed here: the replay list read the image name from a record's
+first line; `run_settings` is now first, so every new run would have been
+labelled "run". It now looks past the settings line.
+
+Not built: the dev-only correctness mark against ground truth, and a
+comparison with the previous run of the same scene. Both fit the
+calibration step.
