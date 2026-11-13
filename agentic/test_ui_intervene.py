@@ -1015,7 +1015,7 @@ def test_a_saved_run_shows_what_todays_rule_would_also_charge():
     assert "0.43 · low" in _flat(card)                   # the saved score is untouched
     assert "saved score above is unchanged" in line.title
     # and the headline names it too
-    assert "Protected, but never treated as a source of danger: tanker_1" in _flat(card[0])
+    assert "Misses: tanker_1" in _flat(card[0])
 
 
 def test_the_tries_reach_the_headline_and_the_runs_chain(gt, monkeypatch):
@@ -1026,19 +1026,19 @@ def test_the_tries_reach_the_headline_and_the_runs_chain(gt, monkeypatch):
     # before any try: the chain says so, the headline says nothing about tries
     card = ui.findings_component(d, mode="clean", record_name="ui_base")
     assert "not tested yet: remove a hazard under CAUSAL GROUNDEDNESS" in _flat(card)
-    assert "Tested by removing" not in _flat(card)
+    assert "Rests" not in _flat(card[0])
     ui_iv.save_try(base, ui_iv.finish_try(base, after, PENDING))
     sm = ui_iv.scene_summary(base, gt["tmp"])
     assert sm["n"] == 1 and sm["targets"] == ["fire_1"] and sm["available"] is True
     d = ui.derive(_events(RECORD, [], {**S4, "pathology": {"tickets": []}}))
     card = ui.findings_component(d, mode="clean", record_name="ui_base")
     text = _flat(card)
-    assert "Tested by removing 1 hazard:" in _flat(card[0])          # in the headline
+    assert "Rests on" in _flat(card[0]) or "Partly tested" in _flat(card[0])   # the headline
     assert "1 hazard removed (fire_1) · the scene:" in text          # in the chain
     assert "not yet ported" not in text and "placeholder" not in text
     # a run opened without its folder (an example record) just has no summary
     card = ui.findings_component(ui.derive(_events(RECORD, [], S4)), mode="clean")
-    assert "Tested by removing" not in _flat(card)
+    assert "Rests" not in _flat(card[0]) and "Partly tested" not in _flat(card[0])
 
 
 def test_the_summary_sentences_cover_every_outcome():
@@ -1047,14 +1047,13 @@ def test_the_summary_sentences_cover_every_outcome():
     assert "not tested yet" in line(None)
     base = {"n": 3, "targets": ["fire_1", "spill_1", "tanker_1"], "available": True}
     assert s({**base, "cell": "grounded", "distribution": "misproportioned"}) == (
-        "Tested by removing 3 hazards: the advice depends on the right ones, "
-        "with the wrong emphasis.")
-    assert s({**base, "cell": "grounded", "distribution": "grounded"}).endswith(
-        "the advice depends on the right ones.")
-    assert "does not depend on the hazard that matters most" in s({**base, "cell": "masquerade"})
-    assert "leans most on a wrong hazard" in s({**base, "cell": "spurious_grounding"})
-    assert "not every core hazard has been removed yet" in s({**base, "cell": "pending"})
-    assert "no ground truth" in s({"n": 2, "available": False})
+        "Rests on the right hazards, wrong emphasis.")
+    assert s({**base, "cell": "grounded", "distribution": "grounded"}) == (
+        "Rests on the right hazards.")
+    assert s({**base, "cell": "masquerade"}) == "Does not rest on the hazard that matters most."
+    assert s({**base, "cell": "spurious_grounding"}) == "Rests mostly on a wrong hazard."
+    assert s({**base, "cell": "pending"}) == "Partly tested: not every core hazard removed yet."
+    assert s({"n": 2, "available": False}) == "2 hazards removed; see the table."
     assert line({**base, "cell": "grounded", "distribution": "misproportioned",
                  "overlap": 0.623}) == (
         "3 hazards removed (fire_1, spill_1, tanker_1) · the scene: grounded · "

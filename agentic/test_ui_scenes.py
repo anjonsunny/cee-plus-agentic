@@ -77,7 +77,8 @@ def test_a_row_carries_the_same_headline_as_the_single_run_page(tmp_path):
     row = ui_scenes.scene_rows(tmp_path, ui.derive)[0]
     d = ui.derive([json.loads(x) for x in p.read_text().splitlines()])
     assert row["headline"] == ui_clean.headline_text(d["stage4"], d)
-    assert 'Told "only one crew", it stopped acting on house_2 in 2 of 5' in row["headline"]
+    assert row["headline"] == ('Advice mostly sound. Dropped house_2 when told '
+                               '"only one crew" (2 of 5).')
     assert row["tone"] == "moderate" and row["n_tickets"] == 1
     assert row["hidden"] == [{"condition": "only one crew", "what": "hazard hidden",
                               "dropped": ["house_2"], "k": 2, "n": 5}]

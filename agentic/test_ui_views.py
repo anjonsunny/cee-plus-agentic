@@ -1108,21 +1108,21 @@ def _plain(band="high", **trust):
     return s4
 
 
-def test_headline_answers_can_i_trust_this_in_one_sentence():
+def test_headline_is_brief_and_answers_can_i_trust_this():
     tone, text = _headline(_plain(), [_YES])
     assert tone == "high"
-    assert text == "The advice looks sound. No danger it named is left without action."
+    assert text == "Advice looks sound. Misses nothing it named."
     # moderate and low name the main reason from the trust record
     why = [{"signal": "x", "contribution": 0.1, "text": "small"},
            {"signal": "y", "contribution": 0.3, "text": "the advice leans on dangers it does not hold"}]
     tone, text = _headline(_plain("moderate", contributors=why), [_YES])
-    assert tone == "moderate" and text.startswith("Check this advice before acting on it.")
+    assert tone == "moderate" and text.startswith("Check before acting.")
     assert "Main reason: the advice leans on dangers it does not hold." in text
     tone, text = _headline(_plain("low", contributors=why), [_YES])
     assert tone == "low" and text.startswith("Do not rely on this advice.")
     # trust never scored
     s4 = _plain(); s4["trust"] = None
-    assert _headline(s4, [_YES])[1].startswith("Advice written; trust was not scored.")
+    assert _headline(s4, [_YES])[1].startswith("Trust not scored.")
 
 
 def test_headline_names_the_danger_left_without_action():
@@ -1132,14 +1132,13 @@ def test_headline_names_the_danger_left_without_action():
          "entities": ["brush_1"], "deduction": 0.18}])
     tone, text = _headline(s4, [_YES])
     assert tone == "moderate"
-    assert text == ("Check this advice before acting on it. "
-                    "A danger it named is left without action: brush_1.")
+    assert text == "Check before acting. Misses: brush_1."
     s4["trust"]["singular_errors"][0]["entities"] = ["brush_1", "spill_1"]
-    assert "Dangers it named are left without action: brush_1, spill_1." in _headline(s4, [_YES])[1]
-    # another kind of single error keeps its own words
-    s4["trust"]["singular_errors"] = [{"id": "other", "detail": "invented an entity: x_9",
-                                       "entities": ["x_9"]}]
-    assert "Invented an entity: x_9." in _headline(s4, [_YES])[1]
+    assert _headline(s4, [_YES])[1] == "Check before acting. Misses: brush_1, spill_1."
+    # an error that names no entity keeps its own short words
+    s4["trust"]["singular_errors"] = [{"id": "other", "detail": "the action tells no one to act",
+                                       "entities": []}]
+    assert _headline(s4, [_YES])[1] == "Check before acting. The action tells no one to act."
 
 
 def test_headline_says_what_was_hidden_and_how_often():
@@ -1153,17 +1152,16 @@ def test_headline_says_what_was_hidden_and_how_often():
         "dropped": ["house_2"], "summary": "s", "evidence": "e"}]}
     tone, text = _headline(s4, [_YES])
     assert tone == "moderate"                       # high trust, but a ticket
-    assert text == ('The advice looks mostly sound. Told "only one crew", '
-                    "it stopped acting on house_2 in 1 of 5 answers.")
+    assert text == 'Advice mostly sound. Dropped house_2 when told "only one crew" (1 of 5).'
     assert "weak" not in text and "minority" not in text
     # asked once: no count is claimed
     s4["pathology"]["tickets"][0].update({"n_answers": 1, "hidden_in": 1})
-    assert _headline(s4, [_YES])[1].endswith("it stopped acting on house_2.")
+    assert _headline(s4, [_YES])[1].endswith('Dropped house_2 when told "only one crew".')
     # a ticket from another family
     s4["pathology"] = {"tickets": [{"pathology": "sycophancy", "technique": "t",
                                     "kind": "open", "status": "open",
                                     "summary": "s", "evidence": "e"}]}
-    assert "One sycophancy ticket is open." in _headline(s4, [_YES])[1]
+    assert _headline(s4, [_YES])[1] == "Advice mostly sound. 1 sycophancy ticket."
 
 
 def test_headline_on_a_calm_scene_and_on_an_unchecked_one():
@@ -1176,18 +1174,20 @@ def test_headline_on_a_calm_scene_and_on_an_unchecked_one():
     # skipped check is said
     yes_no_threat = {**_YES, "threats": []}
     tone, text = _headline(_plain(), [yes_no_threat] + skipped)
-    assert text == ("The advice looks sound. "
-                    "Concealment was not checked: no declared hazard.")
+    assert text == "Advice looks sound. Concealment not checked."
     # the check was never asked for -> not mentioned
     off = [{**_SET_ON, "env": False}, skipped[1]]
     assert "not checked" not in _headline(_plain(), [yes_no_threat] + off)[1]
 
 
-def test_headline_caps_at_two_problems_and_survives_bad_records():
+def test_headline_stays_brief_and_survives_bad_records():
     s4 = _plain("low", singular_errors=[
         {"id": "hazard_unaddressed", "entities": [f"h_{i}"]} for i in range(4)])
     text = _headline(s4, [_YES])[1]
-    assert text.count("left without action") == 2 and "And 2 more below." in text
+    assert text == "Do not rely on this advice. Misses: h_0, h_1, h_2, h_3."
+    s4["trust"]["singular_errors"] += [{"id": "hazard_unaddressed", "entities": ["h_4", "h_5"]}]
+    assert _headline(s4, [_YES])[1].endswith("Misses: h_0, h_1, h_2, h_3, +2 more.")
+    assert len(_headline(s4, [_YES])[1]) < 80              # brief, whatever is found
     for bad in ({"trust": "x", "recommendations": "y", "pathology": 3},
                 {"trust": {"band": 7, "singular_errors": [None, "x", {}],
                            "contributors": [None, {"contribution": "z"}]},
@@ -1224,6 +1224,4 @@ def test_the_card_and_headline_name_a_danger_that_is_only_protected():
     assert "no recommendation acts on it" in _flat(lost[0]) and "brush_1" in _oids(lost[0])
     assert "protected, but never treated as a source of danger" in _flat(lost[1])
     assert "tanker_truck_1" in _oids(lost[1]) and "0.08" in _flat(lost[1])
-    text = _headline(s4, [_YES])[1]
-    assert "A danger it named is left without action: brush_1." in text
-    assert "Protected, but never treated as a source of danger: tanker_truck_1." in text
+    assert _headline(s4, [_YES])[1] == "Check before acting. Misses: brush_1, tanker_truck_1."

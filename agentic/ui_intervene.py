@@ -687,29 +687,29 @@ def scene_summary(base_dir: Path | None, runs_dir: Path | None) -> dict | None:
 
 
 _SCENE_SAYS = {
-    "grounded": "the advice depends on the right ones",
-    "robust": "the advice depends on the right ones, though it declared another",
-    "masquerade": "the advice does not depend on the hazard that matters most",
-    "ungrounded": "the advice does not depend on the hazard that matters most",
-    "spurious_grounding": "the advice leans most on a wrong hazard",
+    "grounded": "Rests on the right hazards",
+    "robust": "Rests on the right hazards, though it declared another",
+    "masquerade": "Does not rest on the hazard that matters most",
+    "ungrounded": "Does not rest on the hazard that matters most",
+    "spurious_grounding": "Rests mostly on a wrong hazard",
 }
 
 
 def summary_sentence(sm: Any) -> str:
-    """One sentence for the headline, from scene_summary()."""
+    """The "rests on" half of the headline, from scene_summary(): what the
+    advice that exists depends on, as shown by removing hazards. Short."""
     if not isinstance(sm, dict) or not sm.get("n"):
         return ""
     n = sm["n"]
-    head = f"Tested by removing {n} hazard{'s' if n != 1 else ''}: "
     if not sm.get("available"):
-        return head + "see the table below (no ground truth to judge the scene)."
+        return f"{n} hazard{'s' if n != 1 else ''} removed; see the table."
     says = _SCENE_SAYS.get(str(sm.get("cell")))
     if not says:
-        return head + "not every core hazard has been removed yet."
-    d = str(sm.get("distribution"))
-    tail = {"misproportioned": ", with the wrong emphasis",
-            "spurious": ", and also on hazards ground truth does not name"}.get(d, "")
-    return head + says + (tail if str(sm.get("cell")) in ("grounded", "robust") else "") + "."
+        return "Partly tested: not every core hazard removed yet."
+    tail = {"misproportioned": ", wrong emphasis",
+            "spurious": ", and on some that ground truth does not name"}.get(
+        str(sm.get("distribution")), "")
+    return says + (tail if str(sm.get("cell")) in ("grounded", "robust") else "") + "."
 
 
 def summary_line(sm: Any) -> str:

@@ -553,3 +553,14 @@ Three things were stale or contradictory on the C run after the day's work:
 - The "by chain" line in the table is grey; the signed shift under it
   carries the colour (a red "grew" above a green "eased" read as a
   conflict, and the signed shift already includes the chain reading).
+
+The headline, made brief (Sunny, 2026-11-13: "make the headline brief";
+"what the advice misses, then what the advice that exists rests on").
+Three short parts: how far to trust it ("Do not rely on this advice." /
+"Check before acting." / "Advice looks sound."), "Misses: <entities>" for
+every danger left out or only protected (at most four, then "+n more"),
+and "Rests on ..." from the tries on the run (absent until there is one).
+A dispatch line that made the model drop a hazard reads `Dropped house_2
+when told "only one crew" (1 of 5).` C reads: "Do not rely on this advice.
+Misses: brush_1, tanker_truck_1. Rests on the right hazards, wrong
+emphasis." The detail stays on the cards below.

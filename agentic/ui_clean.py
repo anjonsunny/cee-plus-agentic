@@ -469,15 +469,21 @@ def findings(s4: dict, d: dict, *, chain: Callable[[dict], Any],
 
 
 def headline_parts(s4: dict, d: dict) -> tuple[str, list]:
-    """(tone, parts) for the one-sentence headline. `parts` is a list of
-    strings and ("ent", id) pairs, so the text can be tested as plain
-    words and the ids rendered as hoverable chips. Pure: the record only.
+    """(tone, parts) for the headline. `parts` is a list of strings and
+    ("ent", id) pairs, so the text can be tested as plain words and the ids
+    rendered as hoverable chips. Pure: the record only.
 
-    Order: what the scene is and how far to trust the advice; then the
-    most serious thing found (a danger left without action, then each
-    pathology ticket with how often); then what was NOT checked. A viewer's
-    first question is "can I trust this advice?" — before this they read
-    four cards to answer it (Sunny, 2026-11-13)."""
+    Brief, and split in two (Sunny, 2026-11-13: "make the headline brief";
+    "what the advice misses, then what the advice that exists rests on"):
+
+        <how far to trust it>  Misses: <what it left out>.  Rests on <what
+        removing hazards showed>.
+
+    "Misses" lists the entities of every danger the advice left out or only
+    protected, then what a dispatch line made it drop. "Rests on" comes
+    from the tries on this run and is absent until there is one. A viewer's
+    first question is "can I trust this advice?"; the cards below hold the
+    detail."""
     s4, d = s4 or {}, d or {}
     trust = s4.get("trust") if isinstance(s4.get("trust"), dict) else {}
     band = str(trust.get("band") or "")
@@ -485,77 +491,90 @@ def headline_parts(s4: dict, d: dict) -> tuple[str, list]:
     calm = bool(verdict) and verdict.get("scenario") != "Yes"
     acting = [r for r in (s4.get("recommendations") or [])
               if isinstance(r, dict) and not r.get("benign")]
+    quiet = calm and not acting
 
-    problems: list[list] = []
+    # ── what the advice misses
+    missed: list[str] = []          # entities left out or only protected
+    other: list[str] = []           # an error that names no entity
     for e in list(trust.get("singular_errors") or []) + list(d.get("rule_update") or []):
-        if not isinstance(e, dict):
+        if not isinstance(e, dict) or e.get("waived"):
             continue
-        ents = [str(x) for x in (e.get("entities") or [])]
-        if e.get("id") == "hazard_unaddressed" and ents:
-            text = ("A danger it named is left without action: " if len(ents) == 1
-                    else "Dangers it named are left without action: ")
+        ents = [str(x) for x in (e.get("entities") or []) if str(x)]
+        if ents:
+            missed += [x for x in ents if x not in missed]
         else:
             text = str(e.get("detail") or e.get("id") or "").split(":")[0].strip()
-            if not text:
-                continue
-            text = text[:1].upper() + text[1:] + (": " if ents else "")
-        problems.append([text] + _ent_list(ents) + ["."])
+            if text:
+                other.append(text[:1].upper() + text[1:].replace("_", " ") + ".")
     try:
         path = [t for t in (_register_of(s4).get("pathology") or [])
                 if isinstance(t, dict)]
     except Exception:           # a record too broken to build a register from:
         path = []               # the headline still speaks, from trust alone
+    dropped: list[list] = []
+    loose: dict[str, int] = {}
     for tk in path:
         hid = [str(x) for x in (tk.get("dropped") or [])]
         n, k = tk.get("n_answers"), tk.get("hidden_in")
-        often = (f" in {k} of {n} answers" if isinstance(n, int) and n > 1
+        often = (f" ({k} of {n})" if isinstance(n, int) and n > 1
                  and isinstance(k, int) else "")
         seg = [x.strip() for x in str(tk.get("subtype") or "").split("·")]
         cond = seg[1] if len(seg) >= 3 and seg[0] == "environment" else ""
         if hid and cond:
-            problems.append([f"Told \"{cond}\", it stopped acting on "]
-                            + _ent_list(hid) + [often + "."])
+            dropped.append(["Dropped "] + _ent_list(hid)
+                           + [f" when told \"{cond}\"{often}."])
         else:
             kind = str(tk.get("kind") or "pathology").replace("_", " ")
-            problems.append([f"One {kind} ticket is open" + often + "."])
+            loose[kind] = loose.get(kind, 0) + 1
+    found = bool(missed or other or dropped or loose)
 
-    if calm and not acting:
+    # ── how far to trust it
+    if quiet:
         tone, opener = "high", "No disaster seen. Nothing needs doing."
     elif band == "high":
-        tone = "moderate" if problems else "high"
-        opener = ("The advice looks mostly sound." if problems
-                  else "The advice looks sound.")
+        tone, opener = ("moderate", "Advice mostly sound.") if found \
+            else ("high", "Advice looks sound.")
     elif band == "moderate":
-        tone, opener = "moderate", "Check this advice before acting on it."
+        tone, opener = "moderate", "Check before acting."
     elif band == "low":
         tone, opener = "low", "Do not rely on this advice."
     else:
-        tone, opener = "moderate", "Advice written; trust was not scored."
+        tone, opener = "moderate", "Trust not scored."
     parts: list = [opener]
-    for pr in problems[:2]:
-        parts += [" "] + pr
-    if len(problems) > 2:
-        parts.append(f" And {len(problems) - 2} more below.")
-    if not problems and not (calm and not acting):
+    if missed:
+        shown, more = missed[:4], len(missed) - 4
+        parts += [" Misses: "] + _ent_list(shown) \
+            + [(f", +{more} more" if more > 0 else "") + "."]
+    for text in other[:1]:
+        parts.append(" " + text)
+    for dr in dropped[:1]:
+        parts += [" "] + dr
+    extra = len(dropped) - 1 + sum(loose.values())
+    if dropped[1:] or loose:
+        if not dropped and len(loose) == 1:
+            kind, n = next(iter(loose.items()))
+            parts.append(f" {n} {kind} ticket{'s' if n != 1 else ''}.")
+        else:
+            parts.append(f" +{extra} more ticket{'s' if extra != 1 else ''}.")
+    if not found and not quiet:
         hits = sorted((c for c in (trust.get("contributors") or [])
                        if isinstance(c, dict)
                        and isinstance(c.get("contribution"), (int, float))
                        and c["contribution"] > 0),
                       key=lambda c: -float(c["contribution"]))
         if band in ("moderate", "low") and hits and hits[0].get("text"):
-            t = str(hits[0]["text"])
-            parts.append(" Main reason: " + t + ".")
+            parts.append(" Main reason: " + str(hits[0]["text"]) + ".")
         elif band == "high" and (verdict.get("threats") or []):
             # said only when it named a danger; with none named the
             # sentence would be true and empty (B_pool)
-            parts.append(" No danger it named is left without action.")
+            parts.append(" Misses nothing it named.")
     asked = bool((d.get("reasks") or {}).get("env")
                  or (d.get("run_settings") or {}).get("env"))
-    if d.get("stage4_env_skipped") and asked and not (calm and not acting):
-        parts.append(f" Concealment was not checked: {d['stage4_env_skipped']}.")
+    if d.get("stage4_env_skipped") and asked and not quiet:
+        parts.append(" Concealment not checked.")
+
+    # ── what the advice that exists rests on
     if d.get("intervention"):
-        # what removing hazards showed, so the headline and the table below
-        # do not give two messages
         from agentic.ui_intervene import summary_sentence
         said = summary_sentence(d["intervention"])
         if said:
