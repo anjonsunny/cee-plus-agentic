@@ -339,6 +339,185 @@ def test_the_panel_sits_in_the_findings_card_under_causal_groundedness():
         assert _find(panel, cid) is not None, cid
     modality, _ = _find(panel, "iv-modality")
     assert modality.value == "both"
-    assert [o["value"] for o in modality.options] == ["caption", "image", "both"]
+    assert sorted(o["value"] for o in modality.options) == ["both", "caption", "image"]
     controls, _ = _find(panel, "iv-controls")
     assert controls.style == {"display": "none"}            # until a run is open
+    # the cleaner form (Sunny, 2026-11-13: "messy and crowded"): results sit
+    # above a folded form, the hazard pick is one dropdown, the instructions
+    # are folded, and the upload is a visible box
+    from dash import dcc, html
+    assert isinstance(controls, html.Details) and not controls.open
+    kids = [getattr(k, "id", None) for k in panel.children]
+    assert kids.index("iv-status") < kids.index("iv-controls")
+    target, _ = _find(panel, "iv-target")
+    assert isinstance(target, dcc.Dropdown)
+    _instr, anc = _find(panel, "iv-instructions")
+    assert isinstance(anc[-1], html.Details) and not getattr(anc[-1], "open", False)
+    upload, _ = _find(panel, "iv-upload")
+    assert upload.className == "iv-upload" and "upload edited image" in _flat(upload)
+
+
+def test_only_the_boxes_the_channel_needs_are_shown():
+    cap, img = ui.iv_show_channel("both")
+    assert cap["display"] == "block" and img["display"] == "block"
+    cap, img = ui.iv_show_channel("caption")
+    assert cap["display"] == "block" and img["display"] == "none"
+    cap, img = ui.iv_show_channel("image")
+    assert cap["display"] == "none" and img["display"] == "block"
+
+
+def test_the_form_folds_away_when_a_try_starts_and_stays_open_on_a_refusal(page):
+    import dash
+    why, open_ = ui.iv_run(1, "base", "fire_1", "image", "x", None, None)
+    assert "upload the edited image" in why and open_ is dash.no_update
+    why, open_ = ui.iv_run(1, "base", "fire_1", "both", "a tanker leaks on a road",
+                           _url(EDITED), "e.png")
+    assert why == "" and open_ is False
+    assert ui.iv_run(0, "base", "fire_1", "both", "x", None, None) == (dash.no_update,) * 2
+
+
+def test_the_instructions_carry_a_copy_button_each(page):
+    from dash import dcc
+    from agentic.test_ui_views import _walk
+    kids, _caption = ui.iv_instructions("fire_1", "base")
+    clips = [n for n in _walk(kids) if isinstance(n, dcc.Clipboard)]
+    assert sorted(c.target_id for c in clips) == ["iv-instr-caption", "iv-instr-image"]
+
+
+# ── step 3: the grounding table ──────────────────────────────────────────
+
+def _rec(rank, threat, affected, action="Do it.", effect="may_harm", **extra):
+    return {"rank": rank, "action": action,
+            "structured_reasoning": {"threat": threat, "state": "s", "effect": effect,
+                                     "affected_objects": list(affected)}, **extra}
+
+
+def _res(objs, recs, threats=()):
+    return {"detected_objects": [{"object_id": o, "label": o.rsplit("_", 1)[0], "state": "s"}
+                                 for o in objs],
+            "recommendations": recs, "threats": [{"object_id": t} for t in threats]}
+
+
+BEFORE = _res(["fire_1", "smoke_1", "spill_1", "man_1", "truck_1"],
+              [_rec(1, "fire_1", ["man_1"], "Evacuate man_1."),
+               _rec(2, "spill_1", ["man_1"], "Contain spill_1."),
+               _rec(3, "fire_1", ["truck_1"], "Extinguish fire_1.", effect="may_spread_to"),
+               _rec(4, "smoke_1", ["man_1"], "Fit a respirator."),
+               _rec(5, "tree_1", [], benign=True),
+               _rec(6, "fire_1", ["spill_1"], "Keep fire from spill.", effect="may_spread_to")],
+              threats=["fire_1", "smoke_1", "spill_1"])
+
+
+def test_the_four_cells_and_the_verdicts_of_one_try():
+    """Remove fire_1; the edit also took the smoke (no fire, no smoke)."""
+    from agentic import grounding4 as g
+    after = _res(["spill_1", "man_1", "truck_1", "grass_1"],
+                 [_rec(1, "spill_1", ["man_1"], "Evacuate man_1 away from the spill."),
+                  _rec(2, "spill_1", ["grass_1"], "Deploy booms.", effect="may_spread_to")])
+    t = g.table(BEFORE, [({"index": 1, "target": "fire_1", "after_run": "ui_a",
+                           "summary": {"content_shift": 0.7, "level_delta": -3}}, after)])
+    (col,) = t["columns"]
+    assert col["target"] == "fire_1" and col["also_removed"] == ["smoke_1"]
+    by = {r["rank"]: r for r in t["rows"]}
+    assert 5 not in by                                   # "no action" entries are left out
+    assert by[1]["cells"][0]["state"] == "gone" and by[1]["verdict"] == "grounded"
+    assert by[3]["verdict"] == "grounded" and by[6]["verdict"] == "grounded"
+    assert by[4]["verdict"] == "grounded"                # smoke went with the fire
+    assert by[2]["cells"][0]["state"] == "stays" and by[2]["verdict"] == "not tested yet"
+    assert by[2]["cells"][0]["action_changed"] is True   # contain -> evacuate
+    assert col["moved"] == 4 and col["of"] == 5 and col["level_delta"] == -3
+    assert [n["action"] for n in col["new"]] == ["Deploy booms."]
+
+
+def test_decoration_hidden_dependence_changed_and_target_removed():
+    from agentic import grounding4 as g
+    # remove spill_1 only: the fire, the smoke and the man are still there
+    after = _res(["fire_1", "smoke_1", "man_1", "truck_1"],
+                 [_rec(1, "fire_1", ["man_1"]),
+                  _rec(2, "spill_1", ["man_1"], "Contain the spill."),   # names a removed hazard
+                  _rec(3, "fire_1", ["truck_1", "man_1"], effect="may_spread_to")])
+    t = g.table(BEFORE, [({"index": 1, "target": "spill_1"}, after)])
+    by = {r["rank"]: r for r in t["rows"]}
+    assert by[2]["cells"][0]["state"] == "stays" and by[2]["verdict"] == "decoration"
+    assert by[1]["cells"][0]["state"] == "stays" and by[1]["verdict"] == "not tested yet"
+    assert by[3]["cells"][0]["state"] == "changed"       # now protects more
+    assert by[4]["cells"][0]["state"] == "gone" and by[4]["verdict"] == "hidden dependence"
+    assert by[6]["cells"][0]["state"] == "target removed"     # it protected the spill
+    assert by[6]["verdict"] == "not tested yet"
+    assert t["columns"][0]["moved"] == 2 and t["columns"][0]["of"] == 4   # bookkeeping not counted
+
+
+def test_two_tries_make_two_columns_and_a_renamed_entity_still_matches():
+    from agentic import grounding4 as g
+    a1 = _res(["spill_1", "man_1", "truck_1"], [_rec(1, "spill_1", ["man_1"])])
+    # the after run re-detected the fire under a new id
+    a2 = _res(["fire_2", "smoke_1", "man_1", "truck_1"],
+              [_rec(1, "fire_2", ["man_1"]), _rec(2, "smoke_1", ["man_1"]),
+               _rec(3, "fire_2", ["truck_1"], effect="may_spread_to")])
+    t = g.table(BEFORE, [({"index": 1, "target": "fire_1"}, a1),
+                         ({"index": 2, "target": "spill_1"}, a2)])
+    assert [c["target"] for c in t["columns"]] == ["fire_1", "spill_1"]
+    by = {r["rank"]: r for r in t["rows"]}
+    assert [c["state"] for c in by[1]["cells"]] == ["gone", "stays"]
+    assert by[1]["verdict"] == "grounded"
+    assert [c["state"] for c in by[2]["cells"]] == ["stays", "gone"]
+    assert by[2]["verdict"] == "grounded"
+    assert g.renames(BEFORE, a2) == {"fire_2": "fire_1"}
+    assert t["columns"][1]["also_removed"] == []         # fire_2 is fire_1
+
+
+@pytest.mark.parametrize("bad", [None, "x", [], {"recommendations": [None, "x", {"rank": 1}]},
+                                 {"detected_objects": "y", "threats": [None]}])
+def test_the_table_never_raises_on_bad_runs(bad):
+    from agentic import grounding4 as g
+    assert g.table(bad, [])["rows"] == [] or bad is None
+    t = g.table(BEFORE, [(None, bad), ({"target": None}, bad), ("x", bad)])
+    assert len(t["columns"]) == 3 and len(t["rows"]) == 5
+    assert g.table(bad, [({"target": "fire_1"}, bad)])["rows"] == []
+
+
+def test_the_result_shows_the_table_above_the_tries_with_hoverable_ids(tmp_path):
+    from agentic.test_ui_views import _oids
+    base, after = _run_dir(tmp_path), _after_dir(tmp_path)
+    assert "no try yet" in _flat(ui_iv.result_component(base, tmp_path))
+    ui_iv.save_try(base, ui_iv.finish_try(base, after, PENDING))
+    ui_iv.save_try(base, ui_iv.finish_try(base, None, PENDING, error="boom"))
+    comp = ui_iv.result_component(base, tmp_path, {"target": "tanker_1", "progress": "x"})
+    text = _flat(comp)
+    for word in ("RECOMMENDATION", "NAMES", "#1 removed", "READING (ONE ASK)", "grounded",
+                 "advice moved", "1 of 2", "level -3", "the tries, one line each",
+                 "not measured — boom", "running the edited scene: removed tanker_1"):
+        assert word in text, word
+    assert {"fire_1", "tanker_1", "man_1"} <= set(_oids(comp))
+    assert len(_by_class(comp, "iv-row")) == 2 and len(_by_class(comp, "iv-table")) == 1
+    cell = _by_class(comp, "iv-cell")[0]
+    assert "no matching advice" in cell.title            # hover says what it was matched to
+    # a try whose after run folder is gone does not break the page
+    (after / "stage4.json").unlink()
+    assert "the tries, one line each" in _flat(ui_iv.result_component(base, tmp_path))
+
+
+def test_resume_a_finished_edited_run_that_was_never_recorded(tmp_path):
+    base, after = _run_dir(tmp_path), _after_dir(tmp_path)
+    (after / "after_of.json").write_text(json.dumps(
+        {"before_run": "ui_base", "target": "fire_1", "modality": "both",
+         "mode": "retrospective", "edit_source": "hand"}))
+    (after / "caption.txt").write_text("a tanker leaks on a road")
+    # an edited run of ANOTHER scene, and one still running: both left alone
+    other = _after_dir(tmp_path, "ui_other")
+    (other / "after_of.json").write_text(json.dumps({"before_run": "ui_else", "target": "x"}))
+    live = _after_dir(tmp_path, "ui_live")
+    (live / "after_of.json").write_text(json.dumps({"before_run": "ui_base", "target": "tanker_1"}))
+    (live / "caption.txt").write_text("c")
+    assert ui_iv.adopt_orphans(base, tmp_path, running={"ui_live"}) == 1
+    (one,) = ui_iv.load_tries(base)
+    assert one["after_run"] == "ui_after" and one["resumed"] is True
+    assert one["status"] == "measured" and one["summary"]["moved"] is True
+    assert one["caption_changed"] is True and one["image_changed"] is True
+    # asked again: nothing is recorded twice
+    assert ui_iv.adopt_orphans(base, tmp_path, running={"ui_live"}) == 0
+    assert len(ui_iv.load_tries(base)) == 1
+    # torn marker files never break the resume
+    (other / "after_of.json").write_text("{ torn")
+    assert ui_iv.adopt_orphans(base, tmp_path, running={"ui_live"}) == 0
+    assert ui_iv.adopt_orphans(tmp_path / "none", tmp_path / "none") == 0

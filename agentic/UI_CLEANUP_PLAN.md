@@ -386,3 +386,34 @@ run, the core and spurious split against ground truth). Open: the frozen
 arm has no ground-truth file for scenes A to H, so their verdict cell
 reads "not adjudicable" until those are written; the shifts are measured
 either way. An automatic edit fills the same slot later (`edit_source`).
+
+## 15. Intervention step 3 and the cleaner form (Sunny, 2026-11-13)
+
+After the first real try (C_tanker ui_22840b13, fire_1 removed, the advice
+moved, level 8 to 5) Sunny called the form "messy and crowded" and could
+not see the upload control.
+
+- The form: results on top, the form folded under "new try". One dropdown
+  for the hazard, the channel switch (both, caption, image), the edit
+  instructions folded with a copy button each, the caption box and a
+  dashed "upload edited image" box side by side, only the boxes the
+  channel needs. The form folds away when a try starts.
+- Step 3, `agentic/grounding4.py`: the grounding table. Rows are the
+  before run's acting recommendations, columns are the removed hazards.
+  A cell is stays / gone / changed / target removed; the reading per row
+  is grounded (gone when its named hazard is removed), decoration (stays
+  when its named hazard is removed), hidden dependence (gone when a
+  different hazard is removed), or not tested yet. The bottom row counts
+  how much advice moved per removed hazard. New advice of the edited run
+  is listed under the table. This is the per-recommendation grounding the
+  frozen arm does not give (it scores the recommendations as one set).
+- What an edit really removed is read from the edited run's perception:
+  the target plus every before-hazard no longer in the picture (no fire,
+  so no smoke). Renamed entities are matched by the frozen arm's rule.
+- Resume: tries are read back from interventions.json when a run is
+  reopened; an edited run that finished but was never recorded (an app
+  restart mid-try) is measured and appended on the first look.
+
+One ask each way for now, so the column head reads "reading (one ask)".
+Left: the 5-against-5 counts, ground truth files for A to H (the core and
+spurious comparison), before | after images side by side.

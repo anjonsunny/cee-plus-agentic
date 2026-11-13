@@ -5962,9 +5962,18 @@ app.index_string = """<!DOCTYPE html>
      wrap div to "wrap mode-clean" / "wrap mode-detailed". */
   .mode-clean .only-detailed { display:none; }
   /* the intervention panel (CAUSAL GROUNDEDNESS) */
-  .iv-step { font-size:10px; font-weight:800; letter-spacing:.06em;
-             text-transform:uppercase; color:#64748b; margin:10px 0 3px; }
-  .iv-panel #iv-note { font-size:10.5px; padding:6px 8px; text-align:left; }
+  .iv-new-try { font-size:11px; font-weight:800; color:#1d4ed8; cursor:pointer;
+                margin-top:8px; }
+  .iv-note { font-size:10px; color:#94a3b8; margin:4px 0; }
+  .iv-lbl { font-size:10px; font-weight:800; letter-spacing:.06em;
+            text-transform:uppercase; color:#64748b; width:58px; flex:none; }
+  .iv-row-form { display:flex; align-items:center; gap:8px; margin:5px 0; }
+  .iv-instr-head { font-size:10px; color:#64748b; cursor:pointer; }
+  .iv-upload { border:1.5px dashed #94a3b8; border-radius:8px; height:64px;
+               display:flex; align-items:center; justify-content:center;
+               text-align:center; font-size:11px; color:#475569; cursor:pointer;
+               background:#f8fafc; }
+  .iv-upload:hover { border-color:#1d4ed8; color:#1d4ed8; }
   .mode-detailed .only-clean { display:none; }
   /* clean view: only the boxes that matter, until hovered or "show every box" */
   .mode-clean .scene:not(.show-all) .scene-box.minor { opacity:0; pointer-events:none; }
@@ -6337,41 +6346,56 @@ app.layout = html.Div([
                       # of the OPEN run, give the edited scene, run only the
                       # after side (agentic/ui_intervene.py).
                       html.Div([
-                          html.Div(id="iv-note", className="ticket-empty"),
-                          html.Div([
-                              html.Div("1 · pick what to remove", className="iv-step"),
-                              dcc.RadioItems(id="iv-target", options=[], value=None,
-                                             className="iv-target",
-                                             labelStyle={"display": "block",
-                                                         "fontSize": "11.5px"}),
-                              html.Div("2 · make the edit (the hazard never happened)",
-                                       className="iv-step"),
-                              html.Div(id="iv-instructions"),
-                              html.Div("3 · what did you change?", className="iv-step"),
-                              dcc.RadioItems(
-                                  id="iv-modality", value="both", inline=True,
-                                  options=[{"label": " caption only", "value": "caption"},
-                                           {"label": " image only", "value": "image"},
-                                           {"label": " both", "value": "both"}],
-                                  className="ctl-toggle"),
-                              dcc.Textarea(id="iv-caption", value="",
-                                           placeholder="the edited caption",
-                                           style={"width": "100%", "height": "54px",
-                                                  "fontSize": "11.5px", "marginTop": "4px"}),
-                              dcc.Upload(id="iv-upload", multiple=False,
-                                         children=html.Div("drop / pick the edited image",
-                                                           id="iv-upload-name"),
-                                         className="upload",
-                                         style={"marginTop": "4px"}),
+                          # results first; the form is folded under them
+                          html.Div(id="iv-status"),
+                          html.Details([
+                              html.Summary("new try", className="iv-new-try"),
+                              html.Div(id="iv-note", className="iv-note"),
+                              html.Div([
+                                  html.Span("remove", className="iv-lbl"),
+                                  dcc.Dropdown(id="iv-target", options=[], value=None,
+                                               clearable=False, searchable=False,
+                                               className="iv-target",
+                                               style={"flex": "1", "fontSize": "11.5px",
+                                                      "color": "#111"}),
+                              ], className="iv-row-form"),
+                              html.Div([
+                                  html.Span("changed", className="iv-lbl"),
+                                  dcc.RadioItems(
+                                      id="iv-modality", value="both", inline=True,
+                                      options=[{"label": " both", "value": "both"},
+                                               {"label": " caption", "value": "caption"},
+                                               {"label": " image", "value": "image"}],
+                                      className="ctl-toggle"),
+                              ], className="iv-row-form"),
+                              html.Details([
+                                  html.Summary("edit instructions (copy these to make the edit)",
+                                               className="iv-instr-head"),
+                                  html.Div(id="iv-instructions"),
+                              ]),
+                              html.Div([
+                                  html.Div(dcc.Textarea(
+                                      id="iv-caption", value="",
+                                      placeholder="the edited caption",
+                                      style={"width": "100%", "height": "64px",
+                                             "fontSize": "11.5px"}),
+                                      id="iv-caption-wrap", style={"flex": "3"}),
+                                  html.Div(dcc.Upload(
+                                      id="iv-upload", multiple=False,
+                                      children=html.Div(
+                                          [html.Div("⬆", style={"fontSize": "16px"}),
+                                           html.Div("upload edited image")],
+                                          id="iv-upload-name"),
+                                      className="iv-upload"),
+                                      id="iv-upload-wrap", style={"flex": "2"}),
+                              ], className="iv-row-form", style={"alignItems": "stretch"}),
                               html.Button("RUN THE EDITED SCENE", id="iv-run",
                                           className="go", n_clicks=0,
                                           style={"marginTop": "6px"}),
                               html.Div(id="iv-message",
                                        style={"fontSize": "11.5px", "color": "#b91c1c",
                                               "marginTop": "4px"}),
-                          ], id="iv-controls", style={"display": "none"}),
-                          html.Div("tries on this run", className="iv-step"),
-                          html.Div(id="iv-status"),
+                          ], id="iv-controls", open=False, style={"display": "none"}),
                           dcc.Store(id="iv-key"),
                       ], id="iv-panel", className="iv-panel"),
                   ], className="phase-card only-clean", open=True,
@@ -6521,17 +6545,16 @@ def iv_setup(run_id, _n, current, value):
         note = ("open a finished run to intervene on it: its hazards will "
                 "be listed here" if not run_id or _iv_base_dir(run_id) is None
                 else "the hazards are listed once this run's recommendations are written")
-        if not current:
-            return dash.no_update, dash.no_update, {"display": "none"}, note
-        return [], None, {"display": "none"}, note
+        return ((dash.no_update, dash.no_update) if not current else ([], None)) \
+            + ({"display": "none"}, note)
     opts = ui_intervene.target_options(info)
     if not opts:
         return [], None, {"display": "none"}, ("this run names no hazard to remove")
     if opts == current:
         return dash.no_update, dash.no_update, dash.no_update, dash.no_update
     keep = value if any(o["value"] == value for o in opts) else opts[0]["value"]
-    note = (f"before side: {info['run']} · only the edited scene is run; its "
-            "settings are copied from this run, with the pathology probes off")
+    note = (f"before side: {info['run']} · only the edited scene is run, "
+            "with this run's settings and the pathology probes off")
     return opts, keep, {"display": "block"}, note
 
 
@@ -6549,9 +6572,16 @@ def iv_instructions(target, run_id):
            "borderRadius": "6px", "padding": "5px 8px", "margin": "3px 0",
            "userSelect": "all"}
     lab = {"fontSize": "10px", "fontWeight": "800", "color": "#64748b"}
-    return [html.Div("for the caption", style=lab), html.Div(cap, style=box),
-            html.Div("for the image tool", style=lab), html.Div(img, style=box)], \
-        str(info.get("caption") or "")
+    def block(title, text, cid):
+        return [html.Div([html.Span(title, style=lab),
+                          dcc.Clipboard(target_id=cid, title="copy",
+                                        style={"display": "inline-block",
+                                               "marginLeft": "6px", "fontSize": "11px",
+                                               "color": "#1d4ed8"})]),
+                html.Div(text, id=cid, style=box)]
+    return (block("for the caption", cap, "iv-instr-caption")
+            + block("for the image tool", img, "iv-instr-image"),
+            str(info.get("caption") or ""))
 
 
 @app.callback(Output("iv-upload-name", "children"),
@@ -6559,8 +6589,19 @@ def iv_instructions(target, run_id):
               prevent_initial_call=True)
 def iv_show_upload(contents, filename):
     return html.Div([html.Img(src=contents, className="upload-thumb"),
-                     html.Span(filename or "edited image", className="upload-name")],
+                     html.Div([html.Div(filename or "edited image",
+                                        className="upload-name"),
+                               html.Div("replace", style={"fontSize": "10px",
+                                                          "color": "#1d4ed8"})])],
                     className="upload-inner")
+
+
+@app.callback(Output("iv-caption-wrap", "style"), Output("iv-upload-wrap", "style"),
+              Input("iv-modality", "value"))
+def iv_show_channel(modality):
+    """Only the boxes the chosen channel needs."""
+    return ({"flex": "3", "display": "none" if modality == "image" else "block"},
+            {"flex": "2", "display": "none" if modality == "caption" else "block"})
 
 
 def iv_start(run_id: str | None, target: str | None, modality: str | None,
@@ -6607,7 +6648,7 @@ def iv_start(run_id: str | None, target: str | None, modality: str | None,
     return ""
 
 
-@app.callback(Output("iv-message", "children"),
+@app.callback(Output("iv-message", "children"), Output("iv-controls", "open"),
               Input("iv-run", "n_clicks"),
               State("run-id", "data"), State("iv-target", "value"),
               State("iv-modality", "value"), State("iv-caption", "value"),
@@ -6615,8 +6656,10 @@ def iv_start(run_id: str | None, target: str | None, modality: str | None,
               prevent_initial_call=True)
 def iv_run(n, run_id, target, modality, caption, upload, filename):
     if not n:
-        return dash.no_update
-    return iv_start(run_id, target, modality, caption, upload, filename)
+        return dash.no_update, dash.no_update
+    why = iv_start(run_id, target, modality, caption, upload, filename)
+    # started: the form folds away and the running line shows on top
+    return why, (dash.no_update if why else False)
 
 
 def iv_poll(base_name: str) -> dict | None:
@@ -6657,11 +6700,17 @@ def iv_status(_n, run_id, key):
         new_key = "none"
         return (dash.no_update, dash.no_update) if key == new_key else ([], new_key)
     active = iv_poll(d.name)
+    if key is None or not str(key).startswith(d.name + "|"):
+        # first look at this run: pick up edited runs that finished while
+        # nobody was recording (an app restart mid-try)
+        running = {str((RUNS.get(p["after_run_id"]) or {}).get("record_name"))
+                   for p in IV_ACTIVE.values()}
+        ui_intervene.adopt_orphans(d, UI_RUNS_DIR, running)
     tries = ui_intervene.load_tries(d)
     new_key = f"{d.name}|{len(tries)}|{(active or {}).get('progress')}"
     if new_key == key:
         return dash.no_update, dash.no_update
-    return ui_intervene.status_component(tries, active), new_key
+    return ui_intervene.result_component(d, UI_RUNS_DIR, active), new_key
 
 
 def scenes_component(runs_dir: Path | None = None) -> list[Any]:
