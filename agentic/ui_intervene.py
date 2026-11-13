@@ -231,6 +231,13 @@ def finish_try(base_dir: Path, after_dir: Path | None, pending: dict,
                           image_changed=one["image_changed"])
     except Exception as exc:                    # a record the frozen code cannot read
         return {**one, "status": "failed", "why": f"could not be measured: {exc}"}
+    try:
+        from agentic import chain4
+        ch = chain4.direction(iv4.result_from_run_dir(base_dir), after)
+        one["chain"] = {k: ch[k] for k in ("before", "after", "delta", "direction",
+                                           "frozen_count")}
+    except Exception:
+        one["chain"] = None
     return {**one, "status": "measured", "summary": iv4.summary(res),
             "signals": res.get("signals"), "verdict": res.get("verdict"),
             "u_check": res.get("u_check")}
@@ -302,6 +309,47 @@ _TD = {"fontSize": "11px", "padding": "4px 6px", "borderBottom": "1px solid #e2e
        "verticalAlign": "top"}
 
 
+_DIR_COL = {"eased": "#16a34a", "grew": "#b91c1c", "unchanged": "#64748b",
+            "de-escalated": "#16a34a", "escalated": "#b91c1c"}
+
+
+def direction_cell(ch: Any) -> list:
+    """Two lines for one try: the danger in the advice weighed by chain,
+    and the frozen arm's plain count of the same arrows. The hover lists
+    every arrow with its chain."""
+    if not isinstance(ch, dict):
+        return []
+
+    def arrows(rows: Any) -> str:
+        out = []
+        for a in rows if isinstance(rows, list) else []:
+            if not isinstance(a, dict):
+                continue
+            path = a.get("path") if isinstance(a.get("path"), list) else []
+            via = (" (chain: " + " → ".join(str(x) for x in path) + ")") if len(path) > 1 else ""
+            out.append(f"{a.get('source')} {str(a.get('effect')).replace('_', ' ')} "
+                       f"{a.get('target')}{via} = {a.get('weight')}")
+        return "; ".join(out) or "no arrows"
+    word = str(ch.get("direction"))
+    fz = ch.get("frozen_count") if isinstance(ch.get("frozen_count"), dict) else {}
+    out = [html.Div(
+        [html.Span("by chain: ", style={"color": "#64748b", "fontWeight": "600"}),
+         html.Span(f"{ch.get('before')} → {ch.get('after')} · {word}")],
+        className="iv-chain",
+        title=f"before: {arrows(ch.get('before_arrows'))}  |  after: {arrows(ch.get('after_arrows'))}",
+        style={"fontWeight": "800", "color": _DIR_COL.get(word, "#64748b")})]
+    if fz.get("direction"):
+        fw = str(fz["direction"])
+        differs = {"eased": "de-escalated", "grew": "escalated"}.get(word, word) != fw
+        out.append(html.Div(
+            f"frozen count: {fz.get('before')} → {fz.get('after')} · {fw}"
+            + (" (differs)" if differs else ""),
+            className="iv-frozen-count",
+            title="the frozen arm adds a fixed weight per arrow; it does not follow chains",
+            style={"fontSize": "10px", "color": "#b45309" if differs else "#94a3b8"}))
+    return out
+
+
 def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
     """The grounding table: recommendations down, removed hazards across."""
     from agentic.ui_clean import ent_chip
@@ -359,7 +407,15 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
             + (f" · level {lvl:+d}" if isinstance(lvl, int) and lvl else ""),
             className="iv-moved", style={**_TD, "fontWeight": "800"}))
     foot.append(html.Td("", style=_TD))
-    out: list = [html.Table([html.Thead(html.Tr(head)), html.Tbody(body + [html.Tr(foot)])],
+    foot_rows = [html.Tr(foot)]
+    if any(isinstance(c.get("chain"), dict) for c in cols):
+        row = [html.Td("danger in the advice", style={**_TD, "fontWeight": "800"}),
+               html.Td("", style=_TD)]
+        for c in cols:
+            row.append(html.Td(direction_cell(c.get("chain")), style=_TD))
+        row.append(html.Td("", style=_TD))
+        foot_rows.append(html.Tr(row, className="iv-direction"))
+    out: list = [html.Table([html.Thead(html.Tr(head)), html.Tbody(body + foot_rows)],
                             className="iv-table",
                             style={"borderCollapse": "collapse", "width": "100%"})]
     for c in cols:
@@ -492,7 +548,14 @@ def result_component(base_dir: Path | None, runs_dir: Path | None,
             before = iv4.result_from_run_dir(base_dir)
             pairs = [(t, iv4.result_from_run_dir(Path(runs_dir) / str(t["after_run"])))
                      for t in measured]
-            out += table_component(grounding4.table(before, pairs), runs_dir)
+            tbl = grounding4.table(before, pairs)
+            from agentic import chain4
+            for col, (_t, after) in zip(tbl["columns"], pairs):
+                try:
+                    col["chain"] = chain4.direction(before, after)
+                except Exception:
+                    col["chain"] = None         # the table still stands without it
+            out += table_component(tbl, runs_dir)
             out += synthesis_component(iv4.synthesis(before, pairs))
         except Exception as exc:                # never lose the try lines to a bad table
             out.append(html.Div(f"the table could not be built: {exc}",

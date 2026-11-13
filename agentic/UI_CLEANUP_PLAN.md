@@ -454,3 +454,26 @@ without one the frozen code would call every moved hazard "spurious".
 - Edited pictures from the frozen arm's own work exist in
   exports/counterfactuals (push_09: no fire and smoke, no leak, no person,
   no tanker; push_06: left child safe) and can be reused for C and B.
+
+## 17. Direction by chain (Sunny, 2026-11-13: "build it")
+
+The frozen arm decides "escalated" by adding a fixed weight per arrow.
+Sunny: "it counts arrows only, that's the problem ... weigh them based on
+what the chain can do." `agentic/chain4.py`: an arrow is worth its effect
+weight times the worst thing its chain reaches (a life x2, else x1). The
+chain is walked by CODE over the arrows the model wrote in the same run
+(its own graph and the graph of its advice); no model call, no prompt, no
+ground truth. Effect weights and life labels are the frozen arm's own,
+imported.
+
+C_tanker ui_22840b13: removing spill_1 reads 15.0 to 13.0, eased, by
+chain; the frozen count reads 7.5 to 9.0, escalated. Before, "fire may
+spread to tanker" is a threat to the driver (tanker -> spill -> man);
+after, the tanker no longer leaks and its chain stops at the tanker.
+
+Shown as a second foot row of the grounding table, "danger in the
+advice": the chain reading, and under it the frozen count marked
+"(differs)" when the two disagree; the hover lists every arrow with its
+chain. The frozen label itself is never changed. Saved with each new try.
+
+Limit: a link the model did not write is a link the chain does not have.

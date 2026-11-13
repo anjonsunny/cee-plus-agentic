@@ -660,3 +660,120 @@ def test_the_result_shows_core_and_spurious_under_the_table(gt):
     assert status["fire_1"] == "grounded" and status["tanker_1"] == "untested"
     # the table above it is still there
     assert len(_by_class(comp, "iv-table")) == 1
+
+
+# ── direction by chain (Sunny, 2026-11-13: "weigh them based on what the
+#    chain can do"; "it counts arrows only, that's the problem") ──────────
+
+def _g(edges):
+    return {"nodes": [], "edges": [{"source": a, "effect": e, "target": b} for a, e, b in edges]}
+
+
+def _scene(objs, advice, belief=()):
+    return {"detected_objects": [{"object_id": o, "label": o.rsplit("_", 1)[0], "state": "s"}
+                                 for o in objs],
+            "recommendations": [], "causal_graph": _g(advice), "graph_b": _g(belief)}
+
+
+OBJS = ["fire_1", "tanker_1", "spill_1", "man_1", "brush_1", "grass_1", "tree_1", "smoke_1"]
+# the C_tanker spill try (ui_22840b13 -> ui_6cf39fa9), reduced to its arrows
+C_BEFORE = _scene(OBJS,
+                  [("fire_1", "may_harm", "man_1"), ("spill_1", "may_harm", "man_1"),
+                   ("fire_1", "may_spread_to", "tanker_1"), ("smoke_1", "may_harm", "man_1")],
+                  [("tanker_1", "increases_risk_to", "spill_1"),
+                   ("spill_1", "may_harm", "man_1"),
+                   ("fire_1", "worsens", "spill_1"), ("spill_1", "worsens", "fire_1")])
+C_AFTER = _scene([o for o in OBJS if o != "spill_1"],
+                 [("fire_1", "may_harm", "man_1"), ("smoke_1", "may_harm", "man_1"),
+                  ("brush_1", "may_spread_to", "grass_1"),
+                  ("brush_1", "may_spread_to", "tree_1"),
+                  ("fire_1", "may_harm", "tanker_1")],
+                 [("brush_1", "increases_risk_to", "fire_1")])
+
+
+def test_an_arrow_is_weighed_by_where_its_chain_ends():
+    from agentic import chain4 as c
+    w = {(a["source"], a["target"]): a for a in c.weigh(C_BEFORE)["arrows"]}
+    tanker = w[("fire_1", "tanker_1")]
+    assert tanker["path"] == ["tanker_1", "spill_1", "man_1"] and tanker["ends_at"] == "man_1"
+    assert tanker["base"] == 1.5 and tanker["factor"] == 2.0 and tanker["weight"] == 3.0
+    assert w[("fire_1", "man_1")]["weight"] == 4.0 and w[("fire_1", "man_1")]["path"] == ["man_1"]
+    # after the spill is gone the tanker's chain stops at the tanker
+    w = {(a["source"], a["target"]): a for a in c.weigh(C_AFTER)["arrows"]}
+    assert w[("fire_1", "tanker_1")]["path"] == ["tanker_1"]
+    assert w[("fire_1", "tanker_1")]["weight"] == 2.0          # may_harm 2 x 1
+    assert w[("brush_1", "grass_1")]["weight"] == 1.5 and w[("brush_1", "tree_1")]["weight"] == 1.5
+
+
+def test_the_spill_try_eases_by_chain_where_the_frozen_count_says_escalated():
+    from agentic import chain4 as c
+    d = c.direction(C_BEFORE, C_AFTER)
+    assert (d["before"], d["after"], d["direction"]) == (15.0, 13.0, "eased")
+    assert d["frozen_count"] == {"before": 7.5, "after": 9.0, "direction": "escalated"}
+    # the same run twice does not move; a person newly threatened does grow
+    assert c.direction(C_BEFORE, C_BEFORE)["direction"] == "unchanged"
+    worse = _scene(OBJS, [("fire_1", "may_harm", "man_1"), ("spill_1", "may_harm", "man_1"),
+                          ("fire_1", "may_spread_to", "tanker_1"),
+                          ("smoke_1", "may_harm", "man_1"), ("brush_1", "may_harm", "man_1")],
+                   [("tanker_1", "increases_risk_to", "spill_1"), ("spill_1", "may_harm", "man_1")])
+    assert c.direction(C_BEFORE, worse)["direction"] == "grew"
+
+
+def test_the_weights_and_life_labels_are_the_frozen_arms_own():
+    import inspect
+    import intervention
+    from agentic import chain4 as c
+    src = inspect.getsource(c)
+    assert "_EFFECT_THREAT" in src and "_LIFE_LABELS" in src
+    assert '"may_harm":' not in src and "{\"person\"" not in src       # imported, not copied
+    one = _scene(["fire_1", "dog_1", "car_1"],
+                 [("fire_1", "traps", "dog_1"), ("fire_1", "blocks_access_to", "car_1"),
+                  ("fire_1", "made_up_effect", "car_1")])
+    w = {(a["effect"]): a["weight"] for a in c.weigh(one)["arrows"]}
+    assert w["traps"] == intervention._EFFECT_THREAT["traps"] * 2          # a dog is a life
+    assert w["blocks_access_to"] == intervention._EFFECT_THREAT["blocks_access_to"]
+    assert w["made_up_effect"] == 1.0                                      # the frozen default
+
+
+def test_loops_repeats_and_bad_graphs_never_break_the_chain():
+    from agentic import chain4 as c
+    loop = _scene(["a_1", "b_1", "c_1"], [("a_1", "worsens", "b_1")],
+                  [("b_1", "worsens", "c_1"), ("c_1", "worsens", "b_1"), ("b_1", "worsens", "a_1")])
+    (arrow,) = c.weigh(loop)["arrows"]
+    assert arrow["ends_at"] == "b_1" and arrow["factor"] == 1.0            # no life in the loop
+    twice = _scene(["fire_1", "man_1"], [("fire_1", "may_harm", "man_1")] * 3)
+    assert c.weigh(twice)["total"] == 4.0                                  # one arrow, once
+    for bad in (None, "x", {}, {"causal_graph": "g", "graph_b": [1]},
+                {"causal_graph": {"edges": [None, "x", {"source": "a"}, {"source": "a",
+                                                                         "target": "a"}]}}):
+        assert c.weigh(bad) == {"total": 0.0, "arrows": []}
+        assert c.direction(bad, bad)["direction"] == "unchanged"
+    assert c.links_of(None) == {}
+
+
+def test_the_table_shows_direction_by_chain_next_to_the_frozen_count(tmp_path):
+    base, after = _run_dir(tmp_path), _after_dir(tmp_path)
+    one = ui_iv.finish_try(base, after, PENDING)
+    assert one["chain"]["direction"] == "eased" and one["chain"]["frozen_count"]["direction"]
+    ui_iv.save_try(base, one)
+    comp = ui_iv.result_component(base, tmp_path)
+    text = _flat(comp)
+    assert "danger in the advice" in text and "by chain:" in text and "frozen count:" in text
+    (cell,) = _by_class(comp, "iv-chain")
+    assert "eased" in _flat(cell) and "before:" in cell.title and "after:" in cell.title
+    # the hover names the chain of an arrow that has one
+    cell = ui_iv.direction_cell({"before": 15.0, "after": 13.0, "direction": "eased",
+                                 "before_arrows": [{"source": "fire_1", "effect": "may_spread_to",
+                                                    "target": "tanker_1", "weight": 3.0,
+                                                    "path": ["tanker_1", "spill_1", "man_1"]}],
+                                 "after_arrows": [],
+                                 "frozen_count": {"before": 7.5, "after": 9.0,
+                                                  "direction": "escalated"}})
+    assert "chain: tanker_1 → spill_1 → man_1" in cell[0].title
+    assert "frozen count: 7.5 → 9.0 · escalated (differs)" in _flat(cell)
+    same = ui_iv.direction_cell({"before": 5, "after": 3, "direction": "eased",
+                                 "frozen_count": {"before": 4, "after": 2,
+                                                  "direction": "de-escalated"}})
+    assert "(differs)" not in _flat(same)
+    for bad in (None, "x", {}, {"direction": None, "before_arrows": "y", "frozen_count": 3}):
+        ui_iv.direction_cell(bad)                    # never raises
