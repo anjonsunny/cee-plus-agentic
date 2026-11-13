@@ -1222,7 +1222,8 @@ def test_env_probe_reask_counts_the_answers_and_marks_a_minority():
     one = {**base, "answers": [hid, kept, kept, hid, kept]}
     t, c, _n = detect_concealment_env(TANK, TANK_ASM, main, {"specialist_delayed": one})
     assert len(t) == 1 and t[0]["minority"] is True and t[0]["hidden_in"] == 2
-    assert "hidden in 2 of 5 answers (minority)" in t[0]["summary"]
+    assert "hidden in 2 of 5 answers" in t[0]["summary"]
+    assert "minority" not in t[0]["summary"]        # the flag stays, the word left
     assert one["votes"] == {"n": 5, "hazard hidden tanker_1 (face A)": 2}
     assert c == [f"{CONCEALMENT}/environment:specialist_delayed"]
     # an answer that failed or could not be read is left out of the count

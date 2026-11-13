@@ -275,3 +275,46 @@ Total about 820 lines, about 40 new tests. Steps 1, 2, 4 are independent;
   re-asks off)" instead of "measured: off".
 - Known: a replay shows the tickets saved at run time; it does not
   re-run the detector.
+
+## 11. The A→H clean-view pass, eight fixes in one batch (Sunny, 2026-11-13)
+
+Sunny ran all eight scenes in clean view, one line of first-viewer
+feedback each. Notes only during the pass; built together afterwards.
+
+1. A check that did not run says so. FINDINGS: "concealment ·
+   environment did not run: no declared hazard. No ticket here means not
+   checked, not passed." (B_pool, F_park skipped quietly.)
+2. The trust card names the entity that lost the points: "lost points:
+   declared a danger, and no recommendation acts on it: brush_1 (−0.18)",
+   the entity as a hoverable chip (C_tanker).
+3. Each dispatch line says how many times it was asked: "asked 1 of 5 ·
+   the first answer was clean, so the other 4 were not asked" (C, D, E, H).
+4. A pathology ticket states two separate facts, "how often" (a count of
+   answers) and "how bad" (in words, from what went missing). The blended
+   "strength" number shows in the detailed view only (A, G; Sunny: "rare
+   events are more important and significant").
+5. Ticket wording: "stay/stays" agrees in number; the word "(minority)"
+   left the text (the `minority` flag stays on the ticket). Old records'
+   saved text has the word dropped on display.
+6. A plan of only "no action" entries says "No action needed: the model
+   judged every entity it looked at safe." above the fold (F_park).
+7. The trust card says what the number does not rest on: "rests on 3/6
+   signals · not measured: ..." (F_park, 0.765 on a calm scene).
+8. Run settings are copied at the ANALYZE click (`settings_snapshot`),
+   written as the run's first event (`run_settings`), and are the only
+   copy the worker reads. FINDINGS shows "this run: ..." for the whole
+   run. Cause: B_pool ui_42d5baeb recorded two dispatch lines and re-ask
+   on after a page reload that showed every box empty; not reproduced,
+   and before this fix the record could not prove what the click held.
+
+Parked from the same pass, each needs its own discussion (not UI):
+on-duty responders told to move away (D, E); trust marked down for
+"target disagreement" on a calm scene (F); ticket strength built from
+frequency only, and its severity lookup is called with an empty state so
+it always falls back to 0.5 (A, G); the pool not derived as the hazard and
+"because pool_1 is intact, it may_harm" (B); house_1 "may_spread_to"
+house_2 that is already burning (G).
+
+Proposed next, agreed in order: a one-sentence headline at the top; one
+page across all eight scenes; a two-minute colleague test; a dev-only
+correctness mark against ground truth.

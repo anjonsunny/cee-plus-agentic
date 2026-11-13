@@ -225,7 +225,10 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
     }
     for ev in events:
         t = ev.get("type")
-        if t == "run_started":
+        if t == "run_settings":
+            d["run_settings"] = {k: v for k, v in ev.items()
+                                 if k not in ("t", "type")}
+        elif t == "run_started":
             d["image_size"] = ev.get("image_size")
             d["caption"] = ev.get("caption", "")
             d["image_name"] = ev.get("image_name", "")
@@ -940,7 +943,33 @@ def make_event_sink(run_id: str, run_dir: Path):
     return sink
 
 
-def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
+def settings_snapshot(control: Any = None, retrieval: Any = None,
+                      subject: Any = None) -> dict[str, Any]:
+    """Every on-screen run setting, copied at the moment ANALYZE is pressed.
+
+    The run used to read the shared switches about two minutes later, when
+    the recommendation stage began, so the record could not prove what the
+    boxes showed at the click (B_pool ui_42d5baeb, 2026-11-11: the record
+    said two dispatch lines and re-ask on after a page reload that showed
+    every box empty). The worker now reads THIS copy only, and it is the
+    first event of the run."""
+    return {
+        "control": control, "retrieval": retrieval, "subject": subject,
+        "judges": bool(S4_JUDGES["on"]),
+        "stage2": bool(REASKS["s2"]), "stage4": bool(REASKS["s4"]),
+        "concealment": bool(CONCEALMENT["on"]),
+        "concealment_motives": list(CONCEALMENT["motives"] or []),
+        "sandbagging": bool(SANDBAGGING["on"]),
+        "sandbagging_motives": list(SANDBAGGING["motives"] or []),
+        "hint": bool(SYCOPHANCY["hint"]), "readers": bool(SYCOPHANCY["readers"]),
+        "env": bool(ENV["on"]),
+        "env_conditions": list(ENV["conditions"] or []),
+        "env_reask": bool(ENV["reask"]),
+    }
+
+
+def start_live_run(image_bytes: bytes, filename: str, caption: str,
+                   settings: dict[str, Any] | None = None) -> str:
     run_id = uuid.uuid4().hex[:8]
     run_dir = UI_RUNS_DIR / f"ui_{run_id}"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -955,6 +984,10 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
         "record_name": f"ui_{run_id}",     # how agent_tools will know this run
     }
     sink = make_event_sink(run_id, run_dir)
+    # the settings as they stood at the click: recorded first, and the only
+    # copy the worker reads (never the shared switches again)
+    S = dict(settings) if settings else settings_snapshot()
+    sink({"type": "run_settings", **S})
 
     def worker() -> None:
         try:
@@ -987,7 +1020,7 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
             from agentic.graph_live import assess_with_control
             record, result, petitioned = assess_with_control(
                 str(image_path), record, on_event=sink,
-                n_probes=DEFAULT_N_PROBES if REASKS["s2"] else 0,
+                n_probes=DEFAULT_N_PROBES if S["stage2"] else 0,
                 explain_fn=_ollama_explain,
                 runoff_judge_fn=_judge)
             # Surface the RAG shadow (only populated in rag/both mode): the
@@ -1115,20 +1148,20 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
                                       temperature=REC_PROBE_TEMPERATURE)
                 _s4_n_probes = (int(os.getenv("REC_N_PROBES",
                                               str(DEFAULT_REC_N_PROBES)))
-                                if REASKS["s4"] else 0)
+                                if S["stage4"] else 0)
                 # recorded, so a run without re-asks is never read later as
                 # a run whose answers happened to agree
-                sink({"type": "reasks_setting", "stage2": REASKS["s2"],
-                      "stage4": REASKS["s4"],
-                      "concealment": CONCEALMENT["on"],
-                      "concealment_motives": CONCEALMENT["motives"] or "all",
-                      "sandbagging": SANDBAGGING["on"],
-                      "sandbagging_motives": SANDBAGGING["motives"] or "all",
-                      "env": ENV["on"],
-                      "hint": SYCOPHANCY["hint"],
-                      "readers": SYCOPHANCY["readers"],
-                      "env_conditions": ENV["conditions"] or "all",
-                      "env_reask": _ENV_REASK_N if ENV["reask"] else 0})
+                sink({"type": "reasks_setting", "stage2": S["stage2"],
+                      "stage4": S["stage4"],
+                      "concealment": S["concealment"],
+                      "concealment_motives": S["concealment_motives"] or "all",
+                      "sandbagging": S["sandbagging"],
+                      "sandbagging_motives": S["sandbagging_motives"] or "all",
+                      "env": S["env"],
+                      "hint": S["hint"],
+                      "readers": S["readers"],
+                      "env_conditions": S["env_conditions"] or "all",
+                      "env_reask": _ENV_REASK_N if S["env_reask"] else 0})
                 # F24 — the card judge. ADVISORY and display-only: it never
                 # enters a score, which is exactly why it is safe to leave on
                 # during calibration. A judge that cannot reach its model
@@ -1142,7 +1175,7 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
                             p, temperature=JUDGE_PROBE_TEMPERATURE)
                 except Exception:
                     _card_judge = None
-                if os.getenv("S4_CARD_JUDGE", "1") != "1" or not S4_JUDGES["on"]:
+                if os.getenv("S4_CARD_JUDGE", "1") != "1" or not S["judges"]:
                     _card_judge = None
                 if _card_judge is None:
                     # recorded, so a run without judges can never be read
@@ -1153,15 +1186,15 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str) -> str:
                                          probe_fn=_s4_probe,
                                          judge_fn=_card_judge,
                                          think_fn=_s4_think,
-                                         hint_probe=SYCOPHANCY["hint"],
-                                         audience_probes=SYCOPHANCY["readers"],
-                                         concealment_probes=CONCEALMENT["on"],
-                                         concealment_motives=CONCEALMENT["motives"] or None,
-                                         sandbagging_probes=SANDBAGGING["on"],
-                                         sandbagging_motives=SANDBAGGING["motives"] or None,
-                                         env_probes=ENV["on"],
-                                         env_conditions=ENV["conditions"] or None,
-                                         env_reask=_ENV_REASK_N if ENV["reask"] else 0,
+                                         hint_probe=S["hint"],
+                                         audience_probes=S["readers"],
+                                         concealment_probes=S["concealment"],
+                                         concealment_motives=S["concealment_motives"] or None,
+                                         sandbagging_probes=S["sandbagging"],
+                                         sandbagging_motives=S["sandbagging_motives"] or None,
+                                         env_probes=S["env"],
+                                         env_conditions=S["env_conditions"] or None,
+                                         env_reask=_ENV_REASK_N if S["env_reask"] else 0,
                                          probe_think_fn=_s4_probe_think,
                                          n_probes=_s4_n_probes,
                                          on_event=sink)
@@ -3230,7 +3263,8 @@ def _chain_steps(s4: dict, ticket: dict | None = None) -> list[tuple[str, Any, s
     if not tk:
         # the run's own chain: which dispatch conditions this run applied
         from agentic.recommend import env_motive
-        ran = [k for k, one in (s4.get("env_probes") or {}).items()
+        _probes = s4.get("env_probes")
+        ran = [k for k, one in (_probes.items() if isinstance(_probes, dict) else ())
                if isinstance(one, dict) and not one.get("skipped") and k in ENV_CONDITIONS]
         if ran:
             run_cond = (f"{len(ran)} dispatch condition{'s' if len(ran) != 1 else ''} "
@@ -3290,6 +3324,41 @@ _STAMP = {"open": ("OPEN", "stamp open"), "fixing": ("FIXING…", "stamp fixing"
           "induced": ("INDUCED", "stamp open")}
 
 
+def _ticket_facts(tk: dict) -> list:
+    """How often and how bad, as two separate lines — never one blended
+    word (Sunny, 2026-11-13, on G_houses_fire: "sometimes rare events are
+    more important"). How often is a count of answers. How bad is said in
+    words from what went missing; there is no severity number yet."""
+    out: list = []
+    lab = {"fontSize": "11px", "color": "#64748b"}
+    val = {"fontSize": "11.5px", "fontWeight": "700", "color": "#1f2937"}
+    n, k = int(tk.get("n_answers") or 0), int(tk.get("hidden_in") or 0)
+    if n > 1:
+        often = f"seen in {k} of {n} answers"
+    elif tk.get("condition") or tk.get("variant") == "env":
+        often = "seen in the one answer asked (not re-asked)"
+    else:
+        often = ""
+    if often:
+        out.append(html.Div([html.Span("how often: ", style=lab),
+                             html.Span(often, style=val)], className="ticket-fact often"))
+    what = str(tk.get("subtype") or "").rsplit("·", 1)[-1].strip().lower()
+    ids = ", ".join(str(x) for x in (tk.get("dropped") or []))
+    if what == "hazard hidden":
+        bad = "a declared danger is left without action"
+    elif what in ("victim hidden", "victim dropped"):
+        bad = "an at-risk entity is left without help"
+    elif what.endswith("hidden") and (tk.get("condition") or tk.get("variant") == "env"):
+        bad = "the dispatch fact is missing from the plan"   # the fact_what names
+    else:
+        bad = ""
+    if bad:
+        out.append(html.Div([html.Span("how bad: ", style=lab),
+                             html.Span(bad + (f" ({ids})" if ids else ""), style=val)],
+                            className="ticket-fact bad"))
+    return out
+
+
 def _pathology_ticket_card(s4: dict, tk: dict) -> Any:
     """Sunny (2026-10-06): a pathology ticket is not a rule ticket — its
     own colour, the type and subtype in the header, one brief line of
@@ -3312,7 +3381,11 @@ def _pathology_ticket_card(s4: dict, tk: dict) -> Any:
                                      "borderRadius": "6px", "padding": "1px 6px",
                                      "marginLeft": "6px"}))
     if tk.get("strength") is not None:
+        # detailed view only: one blended number reads a rare, serious drop
+        # as small (Sunny, 2026-11-13). The clean card states how often and
+        # how bad as two facts instead (the two ticket-fact lines below).
         head.append(html.Span(f"strength {tk['strength']}",
+                              className="only-detailed",
                               style={"fontSize": "9.5px", "color": "#94a3b8",
                                      "marginLeft": "6px"}))
     if (tk.get("n_answers") or 0) > 1:
@@ -3354,6 +3427,11 @@ def _pathology_ticket_card(s4: dict, tk: dict) -> Any:
         body.append(html.Div(_why, className="ticket-why",
                              style={"fontSize": "11.5px", "color": "#1f2937",
                                     "padding": "2px 0", "lineHeight": "1.9"}))
+    body += _ticket_facts(tk)
+    # records saved before 2026-11-13 carry the word "(minority)" in their
+    # text; a replay shows the saved text, so the word is dropped on display
+    tk = {**tk, **{k: str(tk[k]).replace(" (minority)", "")
+                   for k in ("summary", "evidence") if tk.get(k)}}
     body.append(html.Div(str(tk.get("summary") or tk.get("evidence", "")),
                          style={"fontSize": "12px", "color": "#1f2937",
                                 "padding": "2px 0"}))
@@ -6384,7 +6462,9 @@ def start_run(_clicks, replay_path, cached, caption,
         header, b64 = cached["contents"].split(",", 1)
         return start_live_run(base64.b64decode(b64),
                               cached.get("filename") or "scene.jpg",
-                              caption or "")
+                              caption or "",
+                              settings=settings_snapshot(
+                                  control_mode, retrieval_choice, subject_choice))
     return dash.no_update
 
 

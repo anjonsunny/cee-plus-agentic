@@ -135,6 +135,21 @@ def clean_verdict(s4: dict) -> list:
             + ([html.Span(f" · +{len(hits) - 2} more in detailed view",
                           style={"color": "#94a3b8"})] if len(hits) > 2 else []),
             style={"fontSize": "11px", "marginBottom": "2px"}))
+    # the single errors, each naming its entity (C_tanker ui_1b538f75: the
+    # card said trust dropped but not that brush_1 was the danger left out)
+    for e in (trust.get("singular_errors") or []):
+        if not isinstance(e, dict):
+            continue
+        text = str(e.get("detail") or e.get("id") or "").split(":")[0].strip()
+        ents = [str(x) for x in (e.get("entities") or [])]
+        rows.append(html.Div(
+            [html.Span("lost points: ", style={"fontWeight": "700", "color": "#64748b"}),
+             html.Span(text + (": " if ents else ""), style={"color": "#b91c1c"})]
+            + [ent_chip(x, "#b91c1c") for x in ents]
+            + ([html.Span(f"(−{e['deduction']})", style={"color": "#b91c1c"})]
+               if e.get("deduction") is not None else []),
+            className="trust-lost",
+            style={"fontSize": "11px", "marginBottom": "2px", "lineHeight": "1.9"}))
     clean = [c for c in (trust.get("contributors") or [])
              if isinstance(c, dict) and (c.get("contribution") or 0) == 0]
     if clean:
@@ -142,8 +157,39 @@ def clean_verdict(s4: dict) -> list:
             "holds up: " + " · ".join(_HOLDS_UP.get(str(c.get("signal")), str(c.get("signal")))
                                       for c in clean),
             style={"fontSize": "11px", "color": "#16a34a", "fontWeight": "600"}))
+    # what this number does NOT rest on (F_park ui_22e4d376: 0.765 on a calm
+    # scene, and nothing said that three of the six signals had no meaning)
+    na = [x for x in (trust.get("not_applicable") or []) if isinstance(x, dict)]
+    if na:
+        by_reason: dict[str, list[str]] = {}
+        for x in na:
+            by_reason.setdefault(_plain_reason(str(x.get("reason") or "")), []).append(
+                _SIGNAL_NAME.get(str(x.get("signal")), str(x.get("signal")).replace("_", " ")))
+        rows.append(html.Div(
+            f"rests on {trust.get('signals_measured') or 'fewer'} signals · not measured: "
+            + " · ".join(f"{', '.join(v)} ({k})" for k, v in by_reason.items()),
+            className="trust-scope",
+            style={"fontSize": "10.5px", "color": "#94a3b8", "marginTop": "2px"}))
     return [html.Div(rows, className="unc-panel",
                      style={"borderColor": col, "padding": "8px 10px"})]
+
+
+_SIGNAL_NAME = {
+    "advice_backed_by_belief": "advice backed by belief",
+    "dangers_acted_on": "dangers acted on",
+    "uncertainty": "answer stability",
+    "internal_alignment": "the set hangs together",
+    "pick_agreement": "target agreement",
+    "conformance": "graph well-formed",
+}
+
+
+def _plain_reason(reason: str) -> str:
+    """The trust record's reason, cut to its first clause."""
+    head, _, tail = reason.partition(":")
+    if head.strip() == "not measured" and tail.strip():
+        return tail.split(" on this run")[0].strip()
+    return head.split(",")[0].strip() or "not applicable"
 
 
 # ── 2 · THE RECOMMENDATIONS ──────────────────────────────────────────────
@@ -229,6 +275,14 @@ def clean_recs(s4: dict) -> list:
                                                      "cursor": "pointer"}),
                           html.Div(why, style={"padding": "2px 0 0 8px"})]),
         ], className="ticket", style={"margin": "6px 0"}))
+    if benign and not cards:
+        # F_park ui_22e4d376: all four entries were "no action", so the
+        # section held nothing but a closed fold and looked empty
+        cards.append(html.Div("No action needed: the model judged every "
+                              "entity it looked at safe.",
+                              className="recs-none",
+                              style={"fontSize": "12px", "fontWeight": "700",
+                                     "color": "#15803d", "margin": "4px 0"}))
     if benign:
         n = len(benign)
         cards.append(html.Details([
@@ -362,15 +416,17 @@ def findings(s4: dict, d: dict, *, chain: Callable[[dict], Any],
     reserved for the intervention. Before Stage 4 has a result it says
     what it is waiting for."""
     s4 = s4 or {}
+    used = run_settings_line(d)
+    head: list = [used] if used is not None else []
     if d.get("stage4_error"):
-        return [html.Div(f"the recommendation stage failed: {d['stage4_error']}",
-                         style={"fontSize": "12px", "color": "#b91c1c"})]
+        return head + [html.Div(f"the recommendation stage failed: {d['stage4_error']}",
+                                style={"fontSize": "12px", "color": "#b91c1c"})]
     if not s4:
         waiting = ("recommendations are being written — findings arrive with "
                    "the trust score" if d.get("stage4_started") else
                    "findings arrive once the recommendations are written")
-        return [html.Div(waiting, className="ticket-empty")]
-    out: list = []
+        return head + [html.Div(waiting, className="ticket-empty")]
+    out: list = head
     out += clean_verdict(s4) or [html.Div("trust not scored on this run",
                                           className="ticket-empty")]
     out.append(_heading("THE RUN'S CHAIN"))
@@ -379,6 +435,7 @@ def findings(s4: dict, d: dict, *, chain: Callable[[dict], Any],
     path = _register_of(s4).get("pathology") or []
     out += [pathology_ticket(tk) for tk in path] or [
         html.Div("no pathology ticket", className="ticket-empty")]
+    out += probe_status(s4, d)
     pa = s4.get("pathology") or {}
     looked = pa.get("checked") or []
     if looked:
@@ -391,6 +448,87 @@ def findings(s4: dict, d: dict, *, chain: Callable[[dict], Any],
         "reserved: suppress the hazard, see whether the plan moves "
         "(the intervention is not yet ported)",
         className="ticket-empty", style={"borderStyle": "dashed"}))
+    return out
+
+
+def run_settings_line(d: dict) -> Any | None:
+    """What THIS run was started with, from the settings recorded at the
+    click (event `run_settings`). Stays on screen for the whole run, so a
+    viewer never has to open the settings fold to know what a run used.
+    None for a record made before the event existed."""
+    S = (d or {}).get("run_settings")
+    if not isinstance(S, dict):
+        return None
+    parts: list[str] = []
+    if S.get("judges"):
+        parts.append("judges on")
+    stages = [n for k, n in (("stage2", "assessment"), ("stage4", "recommendation"))
+              if S.get(k)]
+    if stages:
+        parts.append("re-asks: " + ", ".join(stages))
+    if S.get("concealment"):
+        m = S.get("concealment_motives") or []
+        parts.append("concealment: " + (f"{len(m)} motives" if m else "all motives"))
+    if S.get("env"):
+        c = S.get("env_conditions") or []
+        parts.append("concealment · environment: "
+                     + (f"{len(c)} line{'s' if len(c) != 1 else ''}" if c else "all lines")
+                     + (" · re-ask if flagged" if S.get("env_reask") else ""))
+    if S.get("sandbagging"):
+        m = S.get("sandbagging_motives") or []
+        parts.append("sandbagging: " + (f"{len(m)} motives" if m else "all motives"))
+    syc = [n for k, n in (("hint", "leading hint"), ("readers", "readers")) if S.get(k)]
+    if syc:
+        parts.append("sycophancy: " + ", ".join(syc))
+    return html.Div(
+        [html.Span("this run: ", style={"fontWeight": "700", "color": "#64748b"}),
+         html.Span(" · ".join(parts) if parts else "no extra probes")],
+        className="run-used",
+        title="the settings as they stood when ANALYZE was pressed",
+        style={"fontSize": "10.5px", "color": "#475569", "marginBottom": "6px"})
+
+
+def probe_status(s4: dict, d: dict) -> list:
+    """What each dispatch line actually did, so "no ticket" is never read
+    as "passed" when the line did not run (B_pool, F_park: skipped quietly)
+    and a re-ask that stopped after one clean answer says so (C, D, E, H)."""
+    s4, d = s4 or {}, d or {}
+    out: list = []
+    style = {"fontSize": "11px", "color": "#475569", "margin": "2px 0"}
+    asked_for = bool((d.get("reasks") or {}).get("env")
+                     or (d.get("run_settings") or {}).get("env"))
+    if d.get("stage4_env_skipped") and asked_for:
+        out.append(html.Div(
+            [html.Span("concealment · environment did not run: ",
+                       style={"fontWeight": "700", "color": "#b45309"}),
+             html.Span(f"{d['stage4_env_skipped']}. No ticket here means "
+                       "not checked, not passed.")],
+            className="probe-skipped", style=style))
+    reask = int(d.get("env_reask") or 0)
+    probes = s4.get("env_probes")
+    for name, one in (probes.items() if isinstance(probes, dict) else ()):
+        if not isinstance(one, dict):
+            continue
+        label = str(one.get("label") or name)
+        votes = one.get("votes") if isinstance(one.get("votes"), dict) else {}
+        answers = one.get("answers") if isinstance(one.get("answers"), list) else []
+        if one.get("skipped") or one.get("error"):
+            text = "did not run: " + str(one.get("skipped") or one.get("error"))
+        else:
+            n = votes.get("n") if isinstance(votes.get("n"), int) else len(answers)
+            n = n or 1
+            if one.get("screened") == "clean" and reask > 1:
+                text = (f"asked 1 of {reask} · the first answer was clean, "
+                        f"so the other {reask - 1} were not asked")
+            elif n > 1:
+                hits = sum(v for k, v in votes.items()
+                           if k != "n" and isinstance(v, int))
+                text = f"asked {n} of {n}" + (" · see the ticket above" if hits
+                                             else " · nothing hidden")
+            else:
+                text = "asked once"
+        out.append(html.Div([html.Span(label + ": ", style={"fontWeight": "700"}),
+                             html.Span(text)], className="probe-line", style=style))
     return out
 
 
