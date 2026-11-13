@@ -45,6 +45,7 @@ import mimetypes
 import os
 import sys
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -898,6 +899,8 @@ def saved_records() -> list[dict[str, str]]:
                     float(head.get("t") or p.stat().st_mtime)).strftime("%b %d %H:%M")
             except Exception:
                 when = _dt.datetime.fromtimestamp(p.stat().st_mtime).strftime("%b %d %H:%M")
+            if (p.parent / "after_of.json").exists():
+                img = "edit of " + (img or "run")       # an intervention's after side
             opts.append({"label": f"{img or 'run'} · {when} · {p.parent.name}",
                          "value": str(p)})
     if PERCEPTION_DIR.exists():
@@ -970,7 +973,8 @@ def settings_snapshot(control: Any = None, retrieval: Any = None,
 
 
 def start_live_run(image_bytes: bytes, filename: str, caption: str,
-                   settings: dict[str, Any] | None = None) -> str:
+                   settings: dict[str, Any] | None = None,
+                   after_of: dict[str, Any] | None = None) -> str:
     run_id = uuid.uuid4().hex[:8]
     run_dir = UI_RUNS_DIR / f"ui_{run_id}"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -989,6 +993,12 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str,
     # copy the worker reads (never the shared switches again)
     S = dict(settings) if settings else settings_snapshot()
     sink({"type": "run_settings", **S})
+    if after_of:
+        # the AFTER side of an intervention: an edited copy of another run's
+        # scene. Marked in the stream and by a file, so it is never listed
+        # as that scene's own latest run.
+        sink({"type": "intervention_after", **after_of})
+        (run_dir / "after_of.json").write_text(json.dumps(after_of, indent=1))
 
     def worker() -> None:
         try:
@@ -5951,6 +5961,10 @@ app.index_string = """<!DOCTYPE html>
   /* UI cleanup step 2: the view switch. The clientside callback sets the
      wrap div to "wrap mode-clean" / "wrap mode-detailed". */
   .mode-clean .only-detailed { display:none; }
+  /* the intervention panel (CAUSAL GROUNDEDNESS) */
+  .iv-step { font-size:10px; font-weight:800; letter-spacing:.06em;
+             text-transform:uppercase; color:#64748b; margin:10px 0 3px; }
+  .iv-panel #iv-note { font-size:10.5px; padding:6px 8px; text-align:left; }
   .mode-detailed .only-clean { display:none; }
   /* clean view: only the boxes that matter, until hovered or "show every box" */
   .mode-clean .scene:not(.show-all) .scene-box.minor { opacity:0; pointer-events:none; }
@@ -6319,6 +6333,47 @@ app.layout = html.Div([
                                     html.Span("▾", className="station-chev")],
                                    className="phase-head"),
                       html.Div(id="findings-body"),
+                      # CAUSAL GROUNDEDNESS, step 2 (2026-11-13): pick a hazard
+                      # of the OPEN run, give the edited scene, run only the
+                      # after side (agentic/ui_intervene.py).
+                      html.Div([
+                          html.Div(id="iv-note", className="ticket-empty"),
+                          html.Div([
+                              html.Div("1 · pick what to remove", className="iv-step"),
+                              dcc.RadioItems(id="iv-target", options=[], value=None,
+                                             className="iv-target",
+                                             labelStyle={"display": "block",
+                                                         "fontSize": "11.5px"}),
+                              html.Div("2 · make the edit (the hazard never happened)",
+                                       className="iv-step"),
+                              html.Div(id="iv-instructions"),
+                              html.Div("3 · what did you change?", className="iv-step"),
+                              dcc.RadioItems(
+                                  id="iv-modality", value="both", inline=True,
+                                  options=[{"label": " caption only", "value": "caption"},
+                                           {"label": " image only", "value": "image"},
+                                           {"label": " both", "value": "both"}],
+                                  className="ctl-toggle"),
+                              dcc.Textarea(id="iv-caption", value="",
+                                           placeholder="the edited caption",
+                                           style={"width": "100%", "height": "54px",
+                                                  "fontSize": "11.5px", "marginTop": "4px"}),
+                              dcc.Upload(id="iv-upload", multiple=False,
+                                         children=html.Div("drop / pick the edited image",
+                                                           id="iv-upload-name"),
+                                         className="upload",
+                                         style={"marginTop": "4px"}),
+                              html.Button("RUN THE EDITED SCENE", id="iv-run",
+                                          className="go", n_clicks=0,
+                                          style={"marginTop": "6px"}),
+                              html.Div(id="iv-message",
+                                       style={"fontSize": "11.5px", "color": "#b91c1c",
+                                              "marginTop": "4px"}),
+                          ], id="iv-controls", style={"display": "none"}),
+                          html.Div("tries on this run", className="iv-step"),
+                          html.Div(id="iv-status"),
+                          dcc.Store(id="iv-key"),
+                      ], id="iv-panel", className="iv-panel"),
                   ], className="phase-card only-clean", open=True,
                       id="findings-card")]),
         # Phase cards stack CHRONOLOGICALLY, pipeline order top-down (the
@@ -6418,6 +6473,195 @@ def cache_upload(contents, filename):
         html.Span(filename or "image", className="upload-name"),
     ], className="upload-inner")
     return {"contents": contents, "filename": filename}, picked, ""
+
+
+# ── the intervention panel (step 2) ──────────────────────────────────────
+# One running try per BEFORE run: {before record name: pending try}.
+IV_ACTIVE: dict[str, dict[str, Any]] = {}
+_IV_INFO_CACHE: dict[str, tuple[float, Any]] = {}
+
+
+def _iv_base_dir(run_id: str | None) -> Path | None:
+    """The folder of the run on screen, when it is a saved UI run."""
+    run = RUNS.get(run_id or "")
+    name = str((run or {}).get("record_name") or "")
+    d = UI_RUNS_DIR / name if name else None
+    return d if d and d.is_dir() else None
+
+
+def _iv_info(run_id: str | None) -> dict | None:
+    """base_info for the run on screen, cached on stage4.json's time."""
+    from agentic import ui_intervene
+    d = _iv_base_dir(run_id)
+    if d is None:
+        return None
+    try:
+        stamp = (d / "stage4.json").stat().st_mtime
+    except OSError:
+        return None
+    hit = _IV_INFO_CACHE.get(str(d))
+    if hit and hit[0] == stamp:
+        return hit[1]
+    info = ui_intervene.base_info(d)
+    _IV_INFO_CACHE[str(d)] = (stamp, info)
+    return info
+
+
+@app.callback(Output("iv-target", "options"), Output("iv-target", "value"),
+              Output("iv-controls", "style"), Output("iv-note", "children"),
+              Input("run-id", "data"), Input("tick", "n_intervals"),
+              State("iv-target", "options"), State("iv-target", "value"))
+def iv_setup(run_id, _n, current, value):
+    """Fill the hazard list for the run on screen. Rechecked on the tick so
+    a live run gets its list the moment its recommendations are saved; the
+    user's pick is kept while the list is the same."""
+    from agentic import ui_intervene
+    info = _iv_info(run_id)
+    if info is None:
+        note = ("open a finished run to intervene on it: its hazards will "
+                "be listed here" if not run_id or _iv_base_dir(run_id) is None
+                else "the hazards are listed once this run's recommendations are written")
+        if not current:
+            return dash.no_update, dash.no_update, {"display": "none"}, note
+        return [], None, {"display": "none"}, note
+    opts = ui_intervene.target_options(info)
+    if not opts:
+        return [], None, {"display": "none"}, ("this run names no hazard to remove")
+    if opts == current:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    keep = value if any(o["value"] == value for o in opts) else opts[0]["value"]
+    note = (f"before side: {info['run']} · only the edited scene is run; its "
+            "settings are copied from this run, with the pathology probes off")
+    return opts, keep, {"display": "block"}, note
+
+
+@app.callback(Output("iv-instructions", "children"), Output("iv-caption", "value"),
+              Input("iv-target", "value"), State("run-id", "data"))
+def iv_instructions(target, run_id):
+    """The two edit instructions for the picked hazard (the frozen arm's
+    words), and the original caption put in the box, ready to be edited."""
+    from agentic import ui_intervene
+    info = _iv_info(run_id)
+    cap, img = ui_intervene.instructions(info, target) if info and target else ("", "")
+    if not cap:
+        return [], ""
+    box = {"fontSize": "11px", "color": "#334155", "background": "#f1f5f9",
+           "borderRadius": "6px", "padding": "5px 8px", "margin": "3px 0",
+           "userSelect": "all"}
+    lab = {"fontSize": "10px", "fontWeight": "800", "color": "#64748b"}
+    return [html.Div("for the caption", style=lab), html.Div(cap, style=box),
+            html.Div("for the image tool", style=lab), html.Div(img, style=box)], \
+        str(info.get("caption") or "")
+
+
+@app.callback(Output("iv-upload-name", "children"),
+              Input("iv-upload", "contents"), State("iv-upload", "filename"),
+              prevent_initial_call=True)
+def iv_show_upload(contents, filename):
+    return html.Div([html.Img(src=contents, className="upload-thumb"),
+                     html.Span(filename or "edited image", className="upload-name")],
+                    className="upload-inner")
+
+
+def iv_start(run_id: str | None, target: str | None, modality: str | None,
+             caption: str | None, upload: str | None, filename: str | None) -> str:
+    """Start the after run for one try. Returns "" on success or a plain
+    reason. No model is called when the try is not valid."""
+    from agentic import ui_intervene
+    info = _iv_info(run_id)
+    if info is None:
+        return "open a finished run first"
+    if info["run"] in IV_ACTIVE:
+        return "a try is already running on this run: wait for it to finish"
+    edited = None
+    if upload and "," in str(upload):
+        try:
+            edited = base64.b64decode(str(upload).split(",", 1)[1])
+        except Exception:
+            return "the uploaded image could not be read"
+    plan = ui_intervene.plan_try(info, str(target or ""), str(modality or ""),
+                                 caption, edited)
+    if not plan["ok"]:
+        return plan["why"]
+    base_dir = Path(info["dir"])
+    S = ui_intervene.after_settings(RUNS.get(run_id or "", {}).get("events") or [])
+    if S.get("subject"):
+        _models.set_subject(S["subject"])
+    if S.get("control"):
+        from agentic.graph_live import set_control
+        set_control(S["control"])
+    if S.get("retrieval"):
+        from agentic.retrieval import set_retrieval
+        set_retrieval(S["retrieval"])
+    image_bytes = edited if plan["use_edited_image"] else Path(info["image"]).read_bytes()
+    name = Path(info["image"]).name if info.get("image") else (filename or "scene.jpg")
+    origin = {"before_run": info["run"], "target": str(target), "modality": modality,
+              "mode": ui_intervene.MODE, "edit_source": "hand"}
+    after_id = start_live_run(image_bytes, name, plan["caption"],
+                              settings=S, after_of=origin)
+    IV_ACTIVE[info["run"]] = {
+        **origin, "after_run_id": after_id, "caption": plan["caption"],
+        "caption_changed": plan["caption_changed"],
+        "image_changed": plan["image_changed"], "settings": S,
+        "base_dir": str(base_dir), "started": time.time()}
+    return ""
+
+
+@app.callback(Output("iv-message", "children"),
+              Input("iv-run", "n_clicks"),
+              State("run-id", "data"), State("iv-target", "value"),
+              State("iv-modality", "value"), State("iv-caption", "value"),
+              State("iv-upload", "contents"), State("iv-upload", "filename"),
+              prevent_initial_call=True)
+def iv_run(n, run_id, target, modality, caption, upload, filename):
+    if not n:
+        return dash.no_update
+    return iv_start(run_id, target, modality, caption, upload, filename)
+
+
+def iv_poll(base_name: str) -> dict | None:
+    """Advance the running try of one before run: report progress, and when
+    the after run has ended, measure it and append the try to disk."""
+    from agentic import ui_intervene
+    pending = IV_ACTIVE.get(base_name)
+    if not pending:
+        return None
+    run = RUNS.get(pending["after_run_id"]) or {}
+    events = run.get("events") or []
+    if not run.get("done"):
+        stage = next((e.get("stage") for e in reversed(events)
+                      if e.get("type") == "stage_started"), None)
+        if any(e.get("type") == "recommendations_ready" for e in events):
+            stage = "scoring the recommendations"
+        elif any(e.get("type") == "assess_verdict" for e in events):
+            stage = "writing recommendations"
+        mins = (time.time() - float(pending.get("started") or time.time())) / 60
+        pending["progress"] = f"{stage or 'starting'} · {mins:.0f} min"
+        return pending
+    after_dir = UI_RUNS_DIR / str(run.get("record_name") or "")
+    one = ui_intervene.finish_try(Path(pending["base_dir"]), after_dir, pending,
+                                  error=run.get("error"))
+    ui_intervene.save_try(Path(pending["base_dir"]), one)
+    IV_ACTIVE.pop(base_name, None)
+    return None
+
+
+@app.callback(Output("iv-status", "children"), Output("iv-key", "data"),
+              Input("tick", "n_intervals"), Input("run-id", "data"),
+              State("iv-key", "data"))
+def iv_status(_n, run_id, key):
+    """The tries saved on the run on screen, and the running one."""
+    from agentic import ui_intervene
+    d = _iv_base_dir(run_id)
+    if d is None:
+        new_key = "none"
+        return (dash.no_update, dash.no_update) if key == new_key else ([], new_key)
+    active = iv_poll(d.name)
+    tries = ui_intervene.load_tries(d)
+    new_key = f"{d.name}|{len(tries)}|{(active or {}).get('progress')}"
+    if new_key == key:
+        return dash.no_update, dash.no_update
+    return ui_intervene.status_component(tries, active), new_key
 
 
 def scenes_component(runs_dir: Path | None = None) -> list[Any]:

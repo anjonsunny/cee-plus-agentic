@@ -446,9 +446,9 @@ def findings(s4: dict, d: dict, *, chain: Callable[[dict], Any],
                             style={"fontSize": "10.5px", "color": "#94a3b8"}))
     out.append(_heading("CAUSAL GROUNDEDNESS"))
     out.append(html.Div(
-        "reserved: suppress the hazard, see whether the plan moves "
-        "(the intervention is not yet ported)",
-        className="ticket-empty", style={"borderStyle": "dashed"}))
+        "remove one hazard from the scene, run the edited scene, and see "
+        "whether the advice moves",
+        style={"fontSize": "10.5px", "color": "#94a3b8", "marginBottom": "4px"}))
     return out
 
 

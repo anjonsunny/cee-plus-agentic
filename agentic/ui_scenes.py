@@ -124,6 +124,8 @@ def scene_rows(runs_dir: Path, derive: Callable[[list], dict]) -> list[dict]:
                    key=lambda q: q.stat().st_mtime, reverse=True)
     rows: dict[str, dict] = {}
     for p in paths:
+        if (p.parent / "after_of.json").exists():
+            continue                        # the edited side of an intervention
         image = str(run_head(p).get("image_name") or "")
         scene = image.rsplit(".", 1)[0]
         if not scene or scene in rows:

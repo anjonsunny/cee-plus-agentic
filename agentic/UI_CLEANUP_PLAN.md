@@ -357,3 +357,32 @@ labelled "run". It now looks past the settings line.
 Not built: the dev-only correctness mark against ground truth, and a
 comparison with the previous run of the same scene. Both fit the
 calibration step.
+
+## 14. Intervention, steps 1 and 2 (Sunny, 2026-11-13)
+
+Decided: edit by hand first ("to test the pipeline"), one mode only (the
+hazard never happened), three channels (caption, image, both), and the
+before side is any FINISHED saved run, so only the edited scene is run.
+
+- Step 1, `agentic/intervention4.py`: the measuring, imported from the
+  frozen `intervention.py` (never copied). A before run and an after run
+  of ours are translated into the frozen shape and compared by the frozen
+  code. A saved frozen try comes out with the same numbers.
+- Step 2, `agentic/ui_intervene.py` + the panel under CAUSAL GROUNDEDNESS
+  in the FINDINGS card: (1) pick what to remove, from the frozen arm's
+  ranked candidates with the three picks marked; (2) the two edit
+  instructions in the frozen arm's words; (3) caption / image / both, the
+  caption box, the image upload, RUN THE EDITED SCENE. A try is checked
+  before any model call. The after run copies what shapes the advice from
+  the before run (subject, control, rule lookup, judges, the two re-asks)
+  and runs with the pathology probes off. It is marked `intervention_after`
+  and `after_of.json`, so it never shows as the scene's own run. When it
+  ends it is measured and appended to `interventions.json` in the before
+  run's folder; failed tries are saved with their reason; nothing is
+  rewritten.
+
+Left: step 3 (the before | after result panel), step 4 (all tries of a
+run, the core and spurious split against ground truth). Open: the frozen
+arm has no ground-truth file for scenes A to H, so their verdict cell
+reads "not adjudicable" until those are written; the shifts are measured
+either way. An automatic edit fills the same slot later (`edit_source`).
