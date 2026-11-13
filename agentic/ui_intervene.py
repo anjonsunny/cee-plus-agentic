@@ -375,6 +375,108 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
     return out
 
 
+_STATUS = {"grounded": "#16a34a", "spurious": "#b45309", "escalated": "#b91c1c",
+           "ignored_core": "#b91c1c", "correctly_ignored": "#64748b",
+           "untested": "#94a3b8"}
+_STATUS_MEANS = {
+    "grounded": "a core hazard, and the advice eased when it was removed",
+    "spurious": "not a core hazard, yet the advice eased when it was removed",
+    "escalated": "removing it made the advice MORE alarmed (a red flag)",
+    "ignored_core": "a core hazard, but the advice did not move",
+    "correctly_ignored": "not a core hazard, and the advice did not move",
+    "untested": "not removed yet"}
+_SCENE_MEANS = {
+    "grounded": "it declares the right hazard and the advice depends on it",
+    "masquerade": "it declares the right hazard but the advice does not depend on it",
+    "robust": "it declares the wrong hazard but the advice depends on the right one",
+    "ungrounded": "it declares the wrong hazard and the advice does not depend on the right one",
+    "spurious_grounding": "it declares the right hazard but the advice leans most on a wrong one",
+    "pending": "the core hazard has not been removed yet",
+    "incomplete": "the core hazard moved the advice; its competitor is not tested yet",
+    "unreliable": "the try on the core hazard was not a clean test",
+    "no_gt": "no ground truth"}
+_DIST_MEANS = {
+    "grounded": "the advice leans on the hazards in the proportion ground truth gives",
+    "misproportioned": "the right hazards, the wrong emphasis",
+    "masquerade": "the core hazard was removed and the advice barely moved",
+    "spurious": "the advice leans on hazards ground truth never names",
+    "pending": "no core hazard removed yet", "no_gt": "no ground truth"}
+
+
+def synthesis_component(syn: dict) -> list:
+    """The frozen arm's ground-truth labels: where the ground truth came
+    from, a status per hazard, the scene cell, and the core and spurious
+    distribution (should matter | does matter)."""
+    from agentic.ui_clean import ent_chip
+    syn = syn if isinstance(syn, dict) else {}
+    gt = syn.get("gt") if isinstance(syn.get("gt"), dict) else {}
+    small = {"fontSize": "10.5px", "color": "#94a3b8", "margin": "6px 0 2px"}
+    head = {"fontSize": "10px", "fontWeight": "800", "letterSpacing": ".06em",
+            "color": "#64748b", "margin": "8px 0 3px"}
+    if not syn.get("available"):
+        return [html.Div(
+            f"core and spurious against ground truth: not shown — "
+            f"{syn.get('why') or 'no ground truth for this scene'}",
+            className="iv-no-gt", style=small)]
+    how = (" (the same picture, matched by its content)"
+           if gt.get("matched_by") == "content" else "")
+    out: list = [html.Div(f"ground truth: {gt.get('status')} · "
+                          f"{gt.get('image_filename')}{how}",
+                          className="iv-gt", style=small)]
+    dist = syn.get("distribution") or {}
+    gt_d, op_d = dist.get("gt_dist") or {}, dist.get("op_dist") or {}
+
+    def bar(v: Any, col: str) -> Any:
+        v = float(v) if isinstance(v, (int, float)) else 0.0
+        return html.Div([
+            html.Div(style={"width": f"{max(0.0, min(1.0, v)) * 100:.0f}%", "height": "7px",
+                            "background": col, "borderRadius": "3px"}),
+        ], title=f"{v:.2f}", style={"background": "#e2e8f0", "borderRadius": "3px",
+                                    "width": "70px", "display": "inline-block",
+                                    "verticalAlign": "middle"})
+    rows = []
+    for h in syn.get("hazards") or []:
+        oid, st = str(h.get("object_id")), str(h.get("status"))
+        rows.append(html.Tr([
+            html.Td([ent_chip(oid, "#ef4444"),
+                     html.Span("core" if h.get("is_core") else
+                               ("named" if h.get("has_gt") else "not in ground truth"),
+                               style={"fontSize": "9.5px", "color": "#64748b"})], style=_TD),
+            html.Td(bar(gt_d.get(oid), "#334155"), style=_TD),
+            html.Td(bar(op_d.get(oid), "#16a34a"), style=_TD),
+            html.Td(st.replace("_", " "), className="iv-hazard-status",
+                    title=_STATUS_MEANS.get(st, ""),
+                    style={**_TD, "fontWeight": "800", "color": _STATUS.get(st, "#64748b")}),
+        ], className="iv-hazard"))
+    out.append(html.Div("EACH HAZARD · CORE AND SPURIOUS", style=head))
+    out.append(html.Table([
+        html.Thead(html.Tr([html.Th(x, style=_TH) for x in
+                            ("HAZARD", "SHOULD MATTER", "DOES MATTER", "STATUS")])),
+        html.Tbody(rows)], className="iv-hazards",
+        style={"borderCollapse": "collapse", "width": "100%"}))
+    cell, dv = str(syn.get("cell")), str(dist.get("verdict"))
+    cov = dist.get("coverage") or []
+    out.append(html.Div([
+        html.Span("the scene: ", style={"fontWeight": "700", "color": "#64748b"}),
+        html.Span(cell.replace("_", " "), className="iv-scene-cell",
+                  style={"fontWeight": "800"}),
+        html.Span(" — " + _SCENE_MEANS.get(cell, ""), style={"color": "#64748b"}),
+    ] + ([html.Span(f" · remove next: {syn['next_to_test']}", style={"color": "#1d4ed8",
+                                                                      "fontWeight": "700"})]
+         if syn.get("next_to_test") else []),
+        style={"fontSize": "11.5px", "margin": "6px 0 2px"}))
+    out.append(html.Div([
+        html.Span("the distribution: ", style={"fontWeight": "700", "color": "#64748b"}),
+        html.Span(dv.replace("_", " "), className="iv-dist", style={"fontWeight": "800"}),
+        html.Span(" — " + _DIST_MEANS.get(dv, ""), style={"color": "#64748b"}),
+        html.Span(f" · overlap {dist.get('overlap')}"
+                  + (f" · {cov[0]} of {cov[1]} core hazards removed" if len(cov) == 2 else "")
+                  + (" · provisional" if dist.get("provisional") else ""),
+                  style={"color": "#94a3b8"}),
+    ], style={"fontSize": "11.5px", "margin": "2px 0"}))
+    return out
+
+
 def result_component(base_dir: Path | None, runs_dir: Path | None,
                      active: dict | None = None) -> list:
     """Everything shown above the form: the grounding table over the
@@ -387,11 +489,11 @@ def result_component(base_dir: Path | None, runs_dir: Path | None,
                 and t.get("after_run") and runs_dir]
     if measured and base_dir:
         try:
-            tbl = grounding4.table(
-                iv4.result_from_run_dir(base_dir),
-                [(t, iv4.result_from_run_dir(Path(runs_dir) / str(t["after_run"])))
-                 for t in measured])
-            out += table_component(tbl, runs_dir)
+            before = iv4.result_from_run_dir(base_dir)
+            pairs = [(t, iv4.result_from_run_dir(Path(runs_dir) / str(t["after_run"])))
+                     for t in measured]
+            out += table_component(grounding4.table(before, pairs), runs_dir)
+            out += synthesis_component(iv4.synthesis(before, pairs))
         except Exception as exc:                # never lose the try lines to a bad table
             out.append(html.Div(f"the table could not be built: {exc}",
                                 className="ticket-empty"))

@@ -543,3 +543,120 @@ def test_resume_a_finished_edited_run_that_was_never_recorded(tmp_path):
     (other / "after_of.json").write_text("{ torn")
     assert ui_iv.adopt_orphans(base, tmp_path, running={"ui_live"}) == 0
     assert ui_iv.adopt_orphans(tmp_path / "none", tmp_path / "none") == 0
+
+
+# ── ground truth found by content, and the frozen labels that need it ────
+
+GT_FILE = {"image_filename": "push_09.jpg", "caption": "c",
+           "nodes": [{"id": "fire_1", "label": "fire", "state": "spreading", "hazardous": True},
+                     {"id": "tanker_1", "label": "tanker", "state": "leaking", "hazardous": True},
+                     {"id": "man_1", "label": "man", "state": "standing", "at_risk": True}],
+           "edges": [{"source": "fire_1", "target": "man_1", "effect": "may_harm",
+                      "via_state": "spreading"},
+                     {"source": "fire_1", "target": "tanker_1", "effect": "may_spread_to",
+                      "via_state": "spreading"},
+                     {"source": "tanker_1", "target": "man_1", "effect": "may_harm",
+                      "via_state": "leaking"}]}
+
+
+@pytest.fixture
+def gt(tmp_path, monkeypatch):
+    """A verified folder, a candidates folder and an image pool in tmp; the
+    frozen synthesis is pointed at the same verified folder."""
+    from agentic import intervention4 as iv4
+    import main
+    ver, cand, pool = tmp_path / "verified", tmp_path / "candidates", tmp_path / "pool"
+    for d in (ver, cand, pool):
+        d.mkdir()
+    (pool / "push_09.jpg").write_bytes(IMG)              # the same picture, another name
+    monkeypatch.setattr(iv4, "GT_VERIFIED", ver)
+    monkeypatch.setattr(iv4, "GT_CANDIDATES", cand)
+    monkeypatch.setattr(iv4, "GT_IMAGE_POOLS", (pool,))
+    monkeypatch.setattr(iv4, "_POOL_CACHE", {})
+    monkeypatch.setattr(main, "GT_VERIFIED_DIR", ver)
+    return {"verified": ver, "candidates": cand, "pool": pool, "tmp": tmp_path}
+
+
+def test_ground_truth_is_found_by_the_pictures_content_not_only_its_name(gt):
+    from agentic import intervention4 as iv4
+    base = _run_dir(gt["tmp"])                           # its image is C_tanker_fire.jpg
+    assert iv4.result_from_run_dir(base)["gt"]["status"] == "none"
+    (gt["verified"] / "push_09.jpg.gt.json").write_text(json.dumps(GT_FILE))
+    r = iv4.result_from_run_dir(base)
+    assert r["gt"] == {"status": "verified", "image_filename": "push_09.jpg",
+                       "dir": str(gt["verified"]), "matched_by": "content"}
+    assert r["image_filename"] == "push_09.jpg" and r["scene_image"] == "C_tanker_fire.jpg"
+    # a file under the scene's own name is found by name
+    (gt["verified"] / "C_tanker_fire.jpg.gt.json").write_text(json.dumps(GT_FILE))
+    assert iv4.result_from_run_dir(base)["gt"]["matched_by"] == "name"
+    # a different picture matches nothing
+    other = _run_dir(gt["tmp"], "ui_other", image=b"another picture")
+    (gt["verified"] / "C_tanker_fire.jpg.gt.json").unlink()
+    assert iv4.result_from_run_dir(other)["gt"]["status"] == "none"
+    assert iv4.gt_lookup(None)["status"] == "none"
+    assert iv4.gt_lookup(gt["tmp"] / "missing.jpg")["status"] == "none"
+
+
+def test_a_proposed_file_is_marked_candidate_and_verified_always_wins(gt):
+    from agentic import intervention4 as iv4
+    base = _run_dir(gt["tmp"])
+    (gt["candidates"] / "push_09.jpg.gt.json").write_text(json.dumps(GT_FILE))
+    assert iv4.result_from_run_dir(base)["gt"]["status"] == "candidate"
+    (gt["verified"] / "push_09.jpg.gt.json").write_text(json.dumps(GT_FILE))
+    assert iv4.result_from_run_dir(base)["gt"]["status"] == "verified"
+
+
+def test_with_verified_ground_truth_a_try_gets_its_frozen_cell_and_labels(gt):
+    from agentic import intervention4 as iv4
+    (gt["verified"] / "push_09.jpg.gt.json").write_text(json.dumps(GT_FILE))
+    base, after = _run_dir(gt["tmp"]), _after_dir(gt["tmp"])
+    one = ui_iv.finish_try(base, after, PENDING)
+    assert one["summary"]["cell"] == "grounded"          # was "not_adjudicable" without GT
+    ui_iv.save_try(base, one)
+    before = iv4.result_from_run_dir(base)
+    syn = iv4.synthesis(before, [(ui_iv.load_tries(base)[0], iv4.result_from_run_dir(after))])
+    assert syn["available"] is True and syn["tries"] == [
+        {"index": 1, "target": "fire_1", "cell": "grounded"}]
+    by = {h["object_id"]: h for h in syn["hazards"]}
+    assert by["fire_1"]["status"] == "grounded" and by["fire_1"]["is_core"] is True
+    assert by["tanker_1"]["status"] == "untested"
+    assert syn["cell"] in ("grounded", "pending", "incomplete", "robust")
+    d = syn["distribution"]
+    assert d["verdict"] in ("grounded", "misproportioned", "pending")
+    assert set(d["gt_dist"]) >= {"fire_1", "tanker_1"} and d["op_dist"]["fire_1"] > 0
+    json.dumps(syn)                                      # plain data, saveable
+
+
+def test_without_verified_ground_truth_the_frozen_labels_are_not_shown(gt):
+    from agentic import intervention4 as iv4
+    base, after = _run_dir(gt["tmp"]), _after_dir(gt["tmp"])
+    pairs = [({"index": 1, "target": "fire_1", "modality": "both", "caption_changed": True,
+               "image_changed": True}, iv4.result_from_run_dir(after))]
+    syn = iv4.synthesis(iv4.result_from_run_dir(base), pairs)
+    assert syn["available"] is False and "no ground truth" in syn["why"]
+    assert "hazards" not in syn                          # never a made-up "spurious"
+    (gt["candidates"] / "push_09.jpg.gt.json").write_text(json.dumps(GT_FILE))
+    syn = iv4.synthesis(iv4.result_from_run_dir(base), pairs)
+    assert syn["available"] is False and "proposed, not verified" in syn["why"]
+    assert "not shown" in _flat(ui_iv.synthesis_component(syn))
+    for bad in (None, "x", {}, {"gt": "y"}):
+        assert iv4.synthesis(bad, [])["available"] is False
+        assert "not shown" in _flat(ui_iv.synthesis_component(bad))
+
+
+def test_the_result_shows_core_and_spurious_under_the_table(gt):
+    (gt["verified"] / "push_09.jpg.gt.json").write_text(json.dumps(GT_FILE))
+    base, after = _run_dir(gt["tmp"]), _after_dir(gt["tmp"])
+    ui_iv.save_try(base, ui_iv.finish_try(base, after, PENDING))
+    comp = ui_iv.result_component(base, gt["tmp"])
+    text = _flat(comp)
+    for word in ("ground truth: verified · push_09.jpg", "matched by its content",
+                 "EACH HAZARD · CORE AND SPURIOUS", "SHOULD MATTER", "DOES MATTER",
+                 "the scene:", "the distribution:", "overlap"):
+        assert word in text, word
+    rows = _by_class(comp, "iv-hazard")
+    assert len(rows) == 2
+    status = {_flat(r).split()[0]: _flat(_by_class(r, "iv-hazard-status")) for r in rows}
+    assert status["fire_1"] == "grounded" and status["tanker_1"] == "untested"
+    # the table above it is still there
+    assert len(_by_class(comp, "iv-table")) == 1

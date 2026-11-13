@@ -429,3 +429,28 @@ Not built yet: the frozen per-hazard status row, the scene cell
 (grounded / masquerade / robust / ungrounded / spurious_grounding) and the
 distribution verdict; all three need ground-truth files for A to H, and
 without one the frozen code would call every moved hazard "spurious".
+
+## 16. Ground truth found by content, and the frozen labels (2026-11-13)
+
+- Three of our scenes are byte-for-byte the frozen arm's pictures under
+  other file names: B_pool = push_06_drowning_pool, C_tanker_fire =
+  push_09_tanker_near_fire, F_park_control = push_61_park_saturday. Their
+  VERIFIED ground truth already exists. The frozen lookup goes by file
+  name and found nothing; `intervention4.gt_lookup` also recognises the
+  picture by its content. A, D, E, G, H have none.
+- Status is carried with every result: verified, candidate (proposed, not
+  verified) or none. A verified file always wins.
+- With verified ground truth a try gets its frozen cell (the C fire try:
+  grounded), and under the grounding table: each hazard with "should
+  matter" (ground truth) and "does matter" (measured) bars and its frozen
+  status, the scene cell with "remove next", and the distribution verdict
+  with its overlap and coverage. All imported from main.py
+  (`_synthesis_cell`, `_distributional_groundedness`).
+- Without verified ground truth these are not shown and the screen says
+  why. main.py reads its verified folder only, so a candidate file gives
+  a per-try cell but not the synthesis.
+- Writing candidate files for A, D, E, G, H and Sunny approving them is a
+  separate task (Sunny, 2026-11-13).
+- Edited pictures from the frozen arm's own work exist in
+  exports/counterfactuals (push_09: no fire and smoke, no leak, no person,
+  no tanker; push_06: left child safe) and can be reused for C and B.
