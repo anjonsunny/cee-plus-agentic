@@ -513,7 +513,7 @@ def test_the_result_shows_the_table_above_the_tries_with_hoverable_ids(tmp_path)
     assert {"fire_1", "tanker_1", "man_1"} <= set(_oids(comp))
     assert len(_by_class(comp, "iv-row")) == 2 and len(_by_class(comp, "iv-table")) == 1
     cell = _by_class(comp, "iv-cell")[0]
-    assert "no matching advice" in cell.title            # hover says what it was matched to
+    assert "no longer in the answer" in cell.title       # hover says what the words mean
     # a try whose after run folder is gone does not break the page
     (after / "stage4.json").unlink()
     assert "the tries, one line each" in _flat(ui_iv.result_component(base, tmp_path))
@@ -884,3 +884,42 @@ def test_the_hazard_list_uses_the_signed_reading_and_names_the_frozen_label(gt, 
     sg = chain4.signed_shift(real(before, pairs[0][1], "fire_1")["signals"],
                              chain4.direction(before, pairs[0][1]))
     assert by["fire_1"]["operative"] == pytest.approx(abs(sg["value"]), abs=0.001)
+
+
+# ── cell wording (Sunny, 2026-11-13: "gone or stays or changed ... it's a
+#    little bit confusing") ───────────────────────────────────────────────
+
+def test_a_cell_says_what_happened_to_the_advice_then_the_label():
+    from agentic import grounding4 as g
+    after = _res(["fire_1", "smoke_1", "man_1", "truck_1"],
+                 [_rec(1, "fire_1", ["man_1"], "Lead man_1 out."),
+                  _rec(2, "spill_1", ["man_1"], "Contain the spill."),
+                  _rec(3, "fire_1", ["truck_1", "man_1"], "Cool truck_1.",
+                       effect="may_spread_to")])
+    tbl = g.table(BEFORE, [({"index": 1, "target": "spill_1", "after_run": "x"}, after)])
+    comp = ui_iv.table_component(tbl)
+    assert ui_iv.TABLE_KEY in _flat(comp)
+    cells = {i + 1: c for i, c in enumerate(_by_class(comp, "iv-cell"))}
+    rows = _by_class(comp, "iv-row")
+    by = {_flat(r).split()[0]: _flat(_by_class(r, "iv-cell")) for r in rows}
+    assert by["#1"] == "advice kept → correctly ignored"
+    assert by["#2"] == "advice kept → masquerade"
+    assert by["#3"] == "advice kept, adjusted → correctly ignored"
+    assert by["#4"] == "advice dropped → spurious"
+    assert by["#6"] == "nothing left to protect"         # bookkeeping: no label
+    text = _flat(comp)
+    for old_word in ("action changed", "gone with it", " stays ", " gone "):
+        assert old_word not in " " + text + " ", old_word
+    # the hover explains the phrase and shows the two pieces of advice
+    kept = next(c for c in _by_class(comp, "iv-cell") if "adjusted" in _flat(c))
+    assert "protects different things" in kept.title
+    assert "before: Extinguish fire_1." in kept.title and "after: Cool truck_1." in kept.title
+    dropped = next(c for c in _by_class(comp, "iv-cell") if "dropped" in _flat(c))
+    assert "no longer in the answer" in dropped.title and "after:" not in dropped.title
+
+
+def test_what_else_the_edited_picture_lost_is_worded_as_an_observation():
+    from agentic import grounding4 as g
+    after = _res(["spill_1", "man_1", "truck_1"], [_rec(1, "spill_1", ["man_1"])])
+    tbl = g.table(BEFORE, [({"index": 1, "target": "fire_1", "after_run": "x"}, after)])
+    assert "also missing from the edited picture: smoke_1" in _flat(ui_iv.table_component(tbl))

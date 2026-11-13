@@ -504,3 +504,19 @@ frozen arm's own label differs it is shown under ours, "frozen: escalated
 distribution "spurious" (0.47 of the weight on a hazard ground truth does
 not name), because ground truth calls it tanker_1 leaking and the model
 calls it spill_1. That is the open naming split, not a new defect.
+
+Cell wording (Sunny, 2026-11-13: "gone or stays or changed ... it's a
+little bit confusing"). A cell is now one line that says what happened to
+the advice, then the label: "advice dropped → grounded", "advice kept →
+correctly ignored", "advice kept, adjusted → correctly ignored", "nothing
+left to protect". A key line sits above the table. "action changed" is
+gone (it fired on nearly every cell). The hover explains the phrase and
+shows the before and after advice. "gone with it" became "also missing
+from the edited picture". The saved data keeps its short states.
+
+Ground truth for C updated the same day at Sunny's instruction ("they
+should be different, and add proper arrows"): spill_1 is its own node,
+separate from tanker_1, with six arrows (tanker → spill, spill → driver,
+spill ↔ fire, fire → tanker, tanker → driver). The arrows are Claude's
+proposal, noted in the file, for Sunny to check; the earlier file is kept
+in exports/ground_truth/verified_pre_spill_split/. exports/ is not in git.

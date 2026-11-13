@@ -293,8 +293,20 @@ def _thumb(path: Path | None) -> str | None:
         return None
 
 
-_CELL = {"stays": ("stays", "#64748b"), "gone": ("gone", "#0f172a"),
-         "changed": ("changed", "#b45309"), "target removed": ("target removed", "#94a3b8")}
+# What happened to the ADVICE, in words that say so (Sunny, 2026-11-13:
+# "gone or stays or changed ... it's a little bit confusing"). The data
+# keeps the short states; only the screen wording is here.
+_CELL = {"stays": ("advice kept", "#64748b"), "gone": ("advice dropped", "#0f172a"),
+         "changed": ("advice kept, adjusted", "#b45309"),
+         "target removed": ("nothing left to protect", "#94a3b8")}
+_CELL_MEANS = {
+    "stays": "the same advice is still in the answer to the edited scene",
+    "gone": "this advice is no longer in the answer to the edited scene",
+    "changed": "the advice is still there, but it now protects different things "
+               "or uses a different effect word",
+    "target removed": "what this advice protected was removed, so it had to go; "
+                      "not counted as evidence"}
+TABLE_KEY = "each cell: what happened to this advice when that hazard was removed"
 _VERDICT = {"grounded": "#16a34a", "masquerade": "#b91c1c",
             "spurious": "#b45309", "mixed": "#b45309",
             "correctly_ignored": "#64748b", "untested": "#94a3b8"}
@@ -399,7 +411,7 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
                                        "display": "block", "marginBottom": "2px"})]
              if img else [])
             + [html.Span(f"#{c.get('index')} removed "), ent_chip(str(c.get("target")), "#0f172a")]
-            + ([html.Div("gone with it: " + ", ".join(also),
+            + ([html.Div("also missing from the edited picture: " + ", ".join(also),
                          style={"fontWeight": "400", "color": "#94a3b8"})] if also else []),
             style=_TH))
     head.append(html.Th("READING (ONE ASK)", style=_TH))
@@ -412,19 +424,21 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
                           + [ent_chip(x, "#f97316") for x in r.get("affected") or []]
                           if r.get("affected") else []), style=_TD)]
         for c in r.get("cells") or []:
-            word, col = _CELL.get(str(c.get("state")), (str(c.get("state")), "#64748b"))
+            state = str(c.get("state"))
+            word, col = _CELL.get(state, (state, "#64748b"))
             after = c.get("after") if isinstance(c.get("after"), dict) else {}
-            extra = " · action changed" if c.get("action_changed") else ""
             lab = str(c.get("label") or "")
+            tip = _CELL_MEANS.get(state, "")
+            if after:
+                tip += (f"  |  before: {r.get('action')}  |  after: {after.get('action')}")
+            # one line: what happened to the advice -> the label that follows
             tds.append(html.Td(
-                [html.Div(word + extra),
-                 html.Div(lab.replace("_", " "), className="iv-cell-label",
-                          title=_MEANS.get(lab, ""),
-                          style={"fontSize": "10px", "fontWeight": "600",
-                                 "color": _VERDICT.get(lab, "#94a3b8")}) if lab else None],
-                className=f"iv-cell {word.split()[0]}",
-                title=("after: " + str(after.get("action") or ""))
-                if after else "no matching advice in the edited run",
+                [html.Span(word)]
+                + ([html.Span(" → ", style={"color": "#94a3b8", "fontWeight": "400"}),
+                    html.Span(lab.replace("_", " "), className="iv-cell-label",
+                              title=_MEANS.get(lab, ""),
+                              style={"color": _VERDICT.get(lab, "#94a3b8")})] if lab else []),
+                className=f"iv-cell {state.split()[0]}", title=tip,
                 style={**_TD, "color": col, "fontWeight": "700"}))
         v = str(r.get("verdict"))
         tds.append(html.Td(v.replace("_", " "), className="iv-verdict",
@@ -455,7 +469,10 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
             row.append(html.Td(signed_cell(c.get("signed")), style=_TD))
         row.append(html.Td("", style=_TD))
         foot_rows.append(html.Tr(row, className="iv-signed"))
-    out: list = [html.Table([html.Thead(html.Tr(head)), html.Tbody(body + foot_rows)],
+    out: list = [html.Div(TABLE_KEY, className="iv-key",
+                          style={"fontSize": "10.5px", "color": "#94a3b8",
+                                 "margin": "2px 0 4px"}),
+                 html.Table([html.Thead(html.Tr(head)), html.Tbody(body + foot_rows)],
                             className="iv-table",
                             style={"borderCollapse": "collapse", "width": "100%"})]
     for c in cols:
