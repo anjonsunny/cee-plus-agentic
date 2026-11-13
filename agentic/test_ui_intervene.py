@@ -616,7 +616,7 @@ def test_with_verified_ground_truth_a_try_gets_its_frozen_cell_and_labels(gt):
     before = iv4.result_from_run_dir(base)
     syn = iv4.synthesis(before, [(ui_iv.load_tries(base)[0], iv4.result_from_run_dir(after))])
     assert syn["available"] is True and syn["tries"] == [
-        {"index": 1, "target": "fire_1", "cell": "grounded"}]
+        {"index": 1, "target": "fire_1", "cell": "grounded", "frozen_cell": "grounded"}]
     by = {h["object_id"]: h for h in syn["hazards"]}
     assert by["fire_1"]["status"] == "grounded" and by["fire_1"]["is_core"] is True
     assert by["tanker_1"]["status"] == "untested"
@@ -841,3 +841,46 @@ def test_the_table_shows_the_signed_shift_next_to_the_frozen_number(tmp_path):
     assert "graph: +0.71 (by chain)" in cell[0].title
     for bad in (None, "x", {}, {"value": None, "parts": [None], "frozen": 3}):
         ui_iv.signed_cell(bad)                       # never raises
+
+
+# ── one reading on the whole screen (Sunny, 2026-11-13: the table said
+#    "eased" and the hazard list said "escalated" for the same try) ───────
+
+def test_the_hazard_list_uses_the_signed_reading_and_names_the_frozen_label(gt, monkeypatch):
+    from agentic import chain4, intervention4 as iv4
+    (gt["verified"] / "push_09.jpg.gt.json").write_text(json.dumps(GT_FILE))
+    base, after = _run_dir(gt["tmp"]), _after_dir(gt["tmp"])
+    ui_iv.save_try(base, ui_iv.finish_try(base, after, PENDING))
+    pairs = [(ui_iv.load_tries(base)[0], iv4.result_from_run_dir(after))]
+    before = iv4.result_from_run_dir(base)
+    # as measured, both readings agree on this try
+    syn = iv4.synthesis(before, pairs)
+    assert syn["tries"][0]["cell"] == syn["tries"][0]["frozen_cell"] == "grounded"
+    assert syn["frozen"]["hazards"]["fire_1"] == "grounded"
+    assert "(differs)" not in _flat(ui_iv.synthesis_component(syn))
+
+    # now a try the frozen arm reads as escalated (its graph count rose)
+    # while every signal, read by itself, eased
+    real = iv4.measure
+
+    def escalated_by_count(*a, **k):
+        res = real(*a, **k)
+        res["signals"] = {**res["signals"], "graph_direction": "escalated"}
+        res["verdict"] = iv4._frozen().adjudicate_groundedness(
+            res["spec"], res["signals"], res["candidates"])
+        return res
+    monkeypatch.setattr(iv4, "measure", escalated_by_count)
+    syn = iv4.synthesis(before, pairs)
+    (one,) = syn["tries"]
+    assert one["frozen_cell"] == "escalated" and one["cell"] == "grounded"
+    by = {h["object_id"]: h for h in syn["hazards"]}
+    assert by["fire_1"]["status"] == "grounded" and by["fire_1"]["operative"] > 0
+    assert syn["frozen"]["hazards"]["fire_1"] == "escalated"
+    comp = ui_iv.synthesis_component(syn)
+    row = next(r for r in _by_class(comp, "iv-hazard") if _flat(r).startswith("fire_1"))
+    assert "grounded" in _flat(row) and "frozen: escalated (differs)" in _flat(row)
+    assert "the same reading as the table above" in _flat(comp)
+    # the size handed to the frozen code is the signed shift, not its own number
+    sg = chain4.signed_shift(real(before, pairs[0][1], "fire_1")["signals"],
+                             chain4.direction(before, pairs[0][1]))
+    assert by["fire_1"]["operative"] == pytest.approx(abs(sg["value"]), abs=0.001)

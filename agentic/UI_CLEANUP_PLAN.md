@@ -492,3 +492,15 @@ averaging are ours. Third foot row of the table, "signed shift", with the
 frozen number under it marked "(differs)"; the hover lists the three
 lines. Saved with each new try. C spill try: +0.64 eased, frozen -0.64
 escalated. Equal weights are a first choice, open to calibration.
+
+One reading on the whole screen (Sunny, 2026-11-13: "I thought you fixed
+the code" — the table said eased and the hazard list said escalated for
+the same try). The hazard list, the scene cell and the distribution are
+still computed by the frozen code, but from OUR signed shift: each try's
+signals are handed over with the direction and size replaced, and the
+frozen `adjudicate_groundedness` works out the cell again. Where the
+frozen arm's own label differs it is shown under ours, "frozen: escalated
+(differs)". Known consequence on C: spill_1 now reads "spurious" and the
+distribution "spurious" (0.47 of the weight on a hazard ground truth does
+not name), because ground truth calls it tanker_1 leaking and the model
+calls it spill_1. That is the open naming split, not a new defect.

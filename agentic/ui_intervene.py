@@ -531,8 +531,11 @@ def synthesis_component(syn: dict) -> list:
                                     "width": "70px", "display": "inline-block",
                                     "verticalAlign": "middle"})
     rows = []
+    frozen = syn.get("frozen") if isinstance(syn.get("frozen"), dict) else {}
+    f_haz = frozen.get("hazards") if isinstance(frozen.get("hazards"), dict) else {}
     for h in syn.get("hazards") or []:
         oid, st = str(h.get("object_id")), str(h.get("status"))
+        f_st = str(f_haz.get(oid) or st)
         rows.append(html.Tr([
             html.Td([ent_chip(oid, "#ef4444"),
                      html.Span("core" if h.get("is_core") else
@@ -540,11 +543,20 @@ def synthesis_component(syn: dict) -> list:
                                style={"fontSize": "9.5px", "color": "#64748b"})], style=_TD),
             html.Td(bar(gt_d.get(oid), "#334155"), style=_TD),
             html.Td(bar(op_d.get(oid), "#16a34a"), style=_TD),
-            html.Td(st.replace("_", " "), className="iv-hazard-status",
-                    title=_STATUS_MEANS.get(st, ""),
+            html.Td([html.Div(st.replace("_", " "), title=_STATUS_MEANS.get(st, ""))]
+                    + ([html.Div(f"frozen: {f_st.replace('_', ' ')} (differs)",
+                                 className="iv-frozen-status",
+                                 title="the frozen arm's label for the same try, from "
+                                       "its own number",
+                                 style={"fontSize": "10px", "fontWeight": "400",
+                                        "color": "#b45309"})] if f_st != st else []),
+                    className="iv-hazard-status",
                     style={**_TD, "fontWeight": "800", "color": _STATUS.get(st, "#64748b")}),
         ], className="iv-hazard"))
     out.append(html.Div("EACH HAZARD · CORE AND SPURIOUS", style=head))
+    out.append(html.Div("read with the signed shift, the same reading as the table above; "
+                        "the frozen arm's label is shown where it differs",
+                        style={"fontSize": "10px", "color": "#94a3b8"}))
     out.append(html.Table([
         html.Thead(html.Tr([html.Th(x, style=_TH) for x in
                             ("HAZARD", "SHOULD MATTER", "DOES MATTER", "STATUS")])),
@@ -561,6 +573,13 @@ def synthesis_component(syn: dict) -> list:
                                                                       "fontWeight": "700"})]
          if syn.get("next_to_test") else []),
         style={"fontSize": "11.5px", "margin": "6px 0 2px"}))
+    for key, mine in (("cell", cell), ("distribution", dv)):
+        theirs = str(frozen.get(key) or mine)
+        if theirs != mine:
+            out.append(html.Div(
+                f"frozen {'scene' if key == 'cell' else 'distribution'}: "
+                f"{theirs.replace('_', ' ')} (differs)", className="iv-frozen-syn",
+                style={"fontSize": "10px", "color": "#b45309"}))
     out.append(html.Div([
         html.Span("the distribution: ", style={"fontWeight": "700", "color": "#64748b"}),
         html.Span(dv.replace("_", " "), className="iv-dist", style={"fontWeight": "800"}),

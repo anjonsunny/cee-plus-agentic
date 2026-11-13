@@ -291,6 +291,29 @@ def summary(result: dict) -> dict:
     }
 
 
+def _our_reading(before: dict, after: dict, res: dict) -> dict:
+    """The frozen signals of one try with the DIRECTION and SIZE replaced by
+    our signed shift (agentic/chain4.py), and the frozen 2x2 cell worked out
+    again from them by the frozen `adjudicate_groundedness`. Nothing of the
+    frozen logic is rewritten: it is handed different inputs."""
+    from agentic import chain4                  # lazy: chain4 imports this module
+    signals = dict(_dict(res.get("signals")))
+    try:
+        sg = chain4.signed_shift(signals, chain4.direction(before, after))
+    except Exception:
+        return {"signals": signals, "verdict": res.get("verdict")}
+    word = {"eased": "de-escalated", "grew": "escalated"}.get(sg["direction"], "unchanged")
+    signals.update({"content_shift": abs(sg["value"]), "graph_direction": word,
+                    "rec_direction": word, "signed_shift": sg["value"]})
+    verdict = res.get("verdict")
+    try:
+        verdict = _frozen().adjudicate_groundedness(
+            _dict(res.get("spec")), signals, _dict(res.get("candidates")))
+    except Exception:
+        pass
+    return {"signals": signals, "verdict": verdict}
+
+
 def synthesis(before: dict, tries: list[tuple[dict, dict]], *,
               core_basis: str = "edge", core_rule: str = "half_max") -> dict:
     """The frozen arm's labels that need ground truth, over all tries of one
@@ -317,6 +340,7 @@ def synthesis(before: dict, tries: list[tuple[dict, dict]], *,
         return out
     clean_before = clean_result(before)
     history = []
+    frozen_history = []
     for one, after in tries or []:
         one = _dict(one)
         try:
@@ -329,14 +353,22 @@ def synthesis(before: dict, tries: list[tuple[dict, dict]], *,
             continue
         if not res.get("signals"):
             continue
-        history.append({
+        entry = {
             "selection": {"target_object_id": one.get("target")},
             "spec": res.get("spec"), "u_check": res.get("u_check"),
             "verdict": res.get("verdict"), "signals": res.get("signals"),
             "before": {"recommendations": clean_before["recommendations"],
-                       "graph_a": clean_before["causal_graph"] or {}}})
+                       "graph_a": clean_before["causal_graph"] or {}}}
+        frozen_history.append(entry)
+        # OUR reading of the same try (the signed shift): the frozen labels
+        # are then computed by the frozen code from it, so the whole screen
+        # speaks one reading (Sunny, 2026-11-13: the table said "eased" and
+        # the hazard list said "escalated" for the same try).
+        ours = _our_reading(before, after, res)
+        history.append({**entry, "signals": ours["signals"], "verdict": ours["verdict"]})
         out["tries"].append({"index": one.get("index"), "target": one.get("target"),
-                             "cell": _dict(res.get("verdict")).get("cell")})
+                             "cell": _dict(ours["verdict"]).get("cell"),
+                             "frozen_cell": _dict(res.get("verdict")).get("cell")})
     try:
         _frozen()
         import main
@@ -346,6 +378,16 @@ def synthesis(before: dict, tries: list[tuple[dict, dict]], *,
     except Exception as exc:
         out["why"] = f"the frozen synthesis could not run: {exc}"
         return out
+    try:
+        f_syn = main._synthesis_cell(clean_before, {"tries": frozen_history},
+                                     core_basis=core_basis, core_rule=core_rule)
+        f_dist = main._distributional_groundedness(f_syn)
+        out["frozen"] = {
+            "cell": f_syn.get("cell"), "distribution": f_dist.get("verdict"),
+            "hazards": {str(h.get("object_id")): h.get("status")
+                        for h in (f_syn.get("hazard_status") or []) if isinstance(h, dict)}}
+    except Exception:
+        out["frozen"] = {}
     out.update({
         "available": True, "cell": syn.get("cell"),
         "declared_match": syn.get("declared_match"),
