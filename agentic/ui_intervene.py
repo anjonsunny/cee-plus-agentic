@@ -236,6 +236,7 @@ def finish_try(base_dir: Path, after_dir: Path | None, pending: dict,
         ch = chain4.direction(iv4.result_from_run_dir(base_dir), after)
         one["chain"] = {k: ch[k] for k in ("before", "after", "delta", "direction",
                                            "frozen_count")}
+        one["signed_shift"] = chain4.signed_shift(res.get("signals"), ch)
     except Exception:
         one["chain"] = None
     return {**one, "status": "measured", "summary": iv4.summary(res),
@@ -350,6 +351,38 @@ def direction_cell(ch: Any) -> list:
     return out
 
 
+def signed_cell(sg: Any) -> list:
+    """The signed shift of one try (each signal with its own direction),
+    and the frozen arm's number under it. The hover shows the three lines."""
+    if not isinstance(sg, dict):
+        return []
+    word = str(sg.get("direction"))
+    parts = [p for p in (sg.get("parts") if isinstance(sg.get("parts"), list) else [])
+             if isinstance(p, dict)]
+    tip = "; ".join(
+        f"{p.get('signal')}: {p.get('signed'):+.2f}"
+        + (f" (by {p['by']})" if p.get("by") else "")
+        for p in parts if isinstance(p.get("signed"), (int, float)))
+    val = sg.get("value")
+    out = [html.Div(
+        (f"{val:+.2f}" if isinstance(val, (int, float)) else "?") + f" · {word}",
+        className="iv-signed-value", title=tip + " — averaged with equal weights",
+        style={"fontWeight": "800", "color": _DIR_COL.get(word, "#64748b")})]
+    fz = sg.get("frozen") if isinstance(sg.get("frozen"), dict) else {}
+    if fz.get("direction"):
+        fw = str(fz["direction"])
+        differs = {"eased": "de-escalated", "grew": "escalated"}.get(word, word) != fw
+        fv = fz.get("value")
+        out.append(html.Div(
+            "frozen: " + (f"{fv:+.2f}" if isinstance(fv, (int, float)) else "?") + f" · {fw}"
+            + (" (differs)" if differs else ""),
+            className="iv-frozen-signed",
+            title="the frozen arm averages the sizes, then one rise in the graph or "
+                  "the urgency turns the whole number negative",
+            style={"fontSize": "10px", "color": "#b45309" if differs else "#94a3b8"}))
+    return out
+
+
 def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
     """The grounding table: recommendations down, removed hazards across."""
     from agentic.ui_clean import ent_chip
@@ -415,6 +448,13 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
             row.append(html.Td(direction_cell(c.get("chain")), style=_TD))
         row.append(html.Td("", style=_TD))
         foot_rows.append(html.Tr(row, className="iv-direction"))
+    if any(isinstance(c.get("signed"), dict) for c in cols):
+        row = [html.Td("signed shift", style={**_TD, "fontWeight": "800"}),
+               html.Td("", style=_TD)]
+        for c in cols:
+            row.append(html.Td(signed_cell(c.get("signed")), style=_TD))
+        row.append(html.Td("", style=_TD))
+        foot_rows.append(html.Tr(row, className="iv-signed"))
     out: list = [html.Table([html.Thead(html.Tr(head)), html.Tbody(body + foot_rows)],
                             className="iv-table",
                             style={"borderCollapse": "collapse", "width": "100%"})]
@@ -550,11 +590,12 @@ def result_component(base_dir: Path | None, runs_dir: Path | None,
                      for t in measured]
             tbl = grounding4.table(before, pairs)
             from agentic import chain4
-            for col, (_t, after) in zip(tbl["columns"], pairs):
+            for col, (t, after) in zip(tbl["columns"], pairs):
                 try:
                     col["chain"] = chain4.direction(before, after)
                 except Exception:
                     col["chain"] = None         # the table still stands without it
+                col["signed"] = chain4.signed_shift(t.get("signals"), col["chain"])
             out += table_component(tbl, runs_dir)
             out += synthesis_component(iv4.synthesis(before, pairs))
         except Exception as exc:                # never lose the try lines to a bad table

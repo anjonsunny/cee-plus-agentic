@@ -777,3 +777,67 @@ def test_the_table_shows_direction_by_chain_next_to_the_frozen_count(tmp_path):
     assert "(differs)" not in _flat(same)
     for bad in (None, "x", {}, {"direction": None, "before_arrows": "y", "frozen_count": 3}):
         ui_iv.direction_cell(bad)                    # never raises
+
+
+# ── the signed shift (Sunny, 2026-11-13: "most shift scores signaled down
+#    shift, only the graph escalated ... do we weigh them?") ──────────────
+
+SPILL = {"hazard_shift": 0.2, "graph_shift": 0.714, "recommendation_shift": 1.0,
+         "content_shift": 0.638, "hazard_level_delta": -2,
+         "rec_direction": "de-escalated", "graph_direction": "escalated"}
+
+
+def test_each_signal_carries_its_own_direction_and_the_veto_is_gone():
+    from agentic import chain4 as c
+    s = c.signed_shift(SPILL, {"direction": "eased"})
+    assert [(p["signal"], p["signed"]) for p in s["parts"]] == [
+        ("danger level", 0.2), ("advice", 1.0), ("graph", 0.714)]
+    assert s["value"] == 0.638 and s["direction"] == "eased"
+    assert s["parts"][2]["by"] == "chain"
+    # the frozen arm's number for the same try: one rise turns it all negative
+    assert s["frozen"] == {"value": -0.638, "direction": "escalated"}
+    # without a chain reading the frozen graph direction is used: still eased,
+    # weakly, because two of three signals fell
+    s = c.signed_shift(SPILL)
+    assert s["parts"][2]["signed"] == -0.714 and s["parts"][2]["by"] == "frozen count"
+    assert s["value"] == 0.162 and s["direction"] == "eased"
+
+
+def test_signed_shift_grows_when_the_signals_say_so_and_zero_means_unchanged():
+    from agentic import chain4 as c
+    up = {"hazard_shift": 0.3, "graph_shift": 0.5, "recommendation_shift": 0.8,
+          "content_shift": 0.53, "hazard_level_delta": 3,
+          "rec_direction": "escalated", "graph_direction": "escalated"}
+    s = c.signed_shift(up, {"direction": "grew"})
+    assert s["value"] == -0.533 and s["direction"] == "grew"
+    assert s["frozen"]["direction"] == "escalated"
+    # the advice changed but is no more and no less urgent: it adds nothing
+    side = {"hazard_shift": 0.0, "graph_shift": 0.0, "recommendation_shift": 1.0,
+            "hazard_level_delta": 0, "rec_direction": "unchanged",
+            "graph_direction": "unchanged", "content_shift": 0.33}
+    s = c.signed_shift(side, {"direction": "unchanged"})
+    assert s["value"] == 0.0 and s["direction"] == "unchanged"
+    assert s["frozen"] == {"value": 0.0, "direction": "unchanged"}
+    for bad in (None, "x", {}, {"hazard_shift": "a", "hazard_level_delta": None,
+                                "rec_direction": 7, "graph_shift": True}):
+        s = c.signed_shift(bad, bad)
+        assert s["value"] == 0.0 and s["direction"] == "unchanged" and len(s["parts"]) == 3
+
+
+def test_the_table_shows_the_signed_shift_next_to_the_frozen_number(tmp_path):
+    base, after = _run_dir(tmp_path), _after_dir(tmp_path)
+    one = ui_iv.finish_try(base, after, PENDING)
+    assert one["signed_shift"]["direction"] == "eased" and one["signed_shift"]["value"] > 0
+    ui_iv.save_try(base, one)
+    comp = ui_iv.result_component(base, tmp_path)
+    assert "signed shift" in _flat(comp)
+    (cell,) = _by_class(comp, "iv-signed-value")
+    assert "eased" in _flat(cell) and "danger level:" in cell.title
+    assert "equal weights" in cell.title
+    from agentic import chain4 as c
+    cell = ui_iv.signed_cell(c.signed_shift(SPILL, {"direction": "eased"}))
+    assert _flat(cell[0]) == "+0.64 · eased"
+    assert "frozen: -0.64 · escalated (differs)" in _flat(cell)
+    assert "graph: +0.71 (by chain)" in cell[0].title
+    for bad in (None, "x", {}, {"value": None, "parts": [None], "frozen": 3}):
+        ui_iv.signed_cell(bad)                       # never raises

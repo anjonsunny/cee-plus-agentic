@@ -126,3 +126,62 @@ def direction(before: dict, after: dict) -> dict:
     return {"before": b["total"], "after": a["total"], "delta": delta,
             "direction": word, "before_arrows": b["arrows"], "after_arrows": a["arrows"],
             "frozen_count": {k: frozen.get(k) for k in ("before", "after", "direction")}}
+
+
+def _num(x: Any) -> float:
+    return float(x) if isinstance(x, (int, float)) and not isinstance(x, bool) else 0.0
+
+
+def signed_shift(signals: Any, chain_direction: Any = None) -> dict:
+    """How far the answer moved AND which way, each signal carrying its own
+    direction. Positive = the danger eased, negative = it grew.
+
+    The frozen arm takes the SIZE as the plain average of three changes
+    (danger level, graph, recommendations) and the DIRECTION from a veto:
+    if the graph OR the advice urgency went up, the whole size turns
+    negative; the danger level has no say (main._synthesis_cell). On
+    C_tanker ui_22840b13, spill_1 removed, the level fell, the urgency
+    fell, the arrow count rose, and 0.64 became -0.64, "escalated", though
+    most of that 0.64 is the advice change, which went DOWN (Sunny,
+    2026-11-13: "most shift scores signaled down shift ... do we weigh
+    them?").
+
+    Here each size is signed by its own direction, then averaged with
+    equal weights:
+        danger level      size hazard_shift          sign from the level change
+        advice            size recommendation_shift  sign from the urgency change
+        graph             size graph_shift           sign from the chain reading
+                                                     (the frozen count if none)
+    A signal that changed without a direction (urgency the same) adds 0.
+    The sizes and the two frozen directions come from the frozen signals;
+    only the signing and the averaging are ours. The frozen number is
+    reported next to it and never changed."""
+    sig = signals if isinstance(signals, dict) else {}
+    ch = chain_direction if isinstance(chain_direction, dict) else {}
+    lvl = _num(sig.get("hazard_level_delta"))
+    rec_dir = str(sig.get("rec_direction") or "")
+    graph_dir = str(ch.get("direction") or
+                    {"de-escalated": "eased", "escalated": "grew"}.get(
+                        str(sig.get("graph_direction") or ""), ""))
+    way = {"eased": 1.0, "de-escalated": 1.0, "grew": -1.0, "escalated": -1.0}
+    parts = [
+        {"signal": "danger level", "size": _num(sig.get("hazard_shift")),
+         "sign": 1.0 if lvl < 0 else -1.0 if lvl > 0 else 0.0},
+        {"signal": "advice", "size": _num(sig.get("recommendation_shift")),
+         "sign": way.get(rec_dir, 0.0)},
+        {"signal": "graph", "size": _num(sig.get("graph_shift")),
+         "sign": way.get(graph_dir, 0.0),
+         "by": "chain" if ch.get("direction") else "frozen count"},
+    ]
+    for p in parts:
+        p["signed"] = round(p["size"] * p["sign"], 3)
+    value = round(sum(p["signed"] for p in parts) / len(parts), 3)
+    word = "unchanged" if abs(value) < 1e-9 else ("eased" if value > 0 else "grew")
+    # the frozen arm's own number, for the side by side (its veto rule)
+    gd, rd = str(sig.get("graph_direction") or ""), rec_dir
+    f_sign = -1.0 if "escalated" in (gd, rd) else 1.0 if "de-escalated" in (gd, rd) else 0.0
+    f_val = round(_num(sig.get("content_shift")) * f_sign, 3)
+    return {"value": value, "direction": word, "parts": parts,
+            "frozen": {"value": f_val,
+                       "direction": "unchanged" if f_sign == 0 else
+                       ("de-escalated" if f_sign > 0 else "escalated")}}

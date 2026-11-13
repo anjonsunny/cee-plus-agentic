@@ -477,3 +477,18 @@ advice": the chain reading, and under it the frozen count marked
 chain. The frozen label itself is never changed. Saved with each new try.
 
 Limit: a link the model did not write is a link the chain does not have.
+
+## 18. The signed shift (Sunny, 2026-11-13: "build it")
+
+The frozen arm averages three sizes (danger level, graph, recommendations)
+and takes the direction from a veto: one rise in the graph or the urgency
+turns the whole number negative, and the danger level has no say. Sunny:
+"most shift scores signaled down shift, only the graph escalated ... do we
+weigh them?" `chain4.signed_shift`: each size is signed by its OWN
+direction (the level change, the urgency change, the chain reading for the
+graph), then averaged with equal weights. Positive = eased. Sizes and the
+two frozen directions are the frozen signals; only the signing and the
+averaging are ours. Third foot row of the table, "signed shift", with the
+frozen number under it marked "(differs)"; the hover lists the three
+lines. Saved with each new try. C spill try: +0.64 eased, frozen -0.64
+escalated. Equal weights are a first choice, open to calibration.
