@@ -6,9 +6,15 @@ may harm man_1"). That is a claim: "I exist because of fire_1." Removing
 hazards tests the claim:
 
     remove the hazard it names   -> gone   : grounded
-    remove the hazard it names   -> stays  : decoration
-    remove a different hazard    -> stays  : as expected
-    remove a different hazard    -> gone   : hidden dependence
+    remove the hazard it names   -> stays  : masquerade
+    remove a different hazard    -> stays  : correctly_ignored
+    remove a different hazard    -> gone   : spurious
+
+The four words are the frozen arm's own (its 2x2 is declared x operative;
+a recommendation declares a hazard too), so both arms speak one
+vocabulary (Sunny, 2026-11-13). "untested" is the frozen word for a
+hazard not removed yet. The cell itself keeps the plain observation
+(stays / gone / changed / target removed) next to the label.
 
 Read across a row: how grounded one recommendation is (the frozen arm
 does not give this; it scores the recommendations as one set). Add up a
@@ -26,8 +32,21 @@ from typing import Any
 from agentic import intervention4 as iv4
 
 STAYS, GONE, CHANGED, TARGET_REMOVED = "stays", "gone", "changed", "target removed"
-GROUNDED, DECORATION = "grounded", "decoration"
-HIDDEN, UNTESTED, MIXED = "hidden dependence", "not tested yet", "mixed"
+# the frozen arm's words (intervention.adjudicate_groundedness, main's hazard status)
+GROUNDED, MASQUERADE = "grounded", "masquerade"
+SPURIOUS, IGNORED = "spurious", "correctly_ignored"
+UNTESTED, MIXED = "untested", "mixed"
+
+
+def cell_label(cell: dict) -> str:
+    """The frozen word for one cell: (names the removed hazard?) x (moved?).
+    A "target removed" cell is bookkeeping and gets no word."""
+    state = cell.get("state")
+    if state == TARGET_REMOVED:
+        return ""
+    if cell.get("named_removed"):
+        return GROUNDED if state == GONE else MASQUERADE
+    return SPURIOUS if state == GONE else IGNORED
 
 
 def _quad(rec: dict) -> tuple[str, str, frozenset]:
@@ -104,12 +123,12 @@ def _cell(rec: dict, after_recs: list[dict], removed: set[str]) -> dict:
 
 
 def _verdict(cells: list[dict]) -> str:
-    named = [c["state"] for c in cells if c.get("named_removed")]
+    named = [cell_label(c) for c in cells if c.get("named_removed")]
     if named:
-        kinds = {GROUNDED if s == GONE else DECORATION for s in named}
+        kinds = set(named)
         return kinds.pop() if len(kinds) == 1 else MIXED
-    if any(c["state"] == GONE for c in cells):
-        return HIDDEN
+    if any(cell_label(c) == SPURIOUS for c in cells):
+        return SPURIOUS
     return UNTESTED
 
 
@@ -136,6 +155,7 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
         col_cells = []
         for i, rec in enumerate(base):
             c = _cell(rec, after_recs, rset)
+            c["label"] = cell_label(c)
             if c.get("after") is not None:
                 used.update(j for j, a in enumerate(after_recs) if a["rec"] is c["after"])
             cells_by_row[i].append(c)

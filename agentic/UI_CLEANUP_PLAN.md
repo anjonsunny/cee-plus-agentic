@@ -417,3 +417,15 @@ not see the upload control.
 One ask each way for now, so the column head reads "reading (one ask)".
 Left: the 5-against-5 counts, ground truth files for A to H (the core and
 spurious comparison), before | after images side by side.
+
+Labels renamed to the frozen arm's words (Sunny, 2026-11-13: "rename to
+the frozen words"). A recommendation declares a hazard, so the frozen 2x2
+(declared x operative) applies to it: grounded (names the hazard, goes
+when it is removed), masquerade (names it, stays), spurious (goes when a
+hazard it does not name is removed), correctly_ignored (unaffected by a
+hazard it does not name), untested. "decoration" and "hidden dependence"
+are retired. Each cell shows the plain observation and the frozen word.
+Not built yet: the frozen per-hazard status row, the scene cell
+(grounded / masquerade / robust / ungrounded / spurious_grounding) and the
+distribution verdict; all three need ground-truth files for A to H, and
+without one the frozen code would call every moved hazard "spurious".

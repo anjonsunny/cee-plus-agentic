@@ -423,13 +423,13 @@ def test_the_four_cells_and_the_verdicts_of_one_try():
     assert by[1]["cells"][0]["state"] == "gone" and by[1]["verdict"] == "grounded"
     assert by[3]["verdict"] == "grounded" and by[6]["verdict"] == "grounded"
     assert by[4]["verdict"] == "grounded"                # smoke went with the fire
-    assert by[2]["cells"][0]["state"] == "stays" and by[2]["verdict"] == "not tested yet"
+    assert by[2]["cells"][0]["state"] == "stays" and by[2]["verdict"] == "untested"
     assert by[2]["cells"][0]["action_changed"] is True   # contain -> evacuate
     assert col["moved"] == 4 and col["of"] == 5 and col["level_delta"] == -3
     assert [n["action"] for n in col["new"]] == ["Deploy booms."]
 
 
-def test_decoration_hidden_dependence_changed_and_target_removed():
+def test_masquerade_spurious_changed_and_target_removed():
     from agentic import grounding4 as g
     # remove spill_1 only: the fire, the smoke and the man are still there
     after = _res(["fire_1", "smoke_1", "man_1", "truck_1"],
@@ -438,13 +438,33 @@ def test_decoration_hidden_dependence_changed_and_target_removed():
                   _rec(3, "fire_1", ["truck_1", "man_1"], effect="may_spread_to")])
     t = g.table(BEFORE, [({"index": 1, "target": "spill_1"}, after)])
     by = {r["rank"]: r for r in t["rows"]}
-    assert by[2]["cells"][0]["state"] == "stays" and by[2]["verdict"] == "decoration"
-    assert by[1]["cells"][0]["state"] == "stays" and by[1]["verdict"] == "not tested yet"
+    assert by[2]["cells"][0]["state"] == "stays" and by[2]["verdict"] == "masquerade"
+    assert by[1]["cells"][0]["state"] == "stays" and by[1]["verdict"] == "untested"
     assert by[3]["cells"][0]["state"] == "changed"       # now protects more
-    assert by[4]["cells"][0]["state"] == "gone" and by[4]["verdict"] == "hidden dependence"
+    assert by[4]["cells"][0]["state"] == "gone" and by[4]["verdict"] == "spurious"
     assert by[6]["cells"][0]["state"] == "target removed"     # it protected the spill
-    assert by[6]["verdict"] == "not tested yet"
+    assert by[6]["verdict"] == "untested"
     assert t["columns"][0]["moved"] == 2 and t["columns"][0]["of"] == 4   # bookkeeping not counted
+    # every cell carries the frozen arm's word for (names it?) x (moved?)
+    assert by[2]["cells"][0]["label"] == "masquerade"
+    assert by[1]["cells"][0]["label"] == "correctly_ignored"
+    assert by[4]["cells"][0]["label"] == "spurious"
+    assert by[6]["cells"][0]["label"] == ""              # bookkeeping gets no word
+    assert by[3]["cells"][0]["label"] == "correctly_ignored"   # changed, but not gone
+
+
+def test_the_labels_are_the_frozen_arms_words_and_no_others():
+    from agentic import grounding4 as g
+    words = {g.GROUNDED, g.MASQUERADE, g.SPURIOUS, g.IGNORED, g.UNTESTED}
+    assert words == {"grounded", "masquerade", "spurious", "correctly_ignored", "untested"}
+    import inspect
+    import intervention
+    frozen = inspect.getsource(intervention.adjudicate_groundedness)
+    for w in ("grounded", "masquerade", "spurious", "correctly_ignored"):
+        assert w in frozen, w
+    src = inspect.getsource(g)
+    for old_word in ('"decoration"', '"hidden dependence"', '"not tested yet"'):
+        assert old_word not in src
 
 
 def test_two_tries_make_two_columns_and_a_renamed_entity_still_matches():
@@ -484,7 +504,9 @@ def test_the_result_shows_the_table_above_the_tries_with_hoverable_ids(tmp_path)
     ui_iv.save_try(base, ui_iv.finish_try(base, None, PENDING, error="boom"))
     comp = ui_iv.result_component(base, tmp_path, {"target": "tanker_1", "progress": "x"})
     text = _flat(comp)
+    assert "decoration" not in text and "hidden dependence" not in text
     for word in ("RECOMMENDATION", "NAMES", "#1 removed", "READING (ONE ASK)", "grounded",
+                 "correctly ignored", "untested",
                  "advice moved", "1 of 2", "level -3", "the tries, one line each",
                  "not measured — boom", "running the edited scene: removed tanker_1"):
         assert word in text, word

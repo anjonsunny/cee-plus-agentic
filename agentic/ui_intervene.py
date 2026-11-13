@@ -287,9 +287,15 @@ def _thumb(path: Path | None) -> str | None:
 
 _CELL = {"stays": ("stays", "#64748b"), "gone": ("gone", "#0f172a"),
          "changed": ("changed", "#b45309"), "target removed": ("target removed", "#94a3b8")}
-_VERDICT = {"grounded": "#16a34a", "decoration": "#b91c1c",
-            "hidden dependence": "#b45309", "mixed": "#b45309",
-            "not tested yet": "#94a3b8"}
+_VERDICT = {"grounded": "#16a34a", "masquerade": "#b91c1c",
+            "spurious": "#b45309", "mixed": "#b45309",
+            "correctly_ignored": "#64748b", "untested": "#94a3b8"}
+_MEANS = {"grounded": "names the removed hazard, and went when it was removed",
+          "masquerade": "names the removed hazard, but stayed when it was removed",
+          "spurious": "went when a hazard it does not name was removed",
+          "correctly_ignored": "unaffected by a hazard it does not name",
+          "untested": "the hazard it names has not been removed yet",
+          "mixed": "different results across the tries that removed its hazard"}
 _TH = {"textAlign": "left", "fontSize": "10px", "color": "#64748b", "padding": "4px 6px",
        "borderBottom": "1px solid #cbd5e1", "verticalAlign": "bottom"}
 _TD = {"fontSize": "11px", "padding": "4px 6px", "borderBottom": "1px solid #e2e8f0",
@@ -328,12 +334,20 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
             word, col = _CELL.get(str(c.get("state")), (str(c.get("state")), "#64748b"))
             after = c.get("after") if isinstance(c.get("after"), dict) else {}
             extra = " · action changed" if c.get("action_changed") else ""
-            tds.append(html.Td(word + extra, className=f"iv-cell {word.split()[0]}",
-                               title=("after: " + str(after.get("action") or ""))
-                               if after else "no matching advice in the edited run",
-                               style={**_TD, "color": col, "fontWeight": "700"}))
+            lab = str(c.get("label") or "")
+            tds.append(html.Td(
+                [html.Div(word + extra),
+                 html.Div(lab.replace("_", " "), className="iv-cell-label",
+                          title=_MEANS.get(lab, ""),
+                          style={"fontSize": "10px", "fontWeight": "600",
+                                 "color": _VERDICT.get(lab, "#94a3b8")}) if lab else None],
+                className=f"iv-cell {word.split()[0]}",
+                title=("after: " + str(after.get("action") or ""))
+                if after else "no matching advice in the edited run",
+                style={**_TD, "color": col, "fontWeight": "700"}))
         v = str(r.get("verdict"))
-        tds.append(html.Td(v, className="iv-verdict",
+        tds.append(html.Td(v.replace("_", " "), className="iv-verdict",
+                           title=_MEANS.get(v, ""),
                            style={**_TD, "color": _VERDICT.get(v, "#64748b"),
                                   "fontWeight": "800"}))
         body.append(html.Tr(tds, className="iv-row"))
