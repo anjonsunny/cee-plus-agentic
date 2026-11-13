@@ -426,7 +426,8 @@ def findings(s4: dict, d: dict, *, chain: Callable[[dict], Any],
                    "the trust score" if d.get("stage4_started") else
                    "findings arrive once the recommendations are written")
         return head + [html.Div(waiting, className="ticket-empty")]
-    out: list = head
+    line = headline(s4, d)
+    out: list = ([line] if line is not None else []) + head
     out += clean_verdict(s4) or [html.Div("trust not scored on this run",
                                           className="ticket-empty")]
     out.append(_heading("THE RUN'S CHAIN"))
@@ -449,6 +450,124 @@ def findings(s4: dict, d: dict, *, chain: Callable[[dict], Any],
         "(the intervention is not yet ported)",
         className="ticket-empty", style={"borderStyle": "dashed"}))
     return out
+
+
+def headline_parts(s4: dict, d: dict) -> tuple[str, list]:
+    """(tone, parts) for the one-sentence headline. `parts` is a list of
+    strings and ("ent", id) pairs, so the text can be tested as plain
+    words and the ids rendered as hoverable chips. Pure: the record only.
+
+    Order: what the scene is and how far to trust the advice; then the
+    most serious thing found (a danger left without action, then each
+    pathology ticket with how often); then what was NOT checked. A viewer's
+    first question is "can I trust this advice?" — before this they read
+    four cards to answer it (Sunny, 2026-11-13)."""
+    s4, d = s4 or {}, d or {}
+    trust = s4.get("trust") if isinstance(s4.get("trust"), dict) else {}
+    band = str(trust.get("band") or "")
+    verdict = ((d.get("assess") or {}).get("verdict") or {})
+    calm = bool(verdict) and verdict.get("scenario") != "Yes"
+    acting = [r for r in (s4.get("recommendations") or [])
+              if isinstance(r, dict) and not r.get("benign")]
+
+    problems: list[list] = []
+    for e in (trust.get("singular_errors") or []):
+        if not isinstance(e, dict):
+            continue
+        ents = [str(x) for x in (e.get("entities") or [])]
+        if e.get("id") == "hazard_unaddressed" and ents:
+            text = ("A danger it named is left without action: " if len(ents) == 1
+                    else "Dangers it named are left without action: ")
+        else:
+            text = str(e.get("detail") or e.get("id") or "").split(":")[0].strip()
+            if not text:
+                continue
+            text = text[:1].upper() + text[1:] + (": " if ents else "")
+        problems.append([text] + _ent_list(ents) + ["."])
+    try:
+        path = [t for t in (_register_of(s4).get("pathology") or [])
+                if isinstance(t, dict)]
+    except Exception:           # a record too broken to build a register from:
+        path = []               # the headline still speaks, from trust alone
+    for tk in path:
+        hid = [str(x) for x in (tk.get("dropped") or [])]
+        n, k = tk.get("n_answers"), tk.get("hidden_in")
+        often = (f" in {k} of {n} answers" if isinstance(n, int) and n > 1
+                 and isinstance(k, int) else "")
+        seg = [x.strip() for x in str(tk.get("subtype") or "").split("·")]
+        cond = seg[1] if len(seg) >= 3 and seg[0] == "environment" else ""
+        if hid and cond:
+            problems.append([f"Told \"{cond}\", it stopped acting on "]
+                            + _ent_list(hid) + [often + "."])
+        else:
+            kind = str(tk.get("kind") or "pathology").replace("_", " ")
+            problems.append([f"One {kind} ticket is open" + often + "."])
+
+    if calm and not acting:
+        tone, opener = "high", "No disaster seen. Nothing needs doing."
+    elif band == "high":
+        tone = "moderate" if problems else "high"
+        opener = ("The advice looks mostly sound." if problems
+                  else "The advice looks sound.")
+    elif band == "moderate":
+        tone, opener = "moderate", "Check this advice before acting on it."
+    elif band == "low":
+        tone, opener = "low", "Do not rely on this advice."
+    else:
+        tone, opener = "moderate", "Advice written; trust was not scored."
+    parts: list = [opener]
+    for pr in problems[:2]:
+        parts += [" "] + pr
+    if len(problems) > 2:
+        parts.append(f" And {len(problems) - 2} more below.")
+    if not problems and not (calm and not acting):
+        hits = sorted((c for c in (trust.get("contributors") or [])
+                       if isinstance(c, dict)
+                       and isinstance(c.get("contribution"), (int, float))
+                       and c["contribution"] > 0),
+                      key=lambda c: -float(c["contribution"]))
+        if band in ("moderate", "low") and hits and hits[0].get("text"):
+            t = str(hits[0]["text"])
+            parts.append(" Main reason: " + t + ".")
+        elif band == "high" and (verdict.get("threats") or []):
+            # said only when it named a danger; with none named the
+            # sentence would be true and empty (B_pool)
+            parts.append(" No danger it named is left without action.")
+    asked = bool((d.get("reasks") or {}).get("env")
+                 or (d.get("run_settings") or {}).get("env"))
+    if d.get("stage4_env_skipped") and asked and not (calm and not acting):
+        parts.append(f" Concealment was not checked: {d['stage4_env_skipped']}.")
+    return tone, parts
+
+
+def _ent_list(ids: list[str]) -> list:
+    out: list = []
+    for i, x in enumerate(ids):
+        if i:
+            out.append(", ")
+        out.append(("ent", x))
+    return out
+
+
+def headline_text(s4: dict, d: dict) -> str:
+    """The headline as plain words (ids inline)."""
+    return "".join(p if isinstance(p, str) else p[1]
+                   for p in headline_parts(s4, d)[1])
+
+
+def headline(s4: dict, d: dict) -> Any | None:
+    """The headline as a component: one tinted line, ids as hover chips."""
+    tone, parts = headline_parts(s4, d)
+    if not parts:
+        return None
+    col = _BAND_COLOUR.get(tone, "#64748b")
+    kids = [html.Span(p) if isinstance(p, str) else ent_chip(p[1], col)
+            for p in parts]
+    return html.Div(kids, className=f"headline tone-{tone}",
+                    style={"fontSize": "13.5px", "fontWeight": "700", "color": col,
+                           "background": f"{col}12", "border": f"1px solid {col}",
+                           "borderRadius": "8px", "padding": "7px 10px",
+                           "margin": "0 0 8px", "lineHeight": "1.8"})
 
 
 def run_settings_line(d: dict) -> Any | None:

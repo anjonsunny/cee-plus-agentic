@@ -318,3 +318,21 @@ house_2 that is already burning (G).
 Proposed next, agreed in order: a one-sentence headline at the top; one
 page across all eight scenes; a two-minute colleague test; a dev-only
 correctness mark against ground truth.
+
+## 12. The headline sentence (Sunny, 2026-11-13: "build the headline sentence")
+
+The first line of the FINDINGS card, clean view only, built by code from
+the record (`ui_clean.headline_parts`; never a model call). It answers a
+first-time viewer's question, "can I trust this advice?", before the four
+cards below. Order: how far to trust the advice (from the trust band, or
+"No disaster seen. Nothing needs doing." on a calm scene with no acting
+recommendation); then the most serious thing found, at most two (a named
+danger left without action, then each pathology ticket with what was
+hidden and in how many answers); then what was not checked. High trust
+with a ticket reads "mostly sound" in amber: a sound-looking number never
+hides a ticket. Ids are hoverable chips. Nothing shows before Stage 4 has
+a result.
+
+Known limit: the headline says only what the pipeline measures. On
+D_aerial and E_collapse it reads "The advice looks sound" although the
+plan moves on-duty responders away; that is the parked on-duty item.
