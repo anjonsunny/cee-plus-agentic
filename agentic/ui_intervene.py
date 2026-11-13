@@ -574,6 +574,13 @@ def synthesis_component(syn: dict) -> list:
     out.append(html.Div("read with the signed shift, the same reading as the table above; "
                         "the frozen arm's label is shown where it differs",
                         style={"fontSize": "10px", "color": "#94a3b8"}))
+    basis = str(syn.get("core_basis") or "")
+    out.append(html.Div(
+        "should matter: " + (
+            "by consequence — each ground-truth arrow counts by its effect, double "
+            "when it reaches a person" if basis == "consequence" else
+            "by arrow count — the number of ground-truth arrows leaving the hazard"),
+        className="iv-basis", style={"fontSize": "10px", "color": "#94a3b8"}))
     out.append(html.Table([
         html.Thead(html.Tr([html.Th(x, style=_TH) for x in
                             ("HAZARD", "SHOULD MATTER", "DOES MATTER", "STATUS")])),

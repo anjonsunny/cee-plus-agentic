@@ -30,6 +30,14 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MODALITIES = ("caption", "image", "both")       # the frozen arm's three channels
 
+# How much a ground-truth hazard SHOULD matter. The frozen arm offers two
+# ways and defaults to "edge" (count the arrows leaving the hazard). Ours
+# uses its other way, "consequence": each arrow counts by its effect, and
+# double when it lands on a life (Sunny, 2026-11-13: with the arrow count
+# tanker, spill and fire on C all weighed 0.33, "all scores seem the same";
+# it counts arrows only). Both numbers are the frozen arm's own.
+CORE_BASIS = "consequence"
+
 # Ground truth in the frozen arm's format. "verified" = accepted by Sunny in
 # the frozen arm's Ground Truth tab. "candidate" = proposed, not verified.
 GT_VERIFIED = REPO_ROOT / "exports" / "ground_truth" / "verified"
@@ -228,7 +236,7 @@ def edit_bundle(modality: str, caption_changed: bool, image_changed: bool) -> di
 
 
 def candidates(before: dict, *, gt_dir: Path | None = None,
-               core_basis: str = "edge", core_rule: str = "half_max") -> dict:
+               core_basis: str = CORE_BASIS, core_rule: str = "half_max") -> dict:
     """The hazards that can be removed, ranked by the frozen arm."""
     iv = _frozen()
     baseline = iv.intervention_baseline(clean_result(before), None,
@@ -239,7 +247,7 @@ def candidates(before: dict, *, gt_dir: Path | None = None,
 def measure(before: dict, after: dict, target_oid: str, *,
             modality: str = "both", caption_changed: bool = True,
             image_changed: bool = True, gt_dir: Path | None = None,
-            core_basis: str = "edge", core_rule: str = "half_max") -> dict:
+            core_basis: str = CORE_BASIS, core_rule: str = "half_max") -> dict:
     """Compare a before run with an after run for ONE removed hazard.
 
     `before` and `after` are frozen-shape results (frozen_result /
@@ -315,7 +323,7 @@ def _our_reading(before: dict, after: dict, res: dict) -> dict:
 
 
 def synthesis(before: dict, tries: list[tuple[dict, dict]], *,
-              core_basis: str = "edge", core_rule: str = "half_max") -> dict:
+              core_basis: str = CORE_BASIS, core_rule: str = "half_max") -> dict:
     """The frozen arm's labels that need ground truth, over all tries of one
     before run: a status per hazard, the scene cell (declared x operative),
     and the distribution verdict (core and spurious against ground truth).
@@ -389,7 +397,7 @@ def synthesis(before: dict, tries: list[tuple[dict, dict]], *,
     except Exception:
         out["frozen"] = {}
     out.update({
-        "available": True, "cell": syn.get("cell"),
+        "available": True, "core_basis": core_basis, "cell": syn.get("cell"),
         "declared_match": syn.get("declared_match"),
         "operative_match": syn.get("operative_match"),
         "next_to_test": syn.get("next_to_test"),

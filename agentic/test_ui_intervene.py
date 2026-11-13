@@ -923,3 +923,44 @@ def test_what_else_the_edited_picture_lost_is_worded_as_an_observation():
     after = _res(["spill_1", "man_1", "truck_1"], [_rec(1, "spill_1", ["man_1"])])
     tbl = g.table(BEFORE, [({"index": 1, "target": "fire_1", "after_run": "x"}, after)])
     assert "also missing from the edited picture: smoke_1" in _flat(ui_iv.table_component(tbl))
+
+
+# ── ground-truth weights by consequence (Sunny, 2026-11-13: "all scores
+#    seem the same for all features") ─────────────────────────────────────
+
+GT_SPLIT = {"image_filename": "push_09.jpg", "caption": "c",
+            "nodes": [{"id": "tanker_1", "label": "tanker", "state": "leaking", "hazardous": True},
+                      {"id": "fire_1", "label": "fire", "state": "spreading", "hazardous": True},
+                      {"id": "man_1", "label": "man", "state": "standing", "at_risk": True}],
+            # two arrows out of each hazard: equal by count, unequal by consequence
+            "edges": [{"source": "tanker_1", "target": "man_1", "effect": "may_harm",
+                       "via_state": "leaking"},
+                      {"source": "tanker_1", "target": "fire_1", "effect": "worsens",
+                       "via_state": "leaking"},
+                      {"source": "fire_1", "target": "tanker_1", "effect": "worsens",
+                       "via_state": "spreading"},
+                      {"source": "fire_1", "target": "tanker_1", "effect": "may_spread_to",
+                       "via_state": "spreading"}]}
+
+
+def test_ground_truth_hazards_are_weighed_by_consequence_not_by_arrow_count(gt):
+    from agentic import intervention4 as iv4
+    assert iv4.CORE_BASIS == "consequence"
+    (gt["verified"] / "push_09.jpg.gt.json").write_text(json.dumps(GT_SPLIT))
+    base, after = _run_dir(gt["tmp"]), _after_dir(gt["tmp"])
+    ui_iv.save_try(base, ui_iv.finish_try(base, after, PENDING))
+    before = iv4.result_from_run_dir(base)
+    pairs = [(ui_iv.load_tries(base)[0], iv4.result_from_run_dir(after))]
+    c = iv4.candidates(before)
+    assert c["gt_edge_weights"]["fire_1"] == c["gt_edge_weights"]["tanker_1"]   # 2 and 2
+    assert c["gt_consequence_weights"]["tanker_1"] > c["gt_consequence_weights"]["fire_1"]
+    ours = iv4.synthesis(before, pairs)
+    assert ours["core_basis"] == "consequence"
+    d = ours["distribution"]["gt_dist"]
+    assert d["tanker_1"] > d["fire_1"]                    # the one that reaches the man
+    by_count = iv4.synthesis(before, pairs, core_basis="edge")["distribution"]["gt_dist"]
+    assert by_count["tanker_1"] == pytest.approx(by_count["fire_1"])
+    text = _flat(ui_iv.synthesis_component(ours))
+    assert "should matter: by consequence" in text and "double when it reaches a person" in text
+    assert "should matter: by arrow count" in _flat(ui_iv.synthesis_component(
+        iv4.synthesis(before, pairs, core_basis="edge")))

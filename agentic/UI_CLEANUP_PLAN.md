@@ -520,3 +520,13 @@ separate from tanker_1, with six arrows (tanker → spill, spill → driver,
 spill ↔ fire, fire → tanker, tanker → driver). The arrows are Claude's
 proposal, noted in the file, for Sunny to check; the earlier file is kept
 in exports/ground_truth/verified_pre_spill_split/. exports/ is not in git.
+
+Ground-truth weights by consequence (Sunny, 2026-11-13: "all scores seem
+the same for all features ... switch our screen to by consequence").
+`intervention4.CORE_BASIS = "consequence"`: how much a ground-truth hazard
+should matter is the frozen arm's consequence weight (each arrow by its
+effect, double onto a life) instead of its arrow count. Both are the
+frozen arm's own numbers; ours only picks the other one, and the screen
+says which. C: tanker 0.39, spill 0.39, fire 0.21 (was 0.33 each).
+Third try on C the same day: tanker_truck_1 removed (after run
+ui_93d632bd), all three core hazards now tested.
