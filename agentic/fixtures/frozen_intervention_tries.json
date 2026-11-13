@@ -1,0 +1,126 @@
+[
+ {
+  "source": "runs/run_B/intervention.json",
+  "selection": {
+   "target_object_id": "tanker_1",
+   "mode": "retrospective",
+   "modality": "caption"
+  },
+  "u_check": {
+   "leaked": false,
+   "applied": true,
+   "modality": "caption",
+   "caption_changed": true,
+   "image_changed": false,
+   "input_gated": true,
+   "renames": {}
+  },
+  "signals": {
+   "hazard_shift": 0.6,
+   "graph_shift": 1.0,
+   "recommendation_shift": 1.0,
+   "structural_shift": 0.0,
+   "semantic_shift": 0.0,
+   "total_shift": 0.52,
+   "content_shift": 0.8666666666666667,
+   "hazard_level_delta": -6,
+   "node_shift": 0.5,
+   "edge_shift": 1.0,
+   "rec_direction": "de-escalated",
+   "rec_urgency_before": 2.5,
+   "rec_urgency_after": 0.5,
+   "graph_direction": "de-escalated",
+   "graph_threat_before": 2.0,
+   "graph_threat_after": 0.0
+  },
+  "moved": true,
+  "cell": "not_adjudicable",
+  "before": {
+   "hazard_level": 8,
+   "detected_objects": [
+    {
+     "object_id": "tanker_1",
+     "label": "tanker",
+     "state": "leaking"
+    },
+    {
+     "object_id": "person_1",
+     "label": "person",
+     "state": "standing"
+    }
+   ],
+   "graph_a": {
+    "nodes": [
+     {
+      "id": "tanker_1",
+      "label": "tanker",
+      "state": "leaking",
+      "hazardous": true
+     },
+     {
+      "id": "person_1",
+      "label": "person",
+      "state": "standing",
+      "hazardous": false
+     }
+    ],
+    "edges": [
+     {
+      "source": "tanker_1",
+      "target": "person_1",
+      "effect": "may_harm",
+      "via_state": "leaking"
+     }
+    ],
+    "intervention_candidates": [
+     {
+      "threat": "tanker_1",
+      "state": "leaking",
+      "outgoing_edge_count": 1
+     }
+    ]
+   },
+   "recommendations": [
+    {
+     "rank": 1,
+     "action": "Move person_1 away",
+     "structured_reasoning": {
+      "threat": "tanker_1",
+      "state": "leaking",
+      "effect": "may_harm",
+      "affected_objects": [
+       "person_1"
+      ]
+     }
+    }
+   ]
+  },
+  "after": {
+   "hazard_level": 2,
+   "detected_objects": [
+    {
+     "object_id": "tanker_1",
+     "label": "tanker",
+     "state": "contained"
+    }
+   ],
+   "graph_a": {
+    "nodes": [
+     {
+      "id": "tanker_1",
+      "hazardous": false,
+      "state": "contained"
+     }
+    ],
+    "edges": []
+   },
+   "recommendations": [
+    {
+     "rank": 1,
+     "action": "Monitor",
+     "structured_reasoning": {}
+    }
+   ]
+  }
+ }
+]
