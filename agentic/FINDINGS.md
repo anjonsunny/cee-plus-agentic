@@ -1747,3 +1747,47 @@ stale-text flags from the length audit resolve themselves.
 
 707 tests. The compound-hazard addendum and the C person question remain
 open items of the ongoing section review.
+
+## F55 — a declared danger passed the check by being protected (2026-11-13)
+
+**Category F, metric defect.** Found by Sunny on C_tanker ui_22840b13 while
+reading the intervention table: "the trust card missed the tanker truck as a
+threat ... it only mentioned brush fire."
+
+The run declared five threats. `hazard_unaddressed` named one, brush_1. The
+leaking tanker was declared a threat too, and the only recommendation that
+touches it is "knock down fire_1 to stop it reaching tanker_truck_1": the
+tanker is the thing being protected. Nothing treats it as a source of danger.
+The check asked whether a hazard is *touched* by any recommendation, and
+touched meant the threat, the protected thing, or merely named in the action
+sentence. So being protected counted as being acted on.
+
+The evidence was already in the record, in three places: the assessment
+(threat), the model's own graph (tanker → spill), and the graph of the advice,
+which lists the tanker as an orphan threat (no arrow leaves it). The card
+showed "8 seen but not acted" as a count and one name, the other one.
+
+Sunny: "both roles can be true." An entity can be a threat and at risk at
+once (a leaking tanker beside a fire; the verified ground truth has arrows
+both ways). Each role needs its own advice.
+
+**Fix.** New singular error `hazard_protected_only`: a declared danger that
+is touched but never treated as a source. "Treated as a source" = it is the
+threat of some recommendation's reason, or an action names it while it is not
+among the things that recommendation protects. Ceiling 0.10, half of
+`hazard_unaddressed` (Sunny: "partial"), since such a danger is usually
+handled further down its chain (here, at the spill). Same consequence
+scaling. `hazard_unaddressed` is unchanged.
+
+**Effect on the saved runs** (rescored, not rewritten): C 2026-11-13 gains
+tanker_truck_1 at 0.08; C 2026-11-11 gains spill_1 and tanker_truck_1 at
+0.08; A, B, D, E, F, G, H gain nothing. Saved records keep their numbers.
+
+**What the intervention added.** With the fire removed the model wrote
+"isolate and shut off the leak at tanker_truck_1": it knows the tanker is a
+source and left that advice out while the fire was in the picture. Removing
+the tanker itself barely moved the advice (does-matter 0.03 against a
+should-matter 0.39). One hazard can hide another hazard's advice.
+
+Also hardened: the error checks no longer fail on a reason field that is not
+a dict. 995 tests. No prompt change, no flowchart change.

@@ -372,3 +372,94 @@ def test_a_benign_entry_does_not_cover_a_declared_victim():
     errs = singular_errors(scene, _asm(at_risk=[("person_1", "distress")]),
                            [_benign(1, "person_1", "trapped")])
     assert any(e["id"] == "victim_left_behind" for e in errs)
+
+
+# ── a declared danger that the advice only protects (Sunny, 2026-11-13:
+#    "the trust card missed the tanker truck ... it only mentioned brush";
+#    "both roles can be true"; charge: "partial") ───────────────────────
+
+def _tanker_scene():
+    return _scene(_obj("fire_1", "fire", "spreading", "hazard_bearing"),
+                  _obj("tanker_1", "tanker", "leaking", "hazard_bearing"),
+                  _obj("spill_1", "spill", "leaking", "hazard_bearing"),
+                  _obj("brush_1", "brush", "burning", "hazard_bearing"),
+                  _obj("man_1", "man", "standing", "normal"))
+
+
+C_RECS = [_rec(1, "Extract man_1 to a safe upwind location.", "fire_1", affected=["man_1"]),
+          _rec(2, "Contain spill_1 with absorbent.", "spill_1", affected=["man_1"]),
+          _rec(3, "Knock down fire_1 with foam to stop it reaching tanker_1.", "fire_1",
+               effect="may_spread_to", affected=["tanker_1"])]
+
+
+def _by_id(errs):
+    return {e["id"]: e for e in errs if not e.get("waived")}
+
+
+def test_a_danger_that_is_only_protected_is_named_and_charged_at_half():
+    """C_tanker ui_22840b13: tanker declared a threat; the only advice that
+    touches it protects it from the fire. Nothing treats it as a source."""
+    errs = _by_id(singular_errors(_tanker_scene(), _asm(at_risk=[("man_1", "proximity")]),
+                                  C_RECS))
+    only = errs["hazard_protected_only"]
+    assert only["entities"] == ["tanker_1"]
+    assert only["detail"] == ("protected, but never treated as a source of danger: "
+                              "tanker_1")
+    assert only["ceiling"] == ERROR_CEILINGS["hazard_protected_only"]
+    assert ERROR_CEILINGS["hazard_protected_only"] == ERROR_CEILINGS["hazard_unaddressed"] / 2
+    # the danger nobody mentions at all is still its own, heavier, line
+    none = errs["hazard_unaddressed"]
+    assert none["entities"] == ["brush_1"] and none["ceiling"] == 2 * only["ceiling"]
+    assert only["deduction"] == round(only["ceiling"] * only["consequence"], 3)
+    assert 0 < only["deduction"] <= only["ceiling"]
+
+
+def test_treating_it_as_a_source_in_the_reason_or_in_the_action_clears_it():
+    asm = _asm(at_risk=[("man_1", "proximity")])
+    # the reason names it as the cause
+    recs = C_RECS + [_rec(4, "Shut off the leak.", "tanker_1", affected=["man_1"])]
+    assert "hazard_protected_only" not in _by_id(singular_errors(_tanker_scene(), asm, recs))
+    # the action acts on it while the reason names what it feeds
+    recs = C_RECS + [_rec(4, "Shut off the leak at tanker_1.", "spill_1", affected=["man_1"])]
+    assert "hazard_protected_only" not in _by_id(singular_errors(_tanker_scene(), asm, recs))
+    # moving a victim AWAY from it treats it as a danger too
+    recs = C_RECS + [_rec(4, "Move man_1 away from tanker_1.", "fire_1", affected=["man_1"])]
+    assert "hazard_protected_only" not in _by_id(singular_errors(_tanker_scene(), asm, recs))
+
+
+def test_both_roles_are_checked_an_entity_can_be_a_threat_and_protected():
+    asm = _asm(at_risk=[("man_1", "proximity")])
+    # protected AND treated as a source: nothing to charge
+    recs = C_RECS + [_rec(4, "Cool the tank.", "tanker_1", affected=["man_1"])]
+    errs = _by_id(singular_errors(_tanker_scene(), asm, recs))
+    assert "hazard_protected_only" not in errs
+    # an entity that is not a hazard and is only protected is never charged here
+    safe = _scene(_obj("fire_1", "fire", "spreading", "hazard_bearing"),
+                  _obj("house_1", "house", "intact", "normal"))
+    errs = _by_id(singular_errors(safe, _asm(), [
+        _rec(1, "Wet down house_1.", "fire_1", effect="may_spread_to", affected=["house_1"])]))
+    assert "hazard_protected_only" not in errs
+
+
+def test_protected_only_survives_malformed_recommendations_and_no_actions():
+    asm = _asm(at_risk=[("man_1", "proximity")])
+    bad = [None, "x", {"rank": 1}, {"rank": 2, "action": None,
+                                    "structured_reasoning": "not a dict"},
+           {"rank": 3, "action": "Protect tanker_1.",
+            "structured_reasoning": {"threat": "fire_1", "affected_objects": "tanker_1"}},
+           {"rank": 4, "action": "Guard tanker_1.", "benign": True,
+            "structured_reasoning": {"threat": "tanker_1"}}]
+    errs = singular_errors(_tanker_scene(), asm, bad)          # never raises
+    assert isinstance(errs, list)
+    assert singular_errors(_tanker_scene(), asm, []) is not None
+
+
+def test_the_explanation_has_a_sentence_for_the_new_error():
+    from agentic.errors4 import _HEADLINE, explain_trust
+    assert set(_HEADLINE) == set(ERROR_CEILINGS)
+    lines = explain_trust({"band": "moderate", "singular_errors": [
+        {"id": "hazard_protected_only", "deduction": 0.1,
+         "detail": "protected, but never treated as a source of danger: tanker_1"}],
+        "contributors": []}, {})
+    assert lines[0] == "It named a danger and then only protected it."
+    assert "tanker_1" in lines[1]

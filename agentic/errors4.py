@@ -82,6 +82,14 @@ ERROR_CEILINGS: dict[str, float] = {
     "victim_left_behind": 0.35,
     # Something Stage 2 declared a danger is acted on by no recommendation.
     "hazard_unaddressed": 0.20,
+    # Something Stage 2 declared a danger is only PROTECTED by the advice (or
+    # merely mentioned): no recommendation treats it as a source of danger.
+    # Half the ceiling of a danger nobody mentions at all (Sunny, 2026-11-13:
+    # "partial"), because the danger is usually handled further down its
+    # chain — C_tanker ui_22840b13: the leaking tanker was declared a threat,
+    # the only advice touching it was "stop the fire reaching it", and the
+    # leak was handled at the spill.
+    "hazard_protected_only": 0.10,
     # The action field does not instruct anyone to do anything.
     "action_is_not_an_action": 0.15,
 }
@@ -190,11 +198,40 @@ def _touched(recommendations: list, record: Any) -> set:
     for r in (recommendations or []):
         if not isinstance(r, dict) or r.get("benign"):
             continue
-        q = r.get("structured_reasoning") or {}
-        out |= {str(v) for v in (q.get("affected_objects") or []) if str(v)}
+        q = _quad(r)
+        out |= {str(v) for v in q["affected_objects"] if str(v)}
         if q.get("threat"):
             out.add(str(q["threat"]))
         out |= entities_named_in(r.get("action"), record)
+    return out
+
+
+def _quad(rec: dict) -> dict:
+    """A recommendation's reason as a dict with a LIST of affected objects,
+    whatever the model wrote there (a string, a bare id, nothing)."""
+    q = rec.get("structured_reasoning")
+    q = dict(q) if isinstance(q, dict) else {}
+    aff = q.get("affected_objects")
+    q["affected_objects"] = aff if isinstance(aff, list) else []
+    return q
+
+
+def _acted_as_source(recommendations: list, record: Any) -> set:
+    """Every entity some recommendation treats as a SOURCE of danger: it is
+    the threat of the recommendation's reason, or the action names it while
+    it is not one of the things that recommendation protects ("move man_1
+    away from tanker_1" treats the tanker as a danger; "stop the fire
+    reaching tanker_1", with the tanker among the protected, does not)."""
+    from agentic.evals4 import entities_named_in
+    out: set = set()
+    for r in (recommendations or []):
+        if not isinstance(r, dict) or r.get("benign"):
+            continue
+        q = _quad(r)
+        if q.get("threat"):
+            out.add(str(q["threat"]))
+        protected = {str(v) for v in q["affected_objects"] if str(v)}
+        out |= entities_named_in(r.get("action"), record) - protected
     return out
 
 
@@ -251,7 +288,7 @@ def singular_errors(record: Any, assessment: Any, recommendations: list,
         from agentic.perception import state_kind
         evidence = []
         for r in recs:
-            q = r.get("structured_reasoning") or {}
+            q = _quad(r)
             act = str(r.get("action", "")).lower()
             if state_kind(str(q.get("state", ""))) == "hazard_bearing":
                 evidence.append(f"rec {r.get('rank')} names a hazard-bearing "
@@ -286,8 +323,8 @@ def singular_errors(record: Any, assessment: Any, recommendations: list,
             act = str(r.get("action", "")).lower()
             if not any(v in act for v in _PROTECTIVE_VERBS):
                 continue
-            q = r.get("structured_reasoning") or {}
-            ents = ({str(v) for v in (q.get("affected_objects") or [])}
+            q = _quad(r)
+            ents = ({str(v) for v in q["affected_objects"]}
                     | entities_named_in(r.get("action"), record))
             for v in ents:
                 protected.add(v)
@@ -321,6 +358,22 @@ def singular_errors(record: Any, assessment: Any, recommendations: list,
                                         touched)
                     for h in still),
                 still)
+
+    # 3b. A declared danger the advice mentions, but never as a source of
+    #     danger. An entity can be both a threat and at risk (a leaking
+    #     tanker beside a fire), and protecting it answers only one of its
+    #     two roles. The check above passed it because it is "touched"; the
+    #     graph of the advice already lists it as an orphan threat (no arrow
+    #     leaves it). Charged at half the ceiling, by the same consequence.
+    sources = _acted_as_source(recs, record)
+    protected_only = sorted(h for h in hazards if h in touched and h not in sources)
+    if protected_only:
+        add("hazard_protected_only",
+            "protected, but never treated as a source of danger: "
+            + ", ".join(protected_only),
+            max(_hazard_consequence(h, record, assessment, graph_b, touched)
+                for h in protected_only),
+            protected_only)
 
     # 4. An action field that instructs no one.
     bad = [r.get("rank") for r in recs
@@ -391,6 +444,7 @@ _HEADLINE = {
     "victim_left_behind": "Right about the danger, wrong about who it "
                           "threatens.",
     "hazard_unaddressed": "It named a danger and then acted on something else.",
+    "hazard_protected_only": "It named a danger and then only protected it.",
     "action_is_not_an_action": "The advice does not tell anyone to do anything.",
 }
 

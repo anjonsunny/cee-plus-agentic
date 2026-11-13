@@ -1207,3 +1207,22 @@ def test_headline_sits_first_in_findings_with_hoverable_ids_and_only_after_stage
     assert _by_class(_findings(extra=[_YES]), "headline") == []
     assert ui.findings_component(ui.derive([{"type": "stage4_result", "result": s4}]),
                                  mode="detailed") == []
+
+
+def test_the_card_and_headline_name_a_danger_that_is_only_protected():
+    """Sunny, 2026-11-13: the trust card named brush_1 and missed the
+    tanker. Both are named now, as two different lines."""
+    s4 = _plain("moderate", singular_errors=[
+        {"id": "hazard_unaddressed", "entities": ["brush_1"], "deduction": 0.18,
+         "detail": "declared a danger, and no recommendation acts on it: brush_1"},
+        {"id": "hazard_protected_only", "entities": ["tanker_truck_1"], "deduction": 0.08,
+         "detail": "protected, but never treated as a source of danger: tanker_truck_1"}])
+    card = _findings(s4=s4, extra=[_YES])
+    lost = _by_class(card, "trust-lost")
+    assert len(lost) == 2
+    assert "no recommendation acts on it" in _flat(lost[0]) and "brush_1" in _oids(lost[0])
+    assert "protected, but never treated as a source of danger" in _flat(lost[1])
+    assert "tanker_truck_1" in _oids(lost[1]) and "0.08" in _flat(lost[1])
+    text = _headline(s4, [_YES])[1]
+    assert "A danger it named is left without action: brush_1." in text
+    assert "Protected, but never treated as a source of danger: tanker_truck_1." in text
