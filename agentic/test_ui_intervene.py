@@ -649,25 +649,32 @@ def test_without_verified_ground_truth_the_ground_truth_labels_are_not_given(gt)
 
 def test_ground_truth_shows_only_when_the_switch_is_on(gt):
     """Sunny, 2026-11-16: "there is no ground truth in deployment ... make it
-    a switch". Off is the default and the card never needs it."""
+    a switch"; "if ground truth is available and we turn it on then we will
+    see core vs spurious and should matter"."""
     (gt["verified"] / "push_09.jpg.gt.json").write_text(json.dumps(GT_FILE))
     base, after = _run_dir(gt["tmp"]), _after_dir(gt["tmp"])
     ui_iv.save_try(base, ui_iv.finish_try(base, after, PENDING))
     off = _flat(ui_iv.result_component(base, gt["tmp"]))
-    assert "ground truth" not in off and "SHOULD" not in off
+    import re
+    for word in ("ground truth", "SHOULD MATTER", "spurious"):
+        assert word not in off, word
+    assert not re.search(r"\bcore\b", off)
     on = ui_iv.result_component(base, gt["tmp"], with_gt=True)
     text = _flat(on)
-    for word in ("against ground truth:", "SHOULD (GROUND TRUTH)", "AGAINST GROUND TRUTH",
-                 "ground truth: verified · push_09.jpg", "matched by its content"):
+    for word in ("SHOULD MATTER", "BY GROUND TRUTH", "match with ground truth:",
+                 "ground truth: verified · push_09.jpg", "matched by its content",
+                 "core: it should matter and the advice depends on it",
+                 "spurious: the two disagree"):
         assert word in text, word
     assert len(_by_class(on, "iv-gt-line")) == 1
-    status = {_flat(r).split()[0]: _flat(_by_class(r, "iv-hazard-status"))
-              for r in _by_class(on, "iv-hazard")}
-    assert status["fire_1"].startswith("grounded")
+    words = {_flat(r).split()[0]: _flat(_by_class(r, "iv-gt-word"))
+             for r in _by_class(on, "iv-feature")}
+    assert words["fire_1"] == "core"                     # should matter, and the advice moved
+    assert words["tanker_1"] == "should matter, not removed yet"
     # switch on, but this scene has no ground truth: the card says so
     (gt["verified"] / "push_09.jpg.gt.json").unlink()
     text = _flat(ui_iv.result_component(base, gt["tmp"], with_gt=True))
-    assert "against ground truth: not available" in text
+    assert "ground truth: not available" in text and "SHOULD MATTER" not in text
 
 
 # ── direction by chain (Sunny, 2026-11-13: "weigh them based on what the
@@ -1164,7 +1171,7 @@ def test_said_more_done_more_and_more_alarmed_are_named():
         assert d.compare(bad, [(None, bad), ("x", None)])["score"] is None
 
 
-def test_the_card_leads_with_declared_against_mechanistic_and_stays_brief(tmp_path):
+def test_the_card_has_two_halves_recommendations_and_features(tmp_path):
     base, after = _run_dir(tmp_path), _after_dir(tmp_path)
     assert _by_class(ui_iv.result_component(base, tmp_path), "iv-card") == []    # no try yet
     ui_iv.save_try(base, ui_iv.finish_try(base, after, PENDING))
@@ -1172,25 +1179,27 @@ def test_the_card_leads_with_declared_against_mechanistic_and_stays_brief(tmp_pa
     (card,) = _by_class(comp, "iv-card")
     assert comp[0] is card                               # the card comes first
     text = _flat(card)
-    assert text.startswith("DECLARED vs MECHANISTIC")
-    assert "no score yet: remove a second hazard to compare" in text
-    assert "advice tied to the hazard it names: 1 of 1" in text and "1 not tested yet" in text
+    assert text.index("RECOMMENDATIONS") < text.index("FEATURES")
+    assert "grounded: 1 of 1" in text and "1 not tested yet" in text
+    assert "DECLARED MECHANISTIC" in text                # the two bar columns, on the card
+    assert "declared vs mechanistic agree: no score yet" in text
     assert "one ask per try" in text and "agreeing with itself is not the same as being right" in text
-    assert "ground truth" not in text and "grounded" not in text      # plain words only
+    import re
+    for verdict_word in ("ground truth", "spurious", "SHOULD"):
+        assert verdict_word not in text, verdict_word    # no verdict words without the switch
+    assert not re.search(r"\bcore\b", text)
     # the proof is in folds, said once; the first is open while there is one try
     folds = _by_class(comp, "iv-evidence")
     assert [_flat(f.children[0]) for f in folds] == [
-        "evidence: each recommendation, by removed hazard",
-        "evidence: each hazard, says against does", "the tries, one line each"]
-    assert folds[0].open is True and not folds[1].open and not folds[2].open
+        "evidence: each recommendation, by removed hazard", "the tries, one line each"]
+    assert folds[0].open is True and not folds[1].open
     assert len(_by_class(folds[0], "iv-table")) == 1 and len(_by_class(card, "iv-table")) == 0
-    # the scene and distribution lines of the old layout are gone
+    assert len(_by_class(comp, "iv-features")) == 1      # features are on the card only
     assert "the scene:" not in _flat(comp) and "the distribution:" not in _flat(comp)
-    # a second try folds the table away and the card carries the result
+    # a second try folds the table away
     ui_iv.save_try(base, ui_iv.finish_try(base, base, {**PENDING, "target": "tanker_1"}))
     comp = ui_iv.result_component(base, tmp_path)
     assert not _by_class(comp, "by-recommendation")[0].open
-    assert "advice tied to the hazard it names" in _flat(_by_class(comp, "iv-card")[0])
 
 
 def test_the_card_names_advice_that_only_appeared_after_a_hazard_was_removed():
@@ -1219,9 +1228,11 @@ def test_the_card_names_advice_that_only_appeared_after_a_hazard_was_removed():
     assert "spill_1" not in text and "gas_1" not in text      # those stay in the evidence
     assert "kept appearing" not in _flat(card)
     assert ui_iv.new_advice({}, {}) == [] and ui_iv.new_advice(before, {"columns": [None]}) == []
-    for bad in (None, "x", {}, {"hazards": "y", "score": "z"}):
+    for bad in (None, "x", {}, {"hazards": "y", "score": "z"}, {"hazards": [None, "x", {}]}):
         ui_iv.card_component(bad, {}, [None, "x"])            # never raises
-        ui_iv.hazards_component(bad)
+        ui_iv.card_component(bad, "t", "f", {"available": True, "distribution": "d",
+                                             "gt_core": 7, "gt": None})
+        ui_iv.card_component(bad, None, None, {"available": False})
 
 
 def test_the_headline_and_the_chain_speak_declared_against_mechanistic(tmp_path, monkeypatch):
@@ -1244,3 +1255,78 @@ def test_the_ground_truth_switch_is_on_the_page_and_off_by_default():
     assert "calibration" in sw.options[0]["label"]
     kids = [getattr(k, "id", None) for k in panel.children]
     assert kids.index("iv-status") < kids.index("iv-gt") < kids.index("iv-controls")
+
+
+# ── features on the card: declared beside mechanistic, in plain words; core
+#    and spurious only by ground truth (Sunny, 2026-11-16) ─────────────────
+
+def test_a_feature_is_named_by_what_it_does_with_no_verdict_word():
+    from agentic import declared4 as d
+    # declared: fire 5.5, spill 4, tanker 3, brush 1.5  (high = at least half the top)
+    c = d.compare(D_BEFORE, [_try("fire_1", 0.6), _try("spill_1", 0.5), _try("tanker_1", 0.05),
+                             _try("brush_1", 0.5)])
+    role = {r["object_id"]: r["role"] for r in c["hazards"]}
+    assert role["fire_1"] == d.DRIVES_STATED
+    assert role["spill_1"] == d.DRIVES_STATED
+    assert role["tanker_1"] == d.STATED_ONLY              # said it matters, barely moves
+    assert role["brush_1"] == d.DRIVES_UNSTATED           # moves the advice, said little
+    c = d.compare(D_BEFORE, [_try("fire_1", 0.6), _try("brush_1", 0.02)])
+    role = {r["object_id"]: r["role"] for r in c["hazards"]}
+    assert role["brush_1"] == d.MINOR and role["spill_1"] == d.UNTESTED
+    c = d.compare(D_BEFORE, [_try("fire_1", -0.4), _try("spill_1", 0.5)])
+    assert {r["object_id"]: r["role"] for r in c["hazards"]}["fire_1"] == d.ALARMED
+    for word in (d.DRIVES_STATED, d.STATED_ONLY, d.DRIVES_UNSTATED, d.MINOR):
+        assert "core" not in word and "spurious" not in word
+
+
+def test_core_and_spurious_are_judged_by_ground_truth_both_mismatches_spurious():
+    """Sunny: "should matter but advice does not is also spurious"."""
+    from agentic import declared4 as d
+    c = d.compare(D_BEFORE, [_try("fire_1", 0.6), _try("spill_1", 0.5), _try("tanker_1", 0.05),
+                             _try("brush_1", 0.5)])
+    should = {"fire_1": 0.5, "tanker_1": 0.4, "gas_1": 0.1}
+    by = {g["object_id"]: g for g in d.against_ground_truth(c, should, ["fire_1", "tanker_1",
+                                                                       "gas_1"])}
+    assert by["fire_1"]["word"] == d.CORE and by["fire_1"]["should"] == 0.5
+    assert by["tanker_1"]["word"] == d.SPURIOUS_IGNORED   # should matter, advice does not
+    assert by["spill_1"]["word"] == d.SPURIOUS_USED       # advice depends, should not
+    assert by["brush_1"]["word"] == d.SPURIOUS_USED
+    assert by["gas_1"]["word"] == d.SHOULD_UNTESTED       # ground truth names it, model did not
+    assert by["gas_1"]["is_core"] is True and by["spill_1"]["is_core"] is False
+    # not core and not driving: nothing to say
+    c2 = d.compare(D_BEFORE, [_try("fire_1", 0.6), _try("brush_1", 0.02)])
+    by = {g["object_id"]: g for g in d.against_ground_truth(c2, {}, ["fire_1"])}
+    assert by["brush_1"]["word"] == "" and by["spill_1"]["word"] == ""
+    assert d.against_ground_truth({}, {}, None) == []
+    assert d.against_ground_truth({"hazards": [None, "x"]}, {"a": None}, ["a"])[0]["word"] == (
+        d.SHOULD_UNTESTED)
+
+
+def test_the_card_shows_each_feature_declared_beside_mechanistic():
+    from agentic import declared4 as d
+    c = d.compare(D_BEFORE, [_try("fire_1", 0.6), _try("tanker_1", 0.05)])
+    card = ui_iv.card_component(c, {"rows": [{"verdict": "grounded"}, {"verdict": "untested"}]}, [])
+    rows = _by_class(card, "iv-feature")
+    assert [_flat(r).split()[0] for r in rows] == ["fire_1", "spill_1", "tanker_1", "brush_1"]
+    by = {_flat(r).split()[0]: r for r in rows}
+    assert _flat(_by_class(by["fire_1"], "iv-role")) == d.DRIVES_STATED
+    assert _flat(_by_class(by["tanker_1"], "iv-role")) == d.STATED_ONLY
+    assert "not removed yet" in _flat(by["spill_1"])     # declared bar, no mechanistic bar
+    assert "removing it barely changes the advice" in _by_class(by["tanker_1"], "iv-role")[0].title
+    text = _flat(card)
+    assert "grounded: 1 of 1 · 1 not tested yet" in text
+    assert "declared vs mechanistic agree:" in text
+    assert "how far the answer eased when it was removed (danger level, advice, graph)" in text
+    # with ground truth: a should-matter bar and the two words, per feature
+    syn = {"available": True, "gt_core": ["fire_1", "tanker_1"],
+           "gt": {"status": "verified", "image_filename": "x.jpg"},
+           "distribution": {"gt_dist": {"fire_1": 0.3, "tanker_1": 0.7}, "verdict":
+                            "misproportioned", "overlap": 0.3, "coverage": [2, 2]}}
+    card = ui_iv.card_component(c, {}, [], syn)
+    by = {_flat(r).split()[0]: _flat(_by_class(r, "iv-gt-word"))
+          for r in _by_class(card, "iv-feature")}
+    assert by["fire_1"] == "core"
+    assert by["tanker_1"] == "spurious: should matter, the advice does not depend on it"
+    assert by["spill_1"] == "" and by["brush_1"] == ""
+    assert "match with ground truth: 0.3 · misproportioned" in _flat(card)
+    assert "SHOULD MATTER" in _flat(card) and "2 of 2 core hazards removed" in _flat(card)

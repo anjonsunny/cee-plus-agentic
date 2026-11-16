@@ -30,6 +30,52 @@ APART = 0.15            # shares further apart than this do not "match"
 MATCH, SAID_MORE, DONE_MORE = "matches", "said more than done", "done more than said"
 ALARMED, UNTESTED = "more alarmed when removed", "not removed yet"
 
+# What a feature is, in plain words and with no verdict in them (Sunny,
+# 2026-11-16: without ground truth nobody on the screen knows what is
+# right, so "core" and "spurious" are kept for the ground-truth switch).
+# A side is "high" when its share is at least half of the top share.
+DRIVES_STATED = "drives the advice, as stated"
+STATED_ONLY = "stated, does not drive the advice"
+DRIVES_UNSTATED = "drives the advice, not stated"
+MINOR = "minor on both"
+HALF = 0.5
+
+# With ground truth (the switch): Sunny's definition. Core = it should
+# matter and the advice depends on it. Spurious = the two disagree, either
+# way.
+CORE = "core"
+SPURIOUS_IGNORED = "spurious: should matter, the advice does not depend on it"
+SPURIOUS_USED = "spurious: the advice depends on it, it should not matter"
+SHOULD_UNTESTED = "should matter, not removed yet"
+
+
+def _high(shares: dict[str, float]) -> set[str]:
+    top = max(shares.values(), default=0.0)
+    return {k for k, v in shares.items() if top > 0 and v >= HALF * top}
+
+
+def against_ground_truth(cmp: dict, should: dict[str, float], core: Any) -> list[dict]:
+    """Each feature judged by ground truth: [{object_id, should, word}].
+    `should` is the ground-truth share per hazard, `core` the hazards
+    ground truth marks as core. A ground-truth hazard the model never
+    declared or removed is listed too."""
+    core = {str(x) for x in (core or [])}
+    rows = {str(r.get("object_id")): r for r in (cmp.get("hazards") or [])
+            if isinstance(r, dict)}
+    out = []
+    for h in list(rows) + [h for h in sorted(core) if h not in rows]:
+        r = rows.get(h) or {}
+        drives, tested = bool(r.get("drives")), r.get("does") is not None
+        if h in core:
+            word = CORE if drives else SPURIOUS_IGNORED if tested else SHOULD_UNTESTED
+        else:
+            word = SPURIOUS_USED if drives else ""
+        w = should.get(h) if isinstance(should, dict) else None
+        out.append({"object_id": h, "is_core": h in core,
+                    "should": round(float(w), 3) if isinstance(w, (int, float)) else 0.0,
+                    "word": word})
+    return out
+
 
 def declared(result: Any) -> dict[str, float]:
     """{hazard: weight} from the model's own graph of the run. A source
@@ -102,15 +148,21 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
     says_t = _shares(dec, tested)
     does = _shares(mech, tested)                     # a negative shift counts as 0
     rows = []
+    stated, drives = _high(says_all), _high(does)
     for h in sorted(every, key=lambda x: (-says_all.get(x, 0.0), x)):
         if h not in mech:
-            reading = UNTESTED
+            reading = role = UNTESTED
         elif mech[h] < 0:
-            reading = ALARMED
+            reading = role = ALARMED
         else:
             gap = says_t.get(h, 0.0) - does.get(h, 0.0)
             reading = MATCH if abs(gap) <= APART else (SAID_MORE if gap > 0 else DONE_MORE)
+            role = (DRIVES_STATED if h in stated and h in drives else
+                    STATED_ONLY if h in stated else
+                    DRIVES_UNSTATED if h in drives else MINOR)
         rows.append({"object_id": h, "says": round(says_all.get(h, 0.0), 3),
+                     "role": role, "stated": h in stated,
+                     "drives": h in drives and mech.get(h, 0) > 0,
                      "says_tested": round(says_t.get(h, 0.0), 3) if h in mech else None,
                      "does": round(does.get(h, 0.0), 3) if h in mech else None,
                      "shift": mech.get(h), "reading": reading})

@@ -465,42 +465,12 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
     return out
 
 
-_STATUS = {"grounded": "#16a34a", "spurious": "#b45309", "escalated": "#b91c1c",
-           "ignored_core": "#b91c1c", "correctly_ignored": "#64748b",
-           "untested": "#94a3b8"}
-_STATUS_MEANS = {
-    "grounded": "a core hazard, and the advice eased when it was removed",
-    "spurious": "not a core hazard, yet the advice eased when it was removed",
-    "escalated": "removing it made the advice MORE alarmed (a red flag)",
-    "ignored_core": "a core hazard, but the advice did not move",
-    "correctly_ignored": "not a core hazard, and the advice did not move",
-    "untested": "not removed yet"}
-_SCENE_MEANS = {
-    "grounded": "it declares the right hazard and the advice depends on it",
-    "masquerade": "it declares the right hazard but the advice does not depend on it",
-    "robust": "it declares the wrong hazard but the advice depends on the right one",
-    "ungrounded": "it declares the wrong hazard and the advice does not depend on the right one",
-    "spurious_grounding": "it declares the right hazard but the advice leans most on a wrong one",
-    "pending": "the core hazard has not been removed yet",
-    "incomplete": "the core hazard moved the advice; its competitor is not tested yet",
-    "unreliable": "the try on the core hazard was not a clean test",
-    "no_gt": "no ground truth"}
 _DIST_MEANS = {
     "grounded": "the advice leans on the hazards in the proportion ground truth gives",
     "misproportioned": "the right hazards, the wrong emphasis",
     "masquerade": "the core hazard was removed and the advice barely moved",
     "spurious": "the advice leans on hazards ground truth never names",
     "pending": "no core hazard removed yet", "no_gt": "no ground truth"}
-_READING = {"matches": "#16a34a", "said more than done": "#b45309",
-            "done more than said": "#b45309", "more alarmed when removed": "#b91c1c",
-            "not removed yet": "#94a3b8"}
-_READING_MEANS = {
-    "matches": "its share of what the model says and its share of what the advice "
-               "depends on are close",
-    "said more than done": "the model says it matters more than its advice depends on it",
-    "done more than said": "the advice depends on it more than the model says it matters",
-    "more alarmed when removed": "removing it made the answer more alarmed, not less",
-    "not removed yet": "no try has removed this hazard"}
 _SCORE_COL = {"does what it says": "#16a34a", "partly does what it says": "#b45309",
               "does not do what it says": "#b91c1c"}
 
@@ -540,82 +510,74 @@ def new_advice(before: dict, tbl: dict) -> list[dict]:
             for h, n in sorted(count.items(), key=lambda kv: (-kv[1], kv[0]))]
 
 
+_ROLE = {"drives the advice, as stated": "#16a34a",
+         "stated, does not drive the advice": "#b45309",
+         "drives the advice, not stated": "#b45309",
+         "minor on both": "#64748b", "more alarmed when removed": "#b91c1c",
+         "not removed yet": "#94a3b8"}
+_ROLE_MEANS = {
+    "drives the advice, as stated": "the model says it matters, and removing it "
+                                    "changes the advice",
+    "stated, does not drive the advice": "the model says it matters, but removing it "
+                                         "barely changes the advice",
+    "drives the advice, not stated": "removing it changes the advice, though the model "
+                                     "did not say it matters",
+    "minor on both": "the model says it matters little, and removing it changes little",
+    "more alarmed when removed": "removing it made the answer more alarmed, not less",
+    "not removed yet": "no try has removed this hazard, so only the declared side is known"}
+_GT_COL = {"core": "#16a34a", "should matter, not removed yet": "#94a3b8"}
+
+
 def card_component(cmp: dict, tbl: dict, fresh: list[dict], syn: dict | None = None) -> list:
     """The causal-groundedness card: the takeaway, updated with every try.
+    Two halves (Sunny, 2026-11-16):
 
-    Its focus is DECLARED against MECHANISTIC (Sunny, 2026-11-16): what the
-    model says matters, against what its advice depends on. Nothing on it
-    needs ground truth, so it is the card a deployment can show. `syn` is
-    given only when the "compare with ground truth" switch is on; it adds
-    one line. The proof sits in the folds under the card, said once."""
+      RECOMMENDATIONS  how much of the advice is causally grounded: is each
+                       recommendation dropped once the hazard it names is
+                       removed.
+      FEATURES         each hazard, DECLARED (how much the model says it
+                       matters) beside MECHANISTIC (how much the shift
+                       signals show the advice depends on it), and what
+                       that makes it, in plain words.
+
+    Nothing here needs ground truth, so this is the card a deployment can
+    show, and it uses no verdict words. `syn` is given only when the
+    "compare with ground truth" switch is on: it adds a SHOULD MATTER bar
+    and the words core / spurious, judged by ground truth. The proof per
+    recommendation sits in the fold under the card."""
+    from agentic import declared4
     from agentic.ui_clean import ent_chip
     cmp = cmp if isinstance(cmp, dict) else {}
+    tbl = tbl if isinstance(tbl, dict) else {}
     lab = {"fontWeight": "700", "color": "#64748b"}
     line = {"fontSize": "11.5px", "margin": "2px 0", "lineHeight": "1.9"}
+    sec = {"fontSize": "10px", "fontWeight": "800", "letterSpacing": ".08em",
+           "color": "#64748b", "margin": "8px 0 2px"}
     score, reading = cmp.get("score"), str(cmp.get("reading") or "")
     col = _SCORE_COL.get(reading, "#64748b")
-    cov = f"{cmp.get('tested', 0)} of {cmp.get('declared', 0)} declared hazards removed"
-    rows: list = [html.Div([
-        html.Span("DECLARED vs MECHANISTIC ",
-                  style={"fontSize": "10px", "fontWeight": "800", "letterSpacing": ".08em",
-                         "color": "#64748b"}),
-        html.Span((f"{score:.2f} · {reading}" if isinstance(score, (int, float))
-                   else "no score yet: remove a second hazard to compare"),
-                  className="iv-score",
-                  title="how far what the model says matters and what its advice depends "
-                        "on agree, over the hazards removed so far (1.00 = the same shares)",
-                  style={"fontSize": "15px" if isinstance(score, (int, float)) else "11.5px",
-                         "fontWeight": "800", "color": col}),
-    ])]
-    if isinstance(score, (int, float)):
-        rows.append(html.Div(html.Div(style={"width": f"{max(0, min(1, score)) * 100:.0f}%",
-                                             "height": "6px", "background": col,
-                                             "borderRadius": "3px"}),
-                             style={"background": "#e2e8f0", "borderRadius": "3px",
-                                    "margin": "4px 0 6px", "height": "6px"}))
-    rows.append(html.Div(cov + (" · provisional" if cmp.get("provisional") else ""),
-                         className="iv-coverage",
-                         style={"fontSize": "10.5px", "color": "#94a3b8",
-                                "marginBottom": "4px"}))
+    rows: list = [html.Div(
+        f"{cmp.get('tested', 0)} of {cmp.get('declared', 0)} declared hazards removed"
+        + (" · provisional" if cmp.get("provisional") else ""),
+        className="iv-coverage", style={"fontSize": "10.5px", "color": "#94a3b8"})]
 
-    def one(label: str, ids: list, colour: str, tail: str = "", cls: str = "") -> None:
-        ids = [str(x) for x in ids if x]
-        if ids:
-            rows.append(html.Div(
-                [html.Span(label + ": ", style=lab)] + [ent_chip(x, colour) for x in ids]
-                + ([html.Span(tail, style={"color": "#64748b"})] if tail else []),
-                className=cls, style=line))
-    says, does = cmp.get("says_most"), cmp.get("does_most")
-    if says and says == does:
-        one("says and does most", [says], "#16a34a", cls="iv-most")
-    else:
-        one("says matters most", [says], "#334155", cls="iv-says")
-        one("advice depends most on", [does], "#334155", cls="iv-does")
-    one("advice depends least on", [cmp.get("does_least")], "#334155", cls="iv-least")
-    one("said more than done", cmp.get("said_more") or [], "#b45309", cls="iv-said-more")
-    one("done more than said", cmp.get("done_more") or [], "#b45309", cls="iv-done-more")
-    one("more alarmed when removed", cmp.get("alarmed") or [], "#b91c1c", cls="iv-alarmed")
-
+    # ── RECOMMENDATIONS
+    rows.append(html.Div("RECOMMENDATIONS", style=sec))
     verdicts = [str(r.get("verdict")) for r in (tbl.get("rows") or []) if isinstance(r, dict)]
     judged = [v for v in verdicts if v != "untested"]
-    if verdicts:
-        tied = sum(1 for v in judged if v == "grounded")
-        rows.append(html.Div(
-            [html.Span("advice tied to the hazard it names: ", style=lab),
-             html.Span(f"{tied} of {len(judged)}" if judged else "none tested yet",
-                       style={"fontWeight": "800",
-                              "color": "#16a34a" if judged and tied == len(judged)
-                              else "#b45309" if judged else "#94a3b8"})]
-            + ([html.Span(f" · {len(verdicts) - len(judged)} not tested yet",
-                          style={"color": "#94a3b8"})]
-               if len(verdicts) > len(judged) else []),
-            className="iv-tied",
-            title="a recommendation is tied to its hazard when it is dropped once "
-                  "that hazard is removed",
-            style=line))
-    # only advice about a hazard that was in the original scene and that the
-    # original advice never acted on: the model saw it and wrote nothing
-    # until something else was gone. Other new advice stays in the evidence.
+    tied = sum(1 for v in judged if v == "grounded")
+    rows.append(html.Div(
+        [html.Span("grounded: ", style=lab),
+         html.Span(f"{tied} of {len(judged)}" if judged else "none tested yet",
+                   className="iv-grounded-n",
+                   style={"fontWeight": "800", "fontSize": "14px",
+                          "color": "#16a34a" if judged and tied == len(judged)
+                          else "#b45309" if judged else "#94a3b8"})]
+        + ([html.Span(f" · {len(verdicts) - len(judged)} not tested yet",
+                      style={"color": "#94a3b8"})] if len(verdicts) > len(judged) else []),
+        className="iv-tied",
+        title="a recommendation is grounded when it is dropped once the hazard it "
+              "names is removed",
+        style=line))
     held = [f for f in (fresh or []) if isinstance(f, dict) and f.get("in_original_scene")]
     if held:
         kids: list = [html.Span("new advice after removing a hazard: ", style=lab)]
@@ -627,23 +589,88 @@ def card_component(cmp: dict, tbl: dict, fresh: list[dict], syn: dict | None = N
                              "act on it", style={"fontSize": "10.5px", "color": "#94a3b8",
                                                  "lineHeight": "1.3"}))
         rows.append(html.Div(kids, className="iv-new-advice", style=line))
-    one("not removed yet", cmp.get("not_removed") or [], "#94a3b8", cls="iv-not-removed")
+
+    # ── FEATURES: declared beside mechanistic
+    gt_on = isinstance(syn, dict) and bool(syn.get("available"))
+    gt_rows: dict[str, dict] = {}
+    if gt_on:
+        dist = syn.get("distribution") if isinstance(syn.get("distribution"), dict) else {}
+        gt_d = dist.get("gt_dist") if isinstance(dist.get("gt_dist"), dict) else {}
+        core = syn.get("gt_core") if isinstance(syn.get("gt_core"), (list, set, tuple)) else []
+        gt_rows = {g["object_id"]: g for g in declared4.against_ground_truth(cmp, gt_d, core)}
+    feats = [r for r in (cmp.get("hazards") if isinstance(cmp.get("hazards"), list) else [])
+             if isinstance(r, dict)]
+    known = {str(r.get("object_id")) for r in feats}
+    feats += [{"object_id": h, "says": 0.0, "does": None, "role": "not declared by the model"}
+              for h in gt_rows if h not in known]
+    if feats:
+        rows.append(html.Div("FEATURES", style=sec))
+        head = ["", "DECLARED", "MECHANISTIC"] + (["SHOULD MATTER"] if gt_on else []) + [""] \
+            + (["BY GROUND TRUTH"] if gt_on else [])
+        body = []
+        for r in feats:
+            oid, role = str(r.get("object_id")), str(r.get("role") or "")
+            tds = [html.Td(ent_chip(oid, "#ef4444"), style=_TD),
+                   html.Td(_bar(r.get("says"), "#334155"), style=_TD),
+                   html.Td(_bar(r.get("does"), "#16a34a") if r.get("does") is not None
+                           else html.Span("not removed yet", style={"color": "#94a3b8",
+                                                                    "fontSize": "10.5px"}),
+                           style=_TD)]
+            if gt_on:
+                g = gt_rows.get(oid) or {}
+                tds.append(html.Td(_bar(g.get("should"), "#7c3aed"), style=_TD))
+            tds.append(html.Td("" if role == "not removed yet" else role,
+                               className="iv-role", title=_ROLE_MEANS.get(role, ""),
+                               style={**_TD, "fontWeight": "700",
+                                      "color": _ROLE.get(role, "#64748b")}))
+            if gt_on:
+                word = str((gt_rows.get(oid) or {}).get("word") or "")
+                tds.append(html.Td(word, className="iv-gt-word",
+                                   style={**_TD, "fontWeight": "800",
+                                          "color": _GT_COL.get(word, "#b91c1c")}))
+            body.append(html.Tr(tds, className="iv-feature"))
+        rows.append(html.Table(
+            [html.Thead(html.Tr([html.Th(x, style=_TH) for x in head])), html.Tbody(body)],
+            className="iv-features", style={"borderCollapse": "collapse", "width": "100%"}))
+        rows.append(html.Div(
+            "declared: how much the model says it matters, from its own graph of the scene · "
+            "mechanistic: how far the answer eased when it was removed (danger level, "
+            "advice, graph)"
+            + (" · should matter: its weight in the ground truth" if gt_on else ""),
+            style={"fontSize": "10px", "color": "#94a3b8", "margin": "2px 0"}))
+    rows.append(html.Div(
+        [html.Span("declared vs mechanistic agree: ", style=lab),
+         html.Span(f"{score:.2f} · {reading}" if isinstance(score, (int, float))
+                   else "no score yet: remove a second hazard to compare",
+                   className="iv-score",
+                   title="how far the declared shares and the mechanistic shares agree "
+                         "over the hazards removed so far (1.00 = the same)",
+                   style={"fontWeight": "800", "color": col})],
+        style=line))
     if isinstance(syn, dict):
-        if syn.get("available"):
-            d = syn.get("distribution") or {}
+        if gt_on:
+            d = syn.get("distribution") if isinstance(syn.get("distribution"), dict) else {}
             v = str(d.get("verdict"))
-            c = d.get("coverage") or []
+            c = d.get("coverage") if isinstance(d.get("coverage"), (list, tuple)) else []
             rows.append(html.Div(
-                [html.Span("against ground truth: ", style=lab),
+                [html.Span("match with ground truth: ", style=lab),
                  html.Span(f"{d.get('overlap')} · {v.replace('_', ' ')}",
-                           style={"fontWeight": "800"}),
-                 html.Span(" — " + _DIST_MEANS.get(v, "")
+                           style={"fontWeight": "800", "color": "#7c3aed"}),
+                 html.Span((" — " + _DIST_MEANS.get(v, "") if _DIST_MEANS.get(v) else "")
                            + (f" · {c[0]} of {c[1]} core hazards removed" if len(c) == 2 else ""),
                            style={"color": "#64748b"})],
                 className="iv-gt-line", style=line))
+            gt = syn.get("gt") if isinstance(syn.get("gt"), dict) else {}
+            rows.append(html.Div(
+                f"ground truth: {gt.get('status')} · {gt.get('image_filename')}"
+                + (" (the same picture, matched by its content)"
+                   if gt.get("matched_by") == "content" else "")
+                + " · core: it should matter and the advice depends on it · spurious: "
+                  "the two disagree",
+                className="iv-gt", style={"fontSize": "10px", "color": "#94a3b8"}))
         else:
             rows.append(html.Div(
-                "against ground truth: not available — "
+                "ground truth: not available — "
                 + str(syn.get("why") or "no ground truth for this scene"),
                 className="iv-gt-line", style={**line, "color": "#94a3b8"}))
     rows.append(html.Div("one ask per try · agreeing with itself is not the same as "
@@ -651,64 +678,6 @@ def card_component(cmp: dict, tbl: dict, fresh: list[dict], syn: dict | None = N
                          style={"fontSize": "10px", "color": "#94a3b8", "marginTop": "4px"}))
     return [html.Div(rows, className="unc-panel iv-card",
                      style={"borderColor": col, "padding": "8px 10px"})]
-
-
-def hazards_component(cmp: dict, syn: dict | None = None) -> list:
-    """Evidence: each hazard, what the model says against what the advice
-    does. With the ground-truth switch on (`syn`), a "should" bar and the
-    ground-truth status are added."""
-    from agentic.ui_clean import ent_chip
-    gt_on = isinstance(syn, dict) and bool(syn.get("available"))
-    dist = (syn.get("distribution") or {}) if gt_on else {}
-    gt_d = dist.get("gt_dist") or {}
-    status = {str(h.get("object_id")): h for h in (syn.get("hazards") or [])} if gt_on else {}
-    head = ["HAZARD", "SAYS", "DOES"] + (["SHOULD (GROUND TRUTH)"] if gt_on else []) \
-        + ["READING"] + (["AGAINST GROUND TRUTH"] if gt_on else [])
-    body = []
-    rows_in = cmp.get("hazards") if isinstance(cmp, dict) else None
-    for r in rows_in if isinstance(rows_in, list) else []:
-        if not isinstance(r, dict):
-            continue
-        oid, reading = str(r.get("object_id")), str(r.get("reading"))
-        tds = [html.Td(ent_chip(oid, "#ef4444"), style=_TD),
-               html.Td(_bar(r.get("says"), "#334155"), style=_TD),
-               html.Td(_bar(r.get("does"), "#16a34a") if r.get("does") is not None
-                       else html.Span("—", style={"color": "#cbd5e1"}), style=_TD)]
-        if gt_on:
-            tds.append(html.Td(_bar(gt_d.get(oid), "#7c3aed"), style=_TD))
-        tds.append(html.Td(reading, className="iv-reading", title=_READING_MEANS.get(reading, ""),
-                           style={**_TD, "fontWeight": "800",
-                                  "color": _READING.get(reading, "#64748b")}))
-        if gt_on:
-            st = str((status.get(oid) or {}).get("status") or "")
-            core = (status.get(oid) or {}).get("is_core")
-            tds.append(html.Td(
-                (st.replace("_", " ") + (" · core" if core else "")) if st else "not in ground truth",
-                className="iv-hazard-status", title=_STATUS_MEANS.get(st, ""),
-                style={**_TD, "fontWeight": "700", "color": _STATUS.get(st, "#94a3b8")}))
-        body.append(html.Tr(tds, className="iv-hazard"))
-    if not body:
-        return []
-    out: list = [
-        html.Div("says: the share of each hazard in the model's own graph of the scene, "
-                 "arrows weighed by what their chain reaches · does: the share of how far "
-                 "the answer eased when it was removed",
-                 style={"fontSize": "10px", "color": "#94a3b8", "margin": "2px 0 4px"}),
-        html.Table([html.Thead(html.Tr([html.Th(x, style=_TH) for x in head])),
-                    html.Tbody(body)], className="iv-hazards",
-                   style={"borderCollapse": "collapse", "width": "100%"})]
-    if gt_on:
-        gt = syn.get("gt") or {}
-        cell = str(syn.get("cell"))
-        out.append(html.Div(
-            f"ground truth: {gt.get('status')} · {gt.get('image_filename')}"
-            + (" (the same picture, matched by its content)"
-               if gt.get("matched_by") == "content" else "")
-            + f" · the scene against ground truth: {cell.replace('_', ' ')}"
-            + (f" — {_SCENE_MEANS.get(cell, '')}" if _SCENE_MEANS.get(cell) else ""),
-            className="iv-gt", style={"fontSize": "10px", "color": "#94a3b8",
-                                      "marginTop": "4px"}))
-    return out
 
 
 def _fold(title: str, kids: list, open_: bool = False, cls: str = "") -> Any:
@@ -753,8 +722,6 @@ def result_component(base_dir: Path | None, runs_dir: Path | None,
         out.append(_fold("evidence: each recommendation, by removed hazard",
                          table_component(tbl, runs_dir),
                          open_=len(tbl["columns"]) < 2, cls="by-recommendation"))
-        out.append(_fold("evidence: each hazard, says against does",
-                         hazards_component(cmp, syn), cls="by-hazard"))
     except Exception as exc:                    # never lose the try lines to a bad card
         out.append(html.Div(f"the card could not be built: {exc}",
                             className="ticket-empty"))

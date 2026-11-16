@@ -597,3 +597,27 @@ everywhere"; no ground truth in deployment, so ground truth is a switch;
 C_tanker ui_22840b13: 0.95, does what it says, 3 of 5 declared hazards
 removed (brush_1 and smoke_1 not yet). The model is consistent with
 itself; the wrong emphasis shows only against ground truth (0.62).
+
+The card, second form (Sunny, 2026-11-16: "build it"). Two halves:
+
+- RECOMMENDATIONS: "grounded: n of m" (a recommendation is grounded when
+  it is dropped once the hazard it names is removed), and the advice that
+  only appeared after a hazard was removed.
+- FEATURES: one row per hazard, a DECLARED bar beside a MECHANISTIC bar
+  ("not removed yet" where there is no try), then what it is in plain
+  words with no verdict in them: drives the advice, as stated · stated,
+  does not drive the advice · drives the advice, not stated · minor on
+  both. A side is "high" at half of its top share. Under the rows:
+  "declared vs mechanistic agree: 0.95".
+
+Agreed with Sunny: without ground truth nobody on the screen knows what
+is right, so "core" and "spurious" are not used there. With the "compare
+with ground truth" switch on, the same rows gain a SHOULD MATTER bar and
+BY GROUND TRUTH: core (it should matter and the advice depends on it) or
+spurious, which covers both mismatches (Sunny: "should matter but advice
+does not is also spurious"), plus "match with ground truth". The separate
+hazard fold is gone; one fold of proof remains (each recommendation by
+removed hazard) and the tries.
+
+C with the switch on: fire_1 core, spill_1 core, tanker_truck_1 spurious
+(should matter 0.39, the advice does not depend on it), match 0.62.
