@@ -708,3 +708,17 @@ collapse ... and also use consequence to modulate their importance."
 
 Left to Sunny, gradually: the card's wording, a possible new name for
 "trust", and whether consequence should enter the score itself.
+
+Two kinds in one list, separated (Sunny, 2026-11-16, reading C: "so no
+advice acts on fire or spill?"). The loss "holds dangers it does not act
+on" compares ARROWS: links in the model's own graph that no recommendation
+records. Its evidence mixed (1) a hazard that is never the cause in any
+advice (brush_1, tanker_truck_1: a real gap) with (2) another link of a
+hazard that does have advice (fire ↔ spill: partly bookkeeping, since a
+recommendation records one arrow). The fold now shows them as two groups
+and its line counts the first ("8 arrows · 3 from a hazard with no advice
+· 6 reach a person"). The score is unchanged. Open: the loss's own name
+still reads "holds dangers it does not act on", which sounds like whole
+hazards were ignored; proposed "links in its own graph that no advice
+uses", waiting for Sunny's yes. Whether kind (2) should cost trust at all
+is a scoring question for later.

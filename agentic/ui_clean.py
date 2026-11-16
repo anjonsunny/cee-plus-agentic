@@ -111,6 +111,10 @@ _ERROR_SHORT = {
 }
 
 
+GROUP_NO_ADVICE = "the hazard is never the cause in any advice"
+GROUP_LINK = "the hazard has advice, this link of it does not"
+
+
 def _arrow_items(edges: Any, s4: dict) -> list[dict]:
     """The arrows behind a loss, the most consequential first: [{text,
     weight, reaches}]. An arrow is weighed the way the intervention weighs
@@ -166,6 +170,22 @@ def trust_evidence(signal: str, s4: dict, contributor: dict | None = None) -> li
     if signal == "dangers_acted_on":            # in its own graph, missing from the advice
         items = _arrow_items(al.get("b_only"), s4)
         if items:
+            # Two different things sat in this one list (Sunny, 2026-11-16:
+            # "we need to separate them"). A hazard that is never the cause
+            # in any recommendation is a real gap. A link of a hazard that
+            # DOES have advice is partly bookkeeping: a recommendation
+            # records one arrow, so "contain the spill to keep the fuel from
+            # the fire" is written as spill -> man and the model's own
+            # spill -> fire link reads as unused.
+            causes = set()
+            for r in (s4.get("recommendations") or []):
+                if isinstance(r, dict) and not r.get("benign"):
+                    q = r.get("structured_reasoning")
+                    if isinstance(q, dict) and q.get("threat"):
+                        causes.add(str(q["threat"]))
+            for i in items:
+                src = i["text"].split(" → ")[0]
+                i["group"] = GROUP_LINK if src in causes else GROUP_NO_ADVICE
             return items
     if signal == "advice_backed_by_belief":     # in the advice, missing from its own graph
         items = _arrow_items(al.get("a_only"), s4)
@@ -228,34 +248,54 @@ def _evidence_fold(x: dict) -> Any | None:
     """The evidence of one loss, folded shut (Sunny, 2026-11-16: "put the
     evidence under collapse ... use consequence to modulate their
     importance"). Opened, it lists the items most consequential first; an
-    arrow whose chain ends at a person says so. The fold's own line counts
-    them, so the weight of the evidence is visible while it is closed."""
+    arrow whose chain ends at a person says so. Where the items are of two
+    kinds they are shown as two groups. The fold's own line counts them, so
+    the weight of the evidence is visible while it is closed."""
     ents = [str(e) for e in (x.get("entities") or [])]
     items = [i for i in (x.get("evidence") or []) if isinstance(i, dict) and i.get("text")]
     if not ents and not items:
         return None
     people = sum(1 for i in items if i.get("reaches"))
     weighed = any("weight" in i for i in items)
+    grouped = any(i.get("group") for i in items)
     if ents:
         cons = x.get("consequence")
         gist = (f"{len(ents)} entit{'ies' if len(ents) != 1 else 'y'}"
                 + (f" · consequence {cons}" if isinstance(cons, (int, float)) else ""))
+    elif grouped:
+        n_gap = sum(1 for i in items if i.get("group") == GROUP_NO_ADVICE)
+        gist = (f"{len(items)} arrow{'s' if len(items) != 1 else ''} · {n_gap} from a "
+                "hazard with no advice · "
+                + (f"{people} reach a person" if people else "none reaches a person"))
     else:
         n = len(items)
         gist = (f"{n} arrow{'s' if n != 1 else ''}" + (f" · {people} reach a person"
                                                       if people else " · none reaches a person")
                 if weighed else f"{n} item{'s' if n != 1 else ''}")
-    kids: list = []
-    if ents:
-        kids.append(html.Div([ent_chip(e, "#64748b") for e in ents]))
-    for i in items:
-        kids.append(html.Div(
+
+    def item(i: dict) -> Any:
+        return html.Div(
             [html.Span(str(i["text"]), style={"color": "#334155"})]
             + ([html.Span(f" · reaches {i['reaches']}", style={"color": "#b45309",
                                                                 "fontWeight": "700"})]
                if i.get("reaches") else []),
             className="trust-evidence-item" + (" person" if i.get("reaches") else ""),
-            style={"fontSize": "11px", "lineHeight": "1.6"}))
+            style={"fontSize": "11px", "lineHeight": "1.6"})
+    kids: list = []
+    if ents:
+        kids.append(html.Div([ent_chip(e, "#64748b") for e in ents]))
+    if grouped:
+        for name in (GROUP_NO_ADVICE, GROUP_LINK):
+            part = [i for i in items if i.get("group") == name]
+            if not part:
+                continue
+            kids.append(html.Div(
+                f"{name} · {len(part)}", className="trust-evidence-group",
+                style={"fontSize": "10.5px", "fontWeight": "700", "marginTop": "3px",
+                       "color": "#b45309" if name == GROUP_NO_ADVICE else "#64748b"}))
+            kids += [item(i) for i in part]
+    else:
+        kids += [item(i) for i in items]
     return html.Details([
         html.Summary(f"evidence · {gist}",
                      style={"fontSize": "10.5px", "color": "#64748b", "cursor": "pointer"}),
