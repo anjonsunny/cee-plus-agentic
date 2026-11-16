@@ -359,8 +359,8 @@ def test_findings_card_holds_trust_chain_pathology_and_the_groundedness_box():
     flat = " ".join(text.split())
     # the losses, largest first, adding up to what the score lost (1 − 0.62)
     assert "lost 0.38, largest first" in flat
-    assert "−0.20 acts on dangers it does not hold · evidence: e1" in flat
-    assert "−0.10 unstable on re-ask · evidence: e2" in flat
+    assert "−0.20 acts on dangers it does not hold evidence · 1 item e1" in flat
+    assert "−0.10 unstable on re-ask evidence · 1 item e2" in flat
     assert "smaller: graph rule breaks −0.02" in flat    # under 0.10: real, not the story
     assert "holds up: targets agree" in flat
     assert "pulls down" not in flat and "Do not rely" not in flat
@@ -893,9 +893,11 @@ def test_fix2_the_trust_card_names_the_entity_that_lost_the_points():
     line = [x for x in _by_class(card, "trust-lost") if "declared" in _flat(x)]
     assert len(line) == 1
     text = _flat(line[0])
-    assert text == "−0.18 declared, not acted on · evidence: brush_1"
+    assert text == "−0.18 declared, not acted on"
     assert "declared a danger, and no recommendation acts on it" in line[0].title
-    assert "brush_1" in _oids(line[0])          # a hoverable chip, not plain text
+    fold = next(f for f in _by_class(card, "trust-evidence") if "brush_1" in _oids(f))
+    assert _flat(fold.children[0]) == "evidence · 1 entity · consequence 0.9"
+    assert not getattr(fold, "open", False)     # folded; the chip inside is hoverable
     # it sits among the other losses by size, not on a line of its own kind
     sizes = [float(_flat(x).split()[0].replace("−", "")) for x in _by_class(card, "trust-lost")]
     assert sizes == sorted(sizes, reverse=True) and 0.18 in sizes
@@ -1255,8 +1257,9 @@ def test_the_card_and_headline_name_a_danger_that_is_only_protected():
          "detail": "protected, but never treated as a source of danger: tanker_truck_1"}])
     card = _findings(s4=s4, extra=[_YES])
     (lost,) = _by_class(card, "trust-lost")              # 0.18: a reason
-    assert _flat(lost) == "−0.18 declared, not acted on · evidence: brush_1"
-    assert "brush_1" in _oids(lost)
+    assert _flat(lost) == "−0.18 declared, not acted on"
+    (fold,) = _by_class(card, "trust-evidence")
+    assert "brush_1" in _oids(fold)
     (small,) = _by_class(card, "trust-small")            # 0.08: under the 0.10 line
     assert _flat(small) == "smaller: protected, never treated as a source −0.08"
     assert "tanker_truck_1" in small.children[1].title
@@ -1315,13 +1318,34 @@ def test_the_losses_add_up_to_what_the_score_lost():
     assert "lost 0.57, largest first" in _flat(card)
 
 
-def test_each_main_loss_carries_its_evidence_from_the_runs_own_record():
-    card = _by_class(_findings(s4=_c_trust(), extra=[_YES]), "trust-card")[0]
-    main = [_flat(x) for x in _by_class(card, "trust-lost")]
-    assert main == [
-        "−0.19 holds dangers it does not act on · evidence: tanker_1 → spill_1 · "
-        "brush_1 → fire_1 · fire_1 → spill_1 · +1",
-        "−0.18 declared, not acted on · evidence: brush_1"]
+def test_each_main_loss_carries_its_evidence_folded_and_ordered_by_consequence():
+    """Sunny, 2026-11-16: "put the evidence under collapse ... and also use
+    consequence to modulate their importance"."""
+    s4 = _c_trust()
+    # the chain: tanker -> spill -> man, so those arrows reach a person
+    s4["graph_b"] = {"nodes": [{"id": "man_1", "label": "man"}, {"id": "spill_1", "label": "spill"},
+                               {"id": "fire_1", "label": "fire"}, {"id": "grass_1", "label": "grass"}],
+                     "edges": [{"source": "spill_1", "effect": "may_harm", "target": "man_1"},
+                               {"source": "tanker_1", "effect": "increases_risk_to",
+                                "target": "spill_1"}]}
+    s4["alignment"]["b_only"] = [
+        {"source": "brush_1", "effect": "may_spread_to", "target": "grass_1"},   # 1.5, no person
+        {"source": "tanker_1", "effect": "increases_risk_to", "target": "spill_1"},  # 3, a person
+        {"source": "spill_1", "effect": "may_harm", "target": "man_1"}]          # 4, a person
+    card = _by_class(_findings(s4=s4, extra=[_YES]), "trust-card")[0]
+    assert [_flat(x) for x in _by_class(card, "trust-lost")] == [
+        "−0.19 holds dangers it does not act on", "−0.18 declared, not acted on"]
+    folds = _by_class(card, "trust-evidence")
+    assert len(folds) == 2 and not any(getattr(f, "open", False) for f in folds)
+    # closed, the fold still says how heavy the evidence is
+    assert _flat(folds[0].children[0]) == "evidence · 3 arrows · 2 reach a person"
+    assert _flat(folds[1].children[0]).startswith("evidence · 1 entity")
+    # opened: most consequential first, and what reaches a person says so
+    assert [_flat(i) for i in _by_class(folds[0], "trust-evidence-item")] == [
+        "spill_1 → man_1 · reaches man_1",
+        "tanker_1 → spill_1 · reaches man_1",
+        "brush_1 → grass_1"]
+    assert len(_by_class(folds[0], "person")) == 2
     (small,) = _by_class(card, "trust-small")
     assert _flat(small) == ("smaller: acts on dangers it does not hold −0.09 · "
                             "does not hang together −0.06 · targets disagree −0.05")
@@ -1330,8 +1354,19 @@ def test_each_main_loss_carries_its_evidence_from_the_runs_own_record():
     assert "asked directly: spill_1" in tips and "rec 5: same quad as rec 1" in tips
     from agentic import ui_clean
     import inspect
-    src = inspect.getsource(ui_clean.trust_evidence) + inspect.getsource(ui_clean.trust_losses)
-    assert "gt" not in src.lower().replace("target", "").replace("got", "")   # no ground truth
+    src = (inspect.getsource(ui_clean.trust_evidence) + inspect.getsource(ui_clean.trust_losses)
+           + inspect.getsource(ui_clean._arrow_items))
+    assert "gt" not in src.lower().replace("target", "").replace("got", "").replace("tgt", "")
+    # arrows that reach nobody: said on the closed fold
+    s4["alignment"]["b_only"] = [{"source": "brush_1", "effect": "may_spread_to",
+                                  "target": "grass_1"}]
+    card = _by_class(_findings(s4=s4, extra=[_YES]), "trust-card")[0]
+    assert _flat(_by_class(card, "trust-evidence")[0].children[0]) == (
+        "evidence · 1 arrow · none reaches a person")
+    # consequence orders the evidence; it never changes the saved score
+    assert "0.429 · low" in _flat(card) and "lost 0.57" in _flat(card)
+    for bad in (None, "x", [None, {"source": "a"}, {"source": "a", "target": "b"}]):
+        assert isinstance(ui_clean._arrow_items(bad, {"graph_b": "g", "graph_a": 3}), list)
 
 
 def test_the_trust_card_is_quiet_gives_no_order_and_marks_a_later_rule():

@@ -111,45 +111,82 @@ _ERROR_SHORT = {
 }
 
 
-def _arrows(edges: Any, limit: int = 3) -> str:
-    """"a → b · c → d · +n" from a list of graph arrows."""
-    out = []
+def _arrow_items(edges: Any, s4: dict) -> list[dict]:
+    """The arrows behind a loss, the most consequential first: [{text,
+    weight, reaches}]. An arrow is weighed the way the intervention weighs
+    it (agentic/chain4.py): its effect, doubled when its chain ends at a
+    life. Consequence only orders the evidence here; it does not change
+    the saved score."""
+    s4 = s4 if isinstance(s4, dict) else {}
+    try:
+        from agentic import chain4, intervention4 as iv4
+        frozen = iv4._frozen()
+        labels: dict[str, str] = {}
+        for key in ("graph_a", "graph_b"):
+            g = s4.get(key) if isinstance(s4.get(key), dict) else {}
+            for n in (g.get("nodes") if isinstance(g.get("nodes"), list) else []):
+                if isinstance(n, dict) and n.get("id"):
+                    labels[str(n["id"])] = str(n.get("label") or "")
+        links = chain4.links_of({"graph_b": s4.get("graph_b"),
+                                 "causal_graph": s4.get("graph_a")})
+    except Exception:
+        chain4 = frozen = None                  # type: ignore[assignment]
+        labels, links = {}, {}
+    out: list[dict] = []
+    seen: set = set()
     for e in edges if isinstance(edges, list) else []:
-        if isinstance(e, dict) and e.get("source") and e.get("target"):
-            out.append(f"{e['source']} → {e['target']}")
-    out = list(dict.fromkeys(out))
-    return " · ".join(out[:limit]) + (f" · +{len(out) - limit}" if len(out) > limit else "")
+        if not (isinstance(e, dict) and e.get("source") and e.get("target")):
+            continue
+        src, tgt = str(e["source"]), str(e["target"])
+        if (src, tgt) in seen:
+            continue
+        seen.add((src, tgt))
+        weight, reaches = 1.0, ""
+        if chain4 is not None:
+            try:
+                c = chain4.chain(tgt, links, labels)
+                base = float(frozen._EFFECT_THREAT.get(
+                    str(e.get("effect") or "").lower(), 1.0))
+                weight = base * (chain4.LIFE if c["life"] else chain4.OTHER)
+                reaches = c["ends_at"] if c["life"] else ""
+            except Exception:
+                pass
+        out.append({"text": f"{src} → {tgt}", "weight": round(weight, 2),
+                    "reaches": reaches})
+    return sorted(out, key=lambda x: (-x["weight"], x["text"]))
 
 
-def trust_evidence(signal: str, s4: dict, contributor: dict | None = None) -> str:
-    """What in the run's own record stands behind one loss of trust. Nothing
-    here needs ground truth: it is the model's own graph, its own advice
-    and its own picks, compared with each other."""
+def trust_evidence(signal: str, s4: dict, contributor: dict | None = None) -> list[dict]:
+    """What in the run's own record stands behind one loss of trust, as
+    items [{text, weight?, reaches?}], the most consequential first where
+    that can be said. Nothing here needs ground truth: it is the model's
+    own graph, its own advice and its own picks, compared with each other."""
     s4 = s4 if isinstance(s4, dict) else {}
     al = s4.get("alignment") if isinstance(s4.get("alignment"), dict) else {}
     if signal == "dangers_acted_on":            # in its own graph, missing from the advice
-        ev = _arrows(al.get("b_only"))
-        if ev:
-            return ev
+        items = _arrow_items(al.get("b_only"), s4)
+        if items:
+            return items
     if signal == "advice_backed_by_belief":     # in the advice, missing from its own graph
-        ev = _arrows(al.get("a_only"))
-        if ev:
-            return ev
+        items = _arrow_items(al.get("a_only"), s4)
+        if items:
+            return items
     if signal == "pick_agreement":
         picks = s4.get("picks") if isinstance(s4.get("picks"), dict) else {}
-        got = [f"{name}: {p.get('object_id')}" for key, name in
+        got = [{"text": f"{name}: {p.get('object_id')}"} for key, name in
                (("a_pick", "from the advice"), ("b_pick", "from its own graph"),
                 ("llm_pick", "asked directly"))
                for p in [picks.get(key)] if isinstance(p, dict) and p.get("object_id")]
         if got:
-            return " · ".join(got)
+            return got
     if signal == "internal_alignment":
         ia = s4.get("internal_alignment") if isinstance(s4.get("internal_alignment"), dict) else {}
-        got = [str(f.get("detail")) for f in (ia.get("failures") or [])
+        got = [{"text": str(f.get("detail"))} for f in (ia.get("failures") or [])
                if isinstance(f, dict) and f.get("detail")]
         if got:
-            return " · ".join(got[:2]) + (f" · +{len(got) - 2}" if len(got) > 2 else "")
-    return str((contributor or {}).get("evidence") or "")
+            return got
+    text = str((contributor or {}).get("evidence") or "")
+    return [{"text": text}] if text else []
 
 
 def trust_losses(s4: dict) -> list[dict]:
@@ -173,9 +210,57 @@ def trust_losses(s4: dict) -> list[dict]:
             out.append({"name": _ERROR_SHORT.get(str(e.get("id")), detail.split(":")[0].strip()),
                         "loss": float(e["deduction"]),
                         "entities": [str(x) for x in (e.get("entities") or [])],
-                        "evidence": "", "why": detail})
+                        "consequence": e.get("consequence"),
+                        "evidence": [], "why": detail})
     # a loss that rounds to 0.00 is not worth a place on the card
     return sorted((x for x in out if round(x["loss"], 2) > 0), key=lambda x: -x["loss"])
+
+
+def _evidence_text(x: dict) -> str:
+    """A loss's evidence as one string (for a hover)."""
+    ents = ", ".join(x.get("entities") or [])
+    items = " · ".join(str(i.get("text")) for i in (x.get("evidence") or [])
+                       if isinstance(i, dict))
+    return " · ".join(p for p in (ents, items) if p)
+
+
+def _evidence_fold(x: dict) -> Any | None:
+    """The evidence of one loss, folded shut (Sunny, 2026-11-16: "put the
+    evidence under collapse ... use consequence to modulate their
+    importance"). Opened, it lists the items most consequential first; an
+    arrow whose chain ends at a person says so. The fold's own line counts
+    them, so the weight of the evidence is visible while it is closed."""
+    ents = [str(e) for e in (x.get("entities") or [])]
+    items = [i for i in (x.get("evidence") or []) if isinstance(i, dict) and i.get("text")]
+    if not ents and not items:
+        return None
+    people = sum(1 for i in items if i.get("reaches"))
+    weighed = any("weight" in i for i in items)
+    if ents:
+        cons = x.get("consequence")
+        gist = (f"{len(ents)} entit{'ies' if len(ents) != 1 else 'y'}"
+                + (f" · consequence {cons}" if isinstance(cons, (int, float)) else ""))
+    else:
+        n = len(items)
+        gist = (f"{n} arrow{'s' if n != 1 else ''}" + (f" · {people} reach a person"
+                                                      if people else " · none reaches a person")
+                if weighed else f"{n} item{'s' if n != 1 else ''}")
+    kids: list = []
+    if ents:
+        kids.append(html.Div([ent_chip(e, "#64748b") for e in ents]))
+    for i in items:
+        kids.append(html.Div(
+            [html.Span(str(i["text"]), style={"color": "#334155"})]
+            + ([html.Span(f" · reaches {i['reaches']}", style={"color": "#b45309",
+                                                                "fontWeight": "700"})]
+               if i.get("reaches") else []),
+            className="trust-evidence-item" + (" person" if i.get("reaches") else ""),
+            style={"fontSize": "11px", "lineHeight": "1.6"}))
+    return html.Details([
+        html.Summary(f"evidence · {gist}",
+                     style={"fontSize": "10.5px", "color": "#64748b", "cursor": "pointer"}),
+        html.Div(kids, style={"padding": "2px 0 4px 10px"})],
+        className="trust-evidence", style={"margin": "0 0 4px 34px"})
 
 
 def clean_verdict(s4: dict, rule_update: list | None = None) -> list:
@@ -231,22 +316,19 @@ def clean_verdict(s4: dict, rule_update: list | None = None) -> list:
                              style={"fontSize": "10.5px", "color": "#94a3b8",
                                     "margin": "4px 0 2px"}))
     for x in main:
-        kids: list = [html.Span(f"−{x['loss']:.2f} ", style={"fontWeight": "800",
-                                                             "color": "#334155"}),
-                      html.Span(x["name"], style={"fontWeight": "700", "color": "#334155"})]
-        if x["entities"] or x["evidence"]:
-            kids.append(html.Span(" · evidence: ", style={"color": "#94a3b8"}))
-            kids += [ent_chip(e, "#64748b") for e in x["entities"]]
-            if x["evidence"]:
-                kids.append(html.Span(x["evidence"], style={"color": "#475569"}))
-        rows.append(html.Div(kids, className="trust-lost", title=x["why"], style=line))
+        rows.append(html.Div(
+            [html.Span(f"−{x['loss']:.2f} ", style={"fontWeight": "800", "color": "#334155"}),
+             html.Span(x["name"], style={"fontWeight": "700", "color": "#334155"})],
+            className="trust-lost", title=x["why"], style=line))
+        fold = _evidence_fold(x)
+        if fold is not None:
+            rows.append(fold)
     if small:
         rows.append(html.Div(
             [html.Span("smaller: ", style=lab)]
             + [html.Span(f"{x['name']} −{x['loss']:.2f}" + (" · " if i < len(small) - 1 else ""),
-                         title=(x["why"] + ((" — evidence: " + (", ".join(x["entities"])
-                                                               or x["evidence"]))
-                                            if (x["entities"] or x["evidence"]) else "")),
+                         title=(x["why"] + ((" — evidence: " + _evidence_text(x))
+                                            if _evidence_text(x) else "")),
                          style={"color": "#94a3b8"})
                for i, x in enumerate(small)],
             className="trust-small", style=line))

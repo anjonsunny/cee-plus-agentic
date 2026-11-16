@@ -681,3 +681,30 @@ Headline and the all-scenes table (Sunny, 2026-11-16):
   HEADLINE column keeps the full trust sentence, with today's rule.
 - A scene's row is the newest finished run that has tries, else the
   newest: a later rerun no longer takes the row and reads "not tested".
+
+## 22. The trust card, dialled down (Sunny, 2026-11-16)
+
+"For a trust score this low the evidence seems insignificant"; "'Do not
+rely on this advice' is strong"; "the trust card might be mistaken as the
+causal groundedness card"; then: "keep it. But put the evidence under
+collapse ... and also use consequence to modulate their importance."
+
+- The card states why: every loss behind the saved score, largest first,
+  adding up to 1 − score ("lost 0.57, largest first"). The weighted checks
+  and the singular errors sit in one list (`ui_clean.trust_losses`).
+- A loss under 0.10 "is real but not the story" (errors4._HEADLINE_MIN):
+  those share one grey "smaller:" line, evidence on hover.
+- Each main loss has its evidence in a fold, closed. The fold's line says
+  how heavy it is ("evidence · 8 arrows · 4 reach a person", "evidence · 1
+  entity · consequence 0.9"). Opened, the items are ordered by consequence
+  (an arrow weighed as in chain4: its effect, doubled when its chain ends
+  at a life) and an arrow that reaches a person says so. Consequence only
+  orders the evidence; the saved score is not changed.
+- A rule added after the run is listed apart, "not in this score".
+- No order to the reader, no "what to do", no red headline bar; a grey
+  frame and a small score. The causal-groundedness card has the coloured
+  frame and the large numbers. A calm scene keeps one plain line.
+- Nothing on the card needs ground truth.
+
+Left to Sunny, gradually: the card's wording, a possible new name for
+"trust", and whether consequence should enter the score itself.
