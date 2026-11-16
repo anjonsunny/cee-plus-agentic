@@ -4600,14 +4600,7 @@ def findings_component(d: dict[str, Any], mode: str = "clean",
     from agentic import ui_clean
     s4 = d.get("stage4") or {}
     if s4:
-        # two things the event stream does not hold: what today's rules add
-        # to a saved run's trust, and what the tries on this run add up to
-        from agentic.errors4 import new_under_todays_rule
-        d["rule_update"] = new_under_todays_rule(
-            d.get("result"), ((d.get("assess") or {}).get("verdict") or {}).get("at_risk"),
-            s4.get("recommendations"), s4.get("graph_b"),
-            (s4.get("trust") or {}).get("singular_errors")
-            if isinstance(s4.get("trust"), dict) else None)
+        # what the event stream does not hold: what the tries on this run add up to
         base = UI_RUNS_DIR / record_name if record_name else None
         if base is not None and base.is_dir():
             from agentic import ui_intervene

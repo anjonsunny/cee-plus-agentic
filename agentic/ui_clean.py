@@ -303,7 +303,7 @@ def _evidence_fold(x: dict) -> Any | None:
         className="trust-evidence", style={"margin": "0 0 4px 34px"})
 
 
-def clean_verdict(s4: dict, rule_update: list | None = None) -> list:
+def clean_verdict(s4: dict) -> list:
     """The trust card: the score, and WHY, in losses that add up.
 
     Sunny, 2026-11-16: the card said "do not rely on this advice" and then
@@ -312,8 +312,9 @@ def clean_verdict(s4: dict, rule_update: list | None = None) -> list:
     lost 0.57 and the card showed under half of it. Now every loss is
     listed, largest first, with what in the run's own record stands behind
     it, labelled evidence. A loss under 0.10 "is real but not the story"
-    (errors4._HEADLINE_MIN): those share one grey line. A rule added after
-    the run is listed apart and marked as not in the score. No order to the
+    (errors4._HEADLINE_MIN): those share one grey line. A saved run shows
+    the trust it was scored with; a rule added later is not patched onto it
+    (that line was ad hoc, removed 2026-11-16). No order to the
     reader, no ground truth, and a quiet look: this card is not the main
     result (the causal-groundedness card is)."""
     from agentic.errors4 import _HEADLINE_MIN
@@ -372,19 +373,6 @@ def clean_verdict(s4: dict, rule_update: list | None = None) -> list:
                          style={"color": "#94a3b8"})
                for i, x in enumerate(small)],
             className="trust-small", style=line))
-    for e in (rule_update or []):
-        if not isinstance(e, dict) or e.get("waived"):
-            continue
-        detail = str(e.get("detail") or e.get("id") or "")
-        ents = [str(x) for x in (e.get("entities") or [])]
-        rows.append(html.Div(
-            [html.Span("not in this score, rule added after the run: ", style=lab),
-             html.Span(_ERROR_SHORT.get(str(e.get("id")), detail.split(":")[0].strip())
-                       + (" · evidence: " if ents else ""), style={"color": "#64748b"})]
-            + [ent_chip(x, "#64748b") for x in ents]
-            + ([html.Span(f"(would be −{e['deduction']})", style={"color": "#94a3b8"})]
-               if e.get("deduction") is not None else []),
-            className="trust-rule-update", title=detail, style=line))
     clean = [c for c in (trust.get("contributors") or [])
              if isinstance(c, dict) and (c.get("contribution") or 0) == 0]
     if clean:
@@ -659,7 +647,7 @@ def findings(s4: dict, d: dict, *, chain: Callable[[dict], Any],
     # keeps one plain line, since it has no losses to read.
     line = headline(s4, d) if _is_quiet(s4, d) else None
     out: list = ([line] if line is not None else []) + head
-    out += clean_verdict(s4, d.get("rule_update")) or [html.Div("trust not scored on this run",
+    out += clean_verdict(s4) or [html.Div("trust not scored on this run",
                                           className="ticket-empty")]
     out.append(_heading("THE RUN'S CHAIN"))
     out.append(chain(s4))
@@ -715,7 +703,7 @@ def headline_parts(s4: dict, d: dict, brief: bool = False) -> tuple[str, list]:
     # ── what the advice misses
     missed: list[str] = []          # entities left out or only protected
     other: list[str] = []           # an error that names no entity
-    for e in list(trust.get("singular_errors") or []) + list(d.get("rule_update") or []):
+    for e in (trust.get("singular_errors") or []):
         if not isinstance(e, dict) or e.get("waived"):
             continue
         ents = [str(x) for x in (e.get("entities") or []) if str(x)]

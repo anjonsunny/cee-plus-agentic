@@ -76,14 +76,6 @@ def row_of(path: Path, derive: Callable[[list], dict]) -> dict | None:
                    if isinstance(t, dict)]
     except Exception:
         tickets = []
-    # the same extra line the run page's trust card shows for a saved run
-    try:
-        from agentic.errors4 import new_under_todays_rule
-        d["rule_update"] = new_under_todays_rule(
-            d.get("result"), verdict.get("at_risk"), s4.get("recommendations"),
-            s4.get("graph_b"), trust.get("singular_errors"))
-    except Exception:
-        d["rule_update"] = []
     tone, _parts = ui_clean.headline_parts(s4, d)
     # causal groundedness, from the tries saved on this run (None: not tested)
     grounded = None

@@ -1376,27 +1376,22 @@ def test_each_main_loss_carries_its_evidence_folded_and_ordered_by_consequence()
         assert isinstance(ui_clean._arrow_items(bad, {"graph_b": "g", "graph_a": 3}), list)
 
 
-def test_the_trust_card_is_quiet_gives_no_order_and_marks_a_later_rule():
-    s4 = _c_trust()
-    late = [{"id": "hazard_protected_only", "entities": ["tanker_1"], "deduction": 0.08,
-             "detail": "protected, but never treated as a source of danger: tanker_1"}]
+def test_the_trust_card_is_quiet_and_gives_no_order():
     from agentic import ui_clean
-    (card,) = ui_clean.clean_verdict(s4, late)
+    (card,) = ui_clean.clean_verdict(_c_trust())
     text = _flat(card)
     for order in ("Do not rely", "don't rely", "what to do", "send to reflection"):
         assert order not in text, order
     assert card.style["borderColor"] == "#e2e8f0"        # no coloured frame
     (score,) = _by_class(card, "trust-score")
     assert _flat(score) == "0.429 · low" and score.style["fontSize"] == "13px"
-    (rule,) = _by_class(card, "trust-rule-update")
-    assert _flat(rule) == ("not in this score, rule added after the run: protected, never "
-                           "treated as a source · evidence: tanker_1 (would be −0.08)")
-    # it is NOT counted in the losses of the saved score
     assert "lost 0.57" in text
     for bad in ({"trust": {"score": 0.5, "contributors": [None, {"contribution": "x"}, {}],
                            "singular_errors": [None, {"deduction": None}, {"waived": True,
                                                                            "deduction": 0.2}]}},
                 {"trust": {"score": "n/a"}}, {"trust": {"score": 0.9}, "alignment": "x",
                                                "picks": 3, "internal_alignment": []}):
-        assert ui_clean.clean_verdict(bad, [None, "x", {}]) is not None
+        assert ui_clean.clean_verdict(bad) is not None
         assert isinstance(ui_clean.trust_losses(bad), list)
+
+

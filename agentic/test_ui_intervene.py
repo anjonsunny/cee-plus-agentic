@@ -1005,30 +1005,19 @@ C_S4 = {"recommendations": [
         "pathology": {"tickets": []}}
 
 
-def test_a_saved_run_shows_what_todays_rule_would_also_charge():
-    from agentic.errors4 import new_under_todays_rule
-    extra = new_under_todays_rule(C_RECORD, [{"object_id": "man_1", "kind": "proximity"}],
-                                  C_S4["recommendations"], C_S4["graph_b"], [])
-    assert [(e["id"], e["entities"]) for e in extra] == [("hazard_protected_only", ["tanker_1"])]
-    # a run that already carries it gets nothing extra
-    assert new_under_todays_rule(C_RECORD, [], C_S4["recommendations"], {}, extra) == []
-    for bad in (None, "x", {}, {"detected_objects": "y"}, {"detected_objects": [None]}):
-        assert new_under_todays_rule(bad, bad, bad, bad, bad) == []
-
+def test_a_saved_run_shows_the_trust_it_was_scored_with_nothing_patched_on():
+    """Sunny, 2026-11-16: the line "not in this score, rule added after the
+    run" was ad hoc. A saved run shows its own trust; a new run includes the
+    rule in its score like any other loss."""
+    from agentic import errors4, ui_clean
+    assert not hasattr(errors4, "new_under_todays_rule")
     d = ui.derive(_events(C_RECORD, [{"object_id": "man_1", "kind": "proximity"}], C_S4))
     card = ui.findings_component(d, mode="clean")
-    (line,) = _by_class(card, "trust-rule-update")
-    text = _flat(line)
-    assert text.startswith("not in this score, rule added after the run: protected, never "
-                           "treated as a source · evidence: tanker_1")
-    assert "protected, but never treated as a source of danger" in line.title
-    from agentic.test_ui_views import _oids
-    assert "tanker_1" in _oids(line)
-    assert "0.43 · low" in _flat(card)                   # the saved score is untouched
-    assert "would be −" in text                          # not counted in the saved score
-    assert _by_class(card, "headline") == []             # no headline bar on the run page
-    from agentic import ui_clean
-    assert "Misses: tanker_1" in ui_clean.headline_text(d["stage4"], d)   # the full sentence
+    text = _flat(card)
+    assert _by_class(card, "trust-rule-update") == []
+    assert "rule added after" not in text and "would be" not in text
+    assert "0.43 · low" in text and "rule_update" not in d
+    assert "tanker_1" not in ui_clean.headline_text(d["stage4"], d)
 
 
 def test_the_tries_reach_the_headline_and_the_runs_chain(gt, monkeypatch):
