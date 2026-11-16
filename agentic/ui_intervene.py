@@ -298,14 +298,14 @@ def _thumb(path: Path | None) -> str | None:
 # keeps the short states; only the screen wording is here.
 _CELL = {"stays": ("advice kept", "#64748b"), "gone": ("advice dropped", "#0f172a"),
          "changed": ("advice kept, adjusted", "#b45309"),
-         "target removed": ("nothing left to protect", "#94a3b8")}
+         "target removed": ("its target was removed", "#94a3b8")}
 _CELL_MEANS = {
     "stays": "the same advice is still in the answer to the edited scene",
     "gone": "this advice is no longer in the answer to the edited scene",
-    "changed": "the advice is still there, but it now protects different things "
-               "or uses a different effect word",
-    "target removed": "what this advice protected was removed, so it had to go; "
-                      "not counted as evidence"}
+    "changed": "the hazard this advice names still has advice, with a different "
+               "target or effect word",
+    "target removed": "the only thing this advice pointed at was removed, and its "
+                      "hazard has no other advice; not counted as evidence"}
 TABLE_KEY = "each cell: what happened to this advice when that hazard was removed"
 _VERDICT = {"grounded": "#16a34a", "masquerade": "#b91c1c",
             "spurious": "#b45309", "mixed": "#b45309",
@@ -494,6 +494,7 @@ def _bar(v: Any, col: str) -> Any:
 _ROLE = {"drives the advice, as stated": "#16a34a",
          "stated, does not drive the advice": "#b45309",
          "drives the advice, not stated": "#b45309",
+         "drives the advice more than stated": "#b45309",
          "minor on both": "#64748b", "more alarmed when removed": "#b91c1c",
          "not removed yet": "#94a3b8"}
 _ROLE_MEANS = {
@@ -501,8 +502,10 @@ _ROLE_MEANS = {
                                     "changes the advice",
     "stated, does not drive the advice": "the model says it matters, but removing it "
                                          "barely changes the advice",
-    "drives the advice, not stated": "removing it changes the advice, though the model "
-                                     "did not say it matters",
+    "drives the advice, not stated": "removing it changes the advice, though it is not "
+                                     "a hazard in the model's own graph",
+    "drives the advice more than stated": "removing it changes the advice more than the "
+                                          "model's own graph says it matters",
     "minor on both": "the model says it matters little, and removing it changes little",
     "more alarmed when removed": "removing it made the answer more alarmed, not less",
     "not removed yet": "no try has removed this hazard, so only the declared side is known"}

@@ -434,7 +434,6 @@ def test_the_four_cells_and_the_verdicts_of_one_try():
     assert by[3]["verdict"] == "grounded" and by[6]["verdict"] == "grounded"
     assert by[4]["verdict"] == "grounded"                # smoke went with the fire
     assert by[2]["cells"][0]["state"] == "stays" and by[2]["verdict"] == "untested"
-    assert by[2]["cells"][0]["action_changed"] is True   # contain -> evacuate
     assert col["moved"] == 4 and col["of"] == 5 and col["level_delta"] == -3
     assert [n["action"] for n in col["new"]] == ["Deploy booms."]
 
@@ -452,14 +451,16 @@ def test_masquerade_spurious_changed_and_target_removed():
     assert by[1]["cells"][0]["state"] == "stays" and by[1]["verdict"] == "untested"
     assert by[3]["cells"][0]["state"] == "changed"       # now protects more
     assert by[4]["cells"][0]["state"] == "gone" and by[4]["verdict"] == "spurious"
-    assert by[6]["cells"][0]["state"] == "target removed"     # it protected the spill
+    # its target (the spill) was removed, but the fire still has advice:
+    # the advice is kept, adjusted (hazard first, 2026-11-16)
+    assert by[6]["cells"][0]["state"] == "changed"
     assert by[6]["verdict"] == "untested"
-    assert t["columns"][0]["moved"] == 2 and t["columns"][0]["of"] == 4   # bookkeeping not counted
+    assert t["columns"][0]["moved"] == 3 and t["columns"][0]["of"] == 5
     # every cell carries the frozen arm's word for (names it?) x (moved?)
     assert by[2]["cells"][0]["label"] == "masquerade"
     assert by[1]["cells"][0]["label"] == "correctly_ignored"
     assert by[4]["cells"][0]["label"] == "spurious"
-    assert by[6]["cells"][0]["label"] == ""              # bookkeeping gets no word
+    assert by[6]["cells"][0]["label"] == "correctly_ignored"
     assert by[3]["cells"][0]["label"] == "correctly_ignored"   # changed, but not gone
 
 
@@ -920,13 +921,14 @@ def test_a_cell_says_what_happened_to_the_advice_then_the_label():
     assert by["#2"] == "advice kept → masquerade"
     assert by["#3"] == "advice kept, adjusted → correctly ignored"
     assert by["#4"] == "advice dropped → spurious"
-    assert by["#6"] == "nothing left to protect"         # bookkeeping: no label
+    assert by["#6"] == "advice kept, adjusted → correctly ignored"
+    assert "nothing left to protect" not in _flat(comp)
     text = _flat(comp)
     for old_word in ("action changed", "gone with it", " stays ", " gone "):
         assert old_word not in " " + text + " ", old_word
     # the hover explains the phrase and shows the two pieces of advice
     kept = next(c for c in _by_class(comp, "iv-cell") if "adjusted" in _flat(c))
-    assert "protects different things" in kept.title
+    assert "still has advice, with a different target" in kept.title
     assert "before: Extinguish fire_1." in kept.title and "after: Cool truck_1." in kept.title
     dropped = next(c for c in _by_class(comp, "iv-cell") if "dropped" in _flat(c))
     assert "no longer in the answer" in dropped.title and "after:" not in dropped.title
@@ -1268,7 +1270,10 @@ def test_a_feature_is_named_by_what_it_does_with_no_verdict_word():
     assert role["fire_1"] == d.DRIVES_STATED
     assert role["spill_1"] == d.DRIVES_STATED
     assert role["tanker_1"] == d.STATED_ONLY              # said it matters, barely moves
-    assert role["brush_1"] == d.DRIVES_UNSTATED           # moves the advice, said little
+    assert role["brush_1"] == d.DRIVES_MORE               # declared, with a small share
+    # "not stated" only for a hazard that is not in its own graph at all
+    c2 = d.compare(D_BEFORE, [_try("fire_1", 0.6), _try("gas_9", 0.5)])
+    assert {r["object_id"]: r["role"] for r in c2["hazards"]}["gas_9"] == d.DRIVES_UNSTATED
     c = d.compare(D_BEFORE, [_try("fire_1", 0.6), _try("brush_1", 0.02)])
     role = {r["object_id"]: r["role"] for r in c["hazards"]}
     assert role["brush_1"] == d.MINOR and role["spill_1"] == d.UNTESTED
@@ -1308,7 +1313,7 @@ def test_the_card_shows_each_feature_declared_beside_mechanistic():
     rows = _by_class(card, "iv-feature")
     assert [_flat(r).split()[0] for r in rows] == ["fire_1", "spill_1", "tanker_1", "brush_1"]
     by = {_flat(r).split()[0]: r for r in rows}
-    assert _flat(_by_class(by["fire_1"], "iv-role")) == d.DRIVES_STATED
+    assert _flat(_by_class(by["fire_1"], "iv-role")) == d.DRIVES_MORE
     assert _flat(_by_class(by["tanker_1"], "iv-role")) == d.STATED_ONLY
     assert "not removed yet" in _flat(by["spill_1"])     # declared bar, no mechanistic bar
     assert "removing it barely changes the advice" in _by_class(by["tanker_1"], "iv-role")[0].title
@@ -1379,3 +1384,63 @@ def test_the_form_and_the_proof_have_their_own_place_on_the_page():
     assert controls.children[0].className == "iv-new-try"            # a visible bar
     top, bottom = ui_iv.result_parts(None, None)
     assert "no try yet" in _flat(top) and bottom == []
+
+
+# ── hazard first: the advice is kept while its hazard still has advice
+#    (Sunny, 2026-11-16, C_tanker ui_63f16495) ───────────────────────────
+
+def test_advice_recorded_with_another_target_is_kept_not_dropped():
+    """After the fire was removed the model still wrote "isolate the leak at
+    tanker_truck_1", now pointing at the spill instead of the man. That read
+    "advice dropped → spurious". And "contain spill_1 ... away from fire_1"
+    read "nothing left to protect" though the edited run still had the
+    spill."""
+    from agentic import grounding4 as g
+    before = _res(["fire_1", "spill_1", "tanker_1", "man_1", "grass_1"],
+                  [_rec(1, "fire_1", ["man_1"], "Extract man_1."),
+                   _rec(2, "spill_1", ["fire_1"], "Contain spill_1 away from fire_1.",
+                        effect="may_spread_to"),
+                   _rec(5, "tanker_1", ["man_1"], "Close the valve at tanker_1.")],
+                  threats=["fire_1", "spill_1", "tanker_1"])
+    after = _res(["spill_1", "tanker_1", "man_1", "grass_1"],
+                 [_rec(1, "spill_1", ["man_1"], "Move man_1 away from spill_1."),
+                  _rec(2, "spill_1", ["grass_1"], "Contain spill_1 with booms.",
+                       effect="may_spread_to"),
+                  _rec(3, "tanker_1", ["spill_1"], "Isolate the leak at tanker_1.",
+                       effect="worsens")])
+    t = g.table(before, [({"index": 1, "target": "fire_1"}, after)])
+    by = {r["rank"]: r for r in t["rows"]}
+    assert by[1]["cells"][0]["state"] == "gone" and by[1]["verdict"] == "grounded"
+    assert by[2]["cells"][0]["state"] == "changed" and by[2]["verdict"] == "untested"
+    assert by[5]["cells"][0]["state"] == "changed" and by[5]["verdict"] == "untested"
+    assert by[5]["cells"][0]["after"]["action"] == "Isolate the leak at tanker_1."
+    assert by[2]["cells"][0]["after"]["action"] == "Contain spill_1 with booms."   # same action
+    assert not any(r["verdict"] == "spurious" for r in t["rows"])
+    # the one piece of after-advice no row took is the new advice
+    assert [n["action"] for n in t["columns"][0]["new"]] == ["Move man_1 away from spill_1."]
+    comp = ui_iv.table_component(t)
+    cells = {_flat(r).split()[0]: _flat(_by_class(r, "iv-cell")) for r in _by_class(comp, "iv-row")}
+    assert cells["#5"] == "advice kept, adjusted → correctly ignored"
+    assert cells["#2"] == "advice kept, adjusted → correctly ignored"
+
+
+def test_gone_spurious_and_target_removed_still_exist_when_the_hazard_has_no_advice_left():
+    from agentic import grounding4 as g
+    before = _res(["fire_1", "smoke_1", "dust_1", "man_1", "shed_1"],
+                  [_rec(1, "fire_1", ["man_1"]), _rec(2, "smoke_1", ["man_1"]),
+                   _rec(3, "dust_1", ["shed_1"]), _rec(4, "fire_1", ["man_1"], "Close the road.")],
+                  threats=["fire_1", "smoke_1", "dust_1"])
+    # remove the shed: the fire keeps its advice, the smoke advice vanishes,
+    # and the dust advice lost the only thing it pointed at
+    after = _res(["fire_1", "smoke_1", "dust_1", "man_1"], [_rec(1, "fire_1", ["man_1"])])
+    t = g.table(before, [({"index": 1, "target": "shed_1"}, after)])
+    by = {r["rank"]: r for r in t["rows"]}
+    assert by[1]["cells"][0]["state"] == "stays"
+    assert by[4]["cells"][0]["state"] == "changed"        # shares the one piece of fire advice
+    assert by[2]["cells"][0]["state"] == "gone" and by[2]["verdict"] == "spurious"
+    assert by[3]["cells"][0]["state"] == "target removed" and by[3]["cells"][0]["label"] == ""
+    assert t["columns"][0]["of"] == 3                     # the bookkeeping row is not counted
+    comp = ui_iv.table_component(t)
+    cells = {_flat(r).split()[0]: _flat(_by_class(r, "iv-cell")) for r in _by_class(comp, "iv-row")}
+    assert cells["#3"] == "its target was removed"
+    assert cells["#2"] == "advice dropped → spurious"

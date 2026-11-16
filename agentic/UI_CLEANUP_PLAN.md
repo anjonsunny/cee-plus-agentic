@@ -741,3 +741,17 @@ losses is the hazards and the targets one graph has and the other lacks,
 in two named groups, what leads to a person first. The ad hoc "rule added
 after the run" line is removed. The CAUSAL GROUNDEDNESS title is large and
 coloured.
+
+Hazard first in the grounding table (Sunny, 2026-11-16, C_tanker
+ui_63f16495). Two wrong cells in the fire column: "isolate the leak at
+tanker_truck_1", recorded with another target, read "advice dropped →
+spurious"; and "contain spill_1 ... away from fire_1" read "nothing left
+to protect" though the edited run still contained the spill. Rule now: a
+recommendation is KEPT while the hazard it names still has advice in the
+edited run ("advice kept, adjusted" when the target or effect differs).
+It is dropped only when that hazard has none; "its target was removed"
+only then, and only when everything it pointed at was removed. Like the
+trust checks, this compares hazards and targets, not whole arrows.
+Features: "drives the advice, not stated" is now only for a hazard that is
+not in the model's own graph at all; a declared hazard the advice leans on
+more than its share reads "drives the advice more than stated".

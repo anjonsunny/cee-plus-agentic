@@ -36,7 +36,8 @@ ALARMED, UNTESTED = "more alarmed when removed", "not removed yet"
 # A side is "high" when its share is at least half of the top share.
 DRIVES_STATED = "drives the advice, as stated"
 STATED_ONLY = "stated, does not drive the advice"
-DRIVES_UNSTATED = "drives the advice, not stated"
+DRIVES_UNSTATED = "drives the advice, not stated"       # not in its own graph at all
+DRIVES_MORE = "drives the advice more than stated"
 MINOR = "minor on both"
 HALF = 0.5
 
@@ -157,9 +158,14 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
         else:
             gap = says_t.get(h, 0.0) - does.get(h, 0.0)
             reading = MATCH if abs(gap) <= APART else (SAID_MORE if gap > 0 else DONE_MORE)
-            role = (DRIVES_STATED if h in stated and h in drives else
-                    STATED_ONLY if h in stated else
-                    DRIVES_UNSTATED if h in drives else MINOR)
+            # "not stated" only when the model's own graph does not have it as
+            # a hazard at all. C_tanker ui_63f16495: the tanker was declared,
+            # with a small share, and read "not stated" (Sunny: "not stated?").
+            if h in drives:
+                role = (DRIVES_UNSTATED if dec.get(h, 0.0) <= 0 else
+                        DRIVES_MORE if gap < -APART else DRIVES_STATED)
+            else:
+                role = STATED_ONLY if h in stated else MINOR
         rows.append({"object_id": h, "says": round(says_all.get(h, 0.0), 3),
                      "role": role, "stated": h in stated,
                      "drives": h in drives and mech.get(h, 0) > 0,

@@ -32,6 +32,8 @@ from typing import Any
 from agentic import intervention4 as iv4
 
 STAYS, GONE, CHANGED, TARGET_REMOVED = "stays", "gone", "changed", "target removed"
+# (the screen says: advice kept / advice dropped / advice kept, adjusted /
+#  its target was removed)
 # the frozen arm's words (intervention.adjudicate_groundedness, main's hazard status)
 GROUNDED, MASQUERADE = "grounded", "masquerade"
 SPURIOUS, IGNORED = "spurious", "correctly_ignored"
@@ -98,28 +100,72 @@ def removed_set(before: dict, after: dict, target: str, ren: dict[str, str]) -> 
     return out
 
 
-def _cell(rec: dict, after_recs: list[dict], removed: set[str]) -> dict:
-    threat, effect, affected = _quad(rec)
-    same_threat = [a for a in after_recs if a["quad"][0] == threat]
-    if threat in removed:
-        # its named hazard is gone: does the advice still stand?
-        hit = same_threat[0] if same_threat else None
-        return {"state": STAYS if hit else GONE, "named_removed": True,
-                "after": hit["rec"] if hit else None}
-    left = affected - removed
-    if affected and not left:
-        # everything it protected was removed: it had to go (bookkeeping)
-        return {"state": TARGET_REMOVED, "named_removed": False, "after": None}
-    exact = next((a for a in same_threat
-                  if a["quad"][1] == effect and a["quad"][2] == left), None)
-    if exact:
-        changed = _intent(rec.get("action")) != _intent(exact["rec"].get("action"))
-        return {"state": STAYS, "named_removed": False, "after": exact["rec"],
-                "action_changed": changed}
-    near = next((a for a in same_threat if (a["quad"][2] & left) or not left), None)
-    if near:
-        return {"state": CHANGED, "named_removed": False, "after": near["rec"]}
-    return {"state": GONE, "named_removed": False, "after": None}
+def _match_column(base: list[dict], after_recs: list[dict], removed: set[str]) -> list[dict]:
+    """One cell per before-recommendation for one try. HAZARD FIRST (Sunny,
+    2026-11-16, on C_tanker ui_63f16495: after the fire was removed the
+    model still wrote "isolate the leak at tanker_truck_1", recorded with
+    another target, and the table read "advice dropped → spurious"; and
+    "contain spill_1 ... away from fire_1" read "nothing left to protect"
+    while the edited run still contained the spill). Rule:
+
+      the hazard a recommendation names still has advice in the edited run
+          -> the advice is KEPT (stays; "changed" when the target or the
+             effect word differs)
+      it has none
+          -> the advice is GONE; or, when that hazard was not removed and
+             everything the recommendation pointed at was removed, its
+             TARGET WAS REMOVED (bookkeeping, no label)
+
+    Like the trust checks, this compares hazards and targets, not whole
+    arrows. Each piece of after-advice is given to one row where it can be
+    (the closest row first); a row whose hazard still has advice but no
+    free piece left shares one, and reads as kept."""
+    cells: list[dict | None] = [None] * len(base)
+    used: set[int] = set()
+    quads = [_quad(r) for r in base]
+
+    def take(i: int, j: int, state: str) -> None:
+        used.add(j)
+        cells[i] = {"state": state, "named_removed": quads[i][0] in removed,
+                    "after": after_recs[j]["rec"]}
+
+    def free(i: int, test) -> int | None:
+        return next((j for j, a in enumerate(after_recs)
+                     if j not in used and a["quad"][0] == quads[i][0] and test(a)), None)
+    # closest first: the same arrow, then a shared target, then the same
+    # kind of action, then any advice about that hazard
+    for want in ("exact", "overlap", "intent", "any"):
+        for i, rec in enumerate(base):
+            if cells[i] is not None:
+                continue
+            threat, effect, affected = quads[i]
+            left = affected - removed
+            if want == "exact":
+                j = free(i, lambda a: a["quad"][1] == effect and a["quad"][2] == left)
+            elif want == "overlap":
+                j = free(i, lambda a: bool(a["quad"][2] & left))
+            elif want == "intent":
+                mine = _intent(rec.get("action"))
+                j = free(i, lambda a: bool(mine) and _intent(a["rec"].get("action")) == mine)
+            else:
+                j = free(i, lambda a: True)
+            if j is not None:
+                take(i, j, STAYS if (want == "exact" or threat in removed) else CHANGED)
+    for i, rec in enumerate(base):
+        if cells[i] is not None:
+            continue
+        threat, _effect, affected = quads[i]
+        shared = next((a for a in after_recs if a["quad"][0] == threat), None)
+        if shared is not None:                  # its hazard still has advice
+            cells[i] = {"state": STAYS if threat in removed else CHANGED,
+                        "named_removed": threat in removed, "after": shared["rec"]}
+        elif threat in removed:
+            cells[i] = {"state": GONE, "named_removed": True, "after": None}
+        elif affected and not (affected - removed):
+            cells[i] = {"state": TARGET_REMOVED, "named_removed": False, "after": None}
+        else:
+            cells[i] = {"state": GONE, "named_removed": False, "after": None}
+    return [c for c in cells if c is not None], used   # type: ignore[return-value]
 
 
 def _verdict(cells: list[dict]) -> str:
@@ -151,15 +197,10 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
                                                   frozenset(ren.get(x, x) for x in aff))})
         removed = removed_set(before, after, str(one.get("target") or ""), ren)
         rset = set(removed)
-        used: set[int] = set()
-        col_cells = []
-        for i, rec in enumerate(base):
-            c = _cell(rec, after_recs, rset)
+        col_cells, used = _match_column(base, after_recs, rset)
+        for i, c in enumerate(col_cells):
             c["label"] = cell_label(c)
-            if c.get("after") is not None:
-                used.update(j for j, a in enumerate(after_recs) if a["rec"] is c["after"])
             cells_by_row[i].append(c)
-            col_cells.append(c)
         counted = [c for c in col_cells if c["state"] != TARGET_REMOVED]
         moved = sum(1 for c in counted if c["state"] in (GONE, CHANGED))
         summary = one.get("summary") if isinstance(one.get("summary"), dict) else {}
