@@ -1654,15 +1654,19 @@ def test_getting_the_victims_wrong_costs_more_than_the_hazards():
     assert wrong_victims < wrong_hazards
 
 
-def test_crossed_arrows_now_cost_trust():
-    """Before F47 this was invisible: same hazards and same victims scored
-    perfect on both set numbers, and trust never learned that the two graphs
-    agreed on no single claim. `pairs` is in the score now, not just on
-    screen."""
+def test_arrows_are_off_only_hazards_and_victims_count():
+    """Sunny, 2026-11-16: "only do same hazard and same victims. Turn off
+    arrows now." The whole-arrow overlap (`pairs`, in the score since F47)
+    charged a hazard that IS addressed whenever the recorded arrow pointed at
+    another target. It is still computed and saved; it weighs nothing."""
+    from agentic.evals4 import AB_ROLE_WEIGHTS
+    assert AB_ROLE_WEIGHTS["pairs"] == 0.0
+    assert AB_ROLE_WEIGHTS["victims"] == 2 * AB_ROLE_WEIGHTS["hazards"]   # 1 : 2 kept
     crossed = _t(_ab(1.0, 1.0, 0.0))
     clean = _t(_ab(1.0, 1.0, 1.0))
-    assert crossed["score"] < clean["score"]
-    assert clean["score"] == 1.0
+    assert crossed["score"] == clean["score"] == 1.0
+    # hazards and victims still cost
+    assert _t(_ab(0.5, 1.0, 1.0))["score"] < 1.0 and _t(_ab(1.0, 0.5, 1.0))["score"] < 1.0
 
 
 def test_structural_no_longer_moves_trust():
@@ -1716,13 +1720,13 @@ def test_d_aerial_arithmetic_is_pinned():
     """The real round-2 D_aerial overlaps. Pinned so the arithmetic cannot
     drift unnoticed: hazards agreed perfectly, victims did not."""
     al = _ab(1.0, 0.25, 0.25, hz_b=1.0, vc_b=0.333, pr_b=0.333)
-    assert al["advice_backed_by_belief"] == 0.438     # .25+.5(.25)+.25(.25)
-    assert al["dangers_acted_on"] == 0.5              # .25+.5(.333)+.25(.333)
+    assert al["advice_backed_by_belief"] == 0.5       # 1/3(1) + 2/3(.25), arrows off
+    assert al["dangers_acted_on"] == 0.555            # 1/3(1) + 2/3(.333)
     t = _t(al, uncertainty={"score": 0.446},
            internal_alignment={"score": 0.667},
            picks={"agreement": 0.667},
            conformance={"validity": 0.765, "issues": [], "graph_b_edges": 2})
-    assert t["score"] == 0.561          # was 0.447 under the whole-edge number
+    assert t["score"] == 0.587          # 0.561 with arrows in; 0.447 under the whole edge
     assert t["signals_measured"] == "6/6"
 
 

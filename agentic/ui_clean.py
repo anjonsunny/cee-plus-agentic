@@ -94,8 +94,8 @@ _OTHER_COLOUR = "#64748b"
 
 # A check that lost points, said short: the mirror of _HOLDS_UP. The
 # record's own sentence and evidence are the hover.
-_PULLS_DOWN = {"advice_backed_by_belief": "acts on dangers it does not hold",
-               "dangers_acted_on": "links in its own graph that no advice uses",
+_PULLS_DOWN = {"advice_backed_by_belief": "in the advice, missing from its own graph",
+               "dangers_acted_on": "in its own graph, missing from the advice",
                "uncertainty": "unstable on re-ask",
                "internal_alignment": "does not hang together",
                "pick_agreement": "targets disagree",
@@ -111,53 +111,29 @@ _ERROR_SHORT = {
 }
 
 
-GROUP_NO_ADVICE = "hazard not addressed by any advice"
-GROUP_LINK = "hazard addressed, this effect on this target is not"
+GROUP_HAZARD_B = "hazards in its own graph that no advice names as a cause"
+GROUP_TARGET_B = "targets in its own graph that no advice protects"
+GROUP_HAZARD_A = "hazards the advice names that its own graph does not have"
+GROUP_TARGET_A = "targets the advice protects that its own graph does not have"
 
 
-def _arrow_items(edges: Any, s4: dict) -> list[dict]:
-    """The arrows behind a loss, the most consequential first: [{text,
-    weight, reaches}]. An arrow is weighed the way the intervention weighs
-    it (agentic/chain4.py): its effect, doubled when its chain ends at a
-    life. Consequence only orders the evidence here; it does not change
-    the saved score."""
-    s4 = s4 if isinstance(s4, dict) else {}
+def _reaches(oid: str, s4: dict) -> str:
+    """The person (or animal) this entity is, or that its chain of the
+    model's own arrows ends at; "" when there is none. Consequence orders
+    the evidence; it does not change the score."""
     try:
-        from agentic import chain4, intervention4 as iv4
-        frozen = iv4._frozen()
+        from agentic import chain4
         labels: dict[str, str] = {}
         for key in ("graph_a", "graph_b"):
             g = s4.get(key) if isinstance(s4.get(key), dict) else {}
             for n in (g.get("nodes") if isinstance(g.get("nodes"), list) else []):
                 if isinstance(n, dict) and n.get("id"):
                     labels[str(n["id"])] = str(n.get("label") or "")
-        links = chain4.links_of({"graph_b": s4.get("graph_b"),
-                                 "causal_graph": s4.get("graph_a")})
+        c = chain4.chain(oid, chain4.links_of({"graph_b": s4.get("graph_b"),
+                                               "causal_graph": s4.get("graph_a")}), labels)
+        return str(c["ends_at"]) if c["life"] else ""
     except Exception:
-        chain4 = frozen = None                  # type: ignore[assignment]
-        labels, links = {}, {}
-    out: list[dict] = []
-    seen: set = set()
-    for e in edges if isinstance(edges, list) else []:
-        if not (isinstance(e, dict) and e.get("source") and e.get("target")):
-            continue
-        src, tgt = str(e["source"]), str(e["target"])
-        if (src, tgt) in seen:
-            continue
-        seen.add((src, tgt))
-        weight, reaches = 1.0, ""
-        if chain4 is not None:
-            try:
-                c = chain4.chain(tgt, links, labels)
-                base = float(frozen._EFFECT_THREAT.get(
-                    str(e.get("effect") or "").lower(), 1.0))
-                weight = base * (chain4.LIFE if c["life"] else chain4.OTHER)
-                reaches = c["ends_at"] if c["life"] else ""
-            except Exception:
-                pass
-        out.append({"text": f"{src} → {tgt}", "weight": round(weight, 2),
-                    "reaches": reaches})
-    return sorted(out, key=lambda x: (-x["weight"], x["text"]))
+        return ""
 
 
 def trust_evidence(signal: str, s4: dict, contributor: dict | None = None) -> list[dict]:
@@ -167,30 +143,25 @@ def trust_evidence(signal: str, s4: dict, contributor: dict | None = None) -> li
     own graph, its own advice and its own picks, compared with each other."""
     s4 = s4 if isinstance(s4, dict) else {}
     al = s4.get("alignment") if isinstance(s4.get("alignment"), dict) else {}
-    if signal == "dangers_acted_on":            # in its own graph, missing from the advice
-        items = _arrow_items(al.get("b_only"), s4)
+    if signal in ("dangers_acted_on", "advice_backed_by_belief"):
+        # The check compares the two graphs by their HAZARDS (the sources of
+        # the arrows) and their TARGETS, not by whole arrows (arrows are off
+        # in the score since 2026-11-16). So the evidence is the hazards and
+        # the targets one graph has and the other lacks.
+        dc = al.get("decomposition") if isinstance(al.get("decomposition"), dict) else {}
+        side = "b" if signal == "dangers_acted_on" else "a"
+        names = (GROUP_HAZARD_B, GROUP_TARGET_B) if side == "b" else \
+            (GROUP_HAZARD_A, GROUP_TARGET_A)
+        items = []
+        for key, group in ((f"hazards_only_in_{side}", names[0]),
+                           (f"victims_only_in_{side}", names[1])):
+            for oid in (dc.get(key) if isinstance(dc.get(key), list) else []):
+                items.append({"text": str(oid), "group": group, "entity": str(oid),
+                              "reaches": _reaches(str(oid), s4)})
         if items:
-            # Two different things sat in this one list (Sunny, 2026-11-16:
-            # "we need to separate them"). A hazard that is never the cause
-            # in any recommendation is a real gap. A link of a hazard that
-            # DOES have advice is partly bookkeeping: a recommendation
-            # records one arrow, so "contain the spill to keep the fuel from
-            # the fire" is written as spill -> man and the model's own
-            # spill -> fire link reads as unused.
-            causes = set()
-            for r in (s4.get("recommendations") or []):
-                if isinstance(r, dict) and not r.get("benign"):
-                    q = r.get("structured_reasoning")
-                    if isinstance(q, dict) and q.get("threat"):
-                        causes.add(str(q["threat"]))
-            for i in items:
-                src = i["text"].split(" → ")[0]
-                i["group"] = GROUP_LINK if src in causes else GROUP_NO_ADVICE
-            return items
-    if signal == "advice_backed_by_belief":     # in the advice, missing from its own graph
-        items = _arrow_items(al.get("a_only"), s4)
-        if items:
-            return items
+            return sorted(items, key=lambda i: (i["group"] not in (GROUP_HAZARD_B,
+                                                                   GROUP_HAZARD_A),
+                                                not i["reaches"], i["text"]))
     if signal == "pick_agreement":
         picks = s4.get("picks") if isinstance(s4.get("picks"), dict) else {}
         got = [{"text": f"{name}: {p.get('object_id')}"} for key, name in
@@ -247,52 +218,48 @@ def _evidence_text(x: dict) -> str:
 def _evidence_fold(x: dict) -> Any | None:
     """The evidence of one loss, folded shut (Sunny, 2026-11-16: "put the
     evidence under collapse ... use consequence to modulate their
-    importance"). Opened, it lists the items most consequential first; an
-    arrow whose chain ends at a person says so. Where the items are of two
-    kinds they are shown as two groups. The fold's own line counts them, so
-    the weight of the evidence is visible while it is closed."""
+    importance"). Opened, it lists the items, grouped where they are of
+    different kinds, and what leads to a person first and marked. The
+    fold's own line counts them, so the weight of the evidence is visible
+    while it is closed."""
     ents = [str(e) for e in (x.get("entities") or [])]
     items = [i for i in (x.get("evidence") or []) if isinstance(i, dict) and i.get("text")]
     if not ents and not items:
         return None
     people = sum(1 for i in items if i.get("reaches"))
-    weighed = any("weight" in i for i in items)
-    grouped = any(i.get("group") for i in items)
+    groups = list(dict.fromkeys(str(i["group"]) for i in items if i.get("group")))
     if ents:
         cons = x.get("consequence")
         gist = (f"{len(ents)} entit{'ies' if len(ents) != 1 else 'y'}"
                 + (f" · consequence {cons}" if isinstance(cons, (int, float)) else ""))
-    elif grouped:
-        n_gap = sum(1 for i in items if i.get("group") == GROUP_NO_ADVICE)
-        gist = (f"{len(items)} arrow{'s' if len(items) != 1 else ''} · {n_gap} from a "
-                "hazard not addressed · "
-                + (f"{people} reach a person" if people else "none reaches a person"))
+    elif groups:
+        n_h = sum(1 for i in items if "hazards" in str(i.get("group")))
+        n_t = len(items) - n_h
+        gist = (f"{n_h} hazard{'s' if n_h != 1 else ''} · {n_t} target{'s' if n_t != 1 else ''}"
+                + (f" · {people} lead to a person" if people else ""))
     else:
-        n = len(items)
-        gist = (f"{n} arrow{'s' if n != 1 else ''}" + (f" · {people} reach a person"
-                                                      if people else " · none reaches a person")
-                if weighed else f"{n} item{'s' if n != 1 else ''}")
+        gist = f"{len(items)} item{'s' if len(items) != 1 else ''}"
 
     def item(i: dict) -> Any:
+        who = str(i.get("reaches") or "")
+        ent = i.get("entity")
+        tail = ([html.Span("a person" if who == ent else f"leads to {who}",
+                           style={"color": "#b45309", "fontWeight": "700",
+                                  "fontSize": "10.5px"})] if who else [])
         return html.Div(
-            [html.Span(str(i["text"]), style={"color": "#334155"})]
-            + ([html.Span(f" · reaches {i['reaches']}", style={"color": "#b45309",
-                                                                "fontWeight": "700"})]
-               if i.get("reaches") else []),
-            className="trust-evidence-item" + (" person" if i.get("reaches") else ""),
-            style={"fontSize": "11px", "lineHeight": "1.6"})
+            ([ent_chip(str(ent), "#64748b")] if ent
+             else [html.Span(str(i["text"]), style={"color": "#334155"})]) + tail,
+            className="trust-evidence-item" + (" person" if who else ""),
+            style={"fontSize": "11px", "lineHeight": "1.9"})
     kids: list = []
     if ents:
         kids.append(html.Div([ent_chip(e, "#64748b") for e in ents]))
-    if grouped:
-        for name in (GROUP_NO_ADVICE, GROUP_LINK):
+    if groups:
+        for name in groups:
             part = [i for i in items if i.get("group") == name]
-            if not part:
-                continue
-            kids.append(html.Div(
-                f"{name} · {len(part)}", className="trust-evidence-group",
-                style={"fontSize": "10.5px", "fontWeight": "700", "marginTop": "3px",
-                       "color": "#b45309" if name == GROUP_NO_ADVICE else "#64748b"}))
+            kids.append(html.Div(f"{name} · {len(part)}", className="trust-evidence-group",
+                                 style={"fontSize": "10.5px", "fontWeight": "700",
+                                        "marginTop": "3px", "color": "#64748b"}))
             kids += [item(i) for i in part]
     else:
         kids += [item(i) for i in items]
@@ -667,7 +634,11 @@ def findings(s4: dict, d: dict, *, chain: Callable[[dict], Any],
                                                 "color": "#b45309" if not_checked
                                                 else "#94a3b8"})] if line else []),
             className="ticket-empty pathology-summary", title=tip))
-    out.append(_heading("CAUSAL GROUNDEDNESS"))
+    # the main result of the page: its title is the large, coloured one
+    out.append(html.Div("CAUSAL GROUNDEDNESS", className="iv-title",
+                        style={"fontSize": "17px", "fontWeight": "800",
+                               "letterSpacing": ".05em", "color": "#1d4ed8",
+                               "margin": "14px 0 2px"}))
     out.append(html.Div(
         "remove one hazard from the scene, run the edited scene, and see "
         "whether the advice moves",

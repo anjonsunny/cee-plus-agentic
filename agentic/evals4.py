@@ -1401,7 +1401,13 @@ TRUST_WEIGHTS = {
 # PRIORS. Not fitted to anything. Calibrating these on the six frozen scenes
 # is step 1 of the roadmap; that is why they live here under a name instead of
 # inline in the arithmetic.
-AB_ROLE_WEIGHTS = {"hazards": 0.25, "victims": 0.50, "pairs": 0.25}
+# ARROWS OFF (Sunny, 2026-11-16: "only do same hazard and same victims. Turn
+# off arrows now"). The whole-arrow overlap charged a hazard that IS addressed
+# whenever the one arrow a recommendation records pointed at another target:
+# C_tanker ui_22840b13 lost trust for fire_1 -> spill_1 while a recommendation
+# said "contain spill_1 to keep the fuel away from fire_1". Hazards and victims
+# keep their 1 : 2 ratio. `pairs` is still computed and saved; it just weighs 0.
+AB_ROLE_WEIGHTS = {"hazards": 1 / 3, "victims": 2 / 3, "pairs": 0.0}
 
 _TRUST_TEXT = {
     "advice_backed_by_belief": "the advice leans on dangers the model does "

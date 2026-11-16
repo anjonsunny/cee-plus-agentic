@@ -359,7 +359,8 @@ def test_findings_card_holds_trust_chain_pathology_and_the_groundedness_box():
     flat = " ".join(text.split())
     # the losses, largest first, adding up to what the score lost (1 − 0.62)
     assert "lost 0.38, largest first" in flat
-    assert "−0.20 acts on dangers it does not hold evidence · 1 item e1" in flat
+    assert "−0.20 in the advice, missing from its own graph evidence · 1 item e1" in flat
+    assert "→" not in flat.split("THE RUN'S CHAIN")[0]   # no arrows on the trust card
     assert "−0.10 unstable on re-ask evidence · 1 item e2" in flat
     assert "smaller: graph rule breaks −0.02" in flat    # under 0.10: real, not the story
     assert "holds up: targets agree" in flat
@@ -1311,69 +1312,63 @@ def test_the_losses_add_up_to_what_the_score_lost():
     losses = ui_clean.trust_losses(_c_trust())
     assert [x["loss"] for x in losses] == sorted((x["loss"] for x in losses), reverse=True)
     assert round(sum(x["loss"] for x in losses), 2) == round(1 - 0.429, 2) == 0.57
-    assert [x["name"] for x in losses][:2] == ["links in its own graph that no advice uses",
+    assert [x["name"] for x in losses][:2] == ["in its own graph, missing from the advice",
                                                "declared, not acted on"]
     assert all(round(x["loss"], 2) > 0 for x in losses)   # the 0.001 one is left out
     card = _by_class(_findings(s4=_c_trust(), extra=[_YES]), "trust-card")[0]
     assert "lost 0.57, largest first" in _flat(card)
 
 
-def test_each_main_loss_carries_its_evidence_folded_and_ordered_by_consequence():
-    """Sunny, 2026-11-16: "put the evidence under collapse ... and also use
-    consequence to modulate their importance"."""
+def test_each_main_loss_carries_its_evidence_folded_hazards_and_targets():
+    """Sunny, 2026-11-16: "put the evidence under collapse", "use consequence
+    to modulate their importance", then "only do same hazard and same victims.
+    Turn off arrows now": the evidence of the two graph checks is the hazards
+    and the targets one graph has and the other lacks, not whole arrows."""
+    from agentic import ui_clean
     s4 = _c_trust()
-    # the chain: tanker -> spill -> man, so those arrows reach a person
     s4["graph_b"] = {"nodes": [{"id": "man_1", "label": "man"}, {"id": "spill_1", "label": "spill"},
-                               {"id": "fire_1", "label": "fire"}, {"id": "grass_1", "label": "grass"}],
+                               {"id": "grass_1", "label": "grass"}],
                      "edges": [{"source": "spill_1", "effect": "may_harm", "target": "man_1"},
                                {"source": "tanker_1", "effect": "increases_risk_to",
-                                "target": "spill_1"}]}
-    s4["alignment"]["b_only"] = [
-        {"source": "brush_1", "effect": "may_spread_to", "target": "grass_1"},   # 1.5, no person
-        {"source": "tanker_1", "effect": "increases_risk_to", "target": "spill_1"},  # 3, a person
-        {"source": "spill_1", "effect": "may_harm", "target": "man_1"}]          # 4, a person
+                                "target": "spill_1"},
+                               {"source": "brush_1", "effect": "may_spread_to",
+                                "target": "grass_1"}]}
+    s4["alignment"]["decomposition"] = {
+        "hazards_only_in_b": ["brush_1", "tanker_1"], "victims_only_in_b": ["grass_1", "spill_1"],
+        "hazards_only_in_a": [], "victims_only_in_a": ["tanker_1"]}
     card = _by_class(_findings(s4=s4, extra=[_YES]), "trust-card")[0]
     assert [_flat(x) for x in _by_class(card, "trust-lost")] == [
-        "−0.19 links in its own graph that no advice uses", "−0.18 declared, not acted on"]
+        "−0.19 in its own graph, missing from the advice", "−0.18 declared, not acted on"]
     folds = _by_class(card, "trust-evidence")
     assert len(folds) == 2 and not any(getattr(f, "open", False) for f in folds)
     # closed, the fold still says how heavy the evidence is
-    assert _flat(folds[0].children[0]) == (
-        "evidence · 3 arrows · 2 from a hazard not addressed · 2 reach a person")
+    assert _flat(folds[0].children[0]) == "evidence · 2 hazards · 2 targets · 2 lead to a person"
     assert _flat(folds[1].children[0]).startswith("evidence · 1 entity")
-    # opened: two kinds, kept apart (Sunny: "we need to separate them"). The
-    # advice in this record names fire_1 and tanker_1 as causes, so the
-    # tanker's link is "has advice"; spill_1 and brush_1 are never a cause.
-    from agentic import ui_clean
+    # opened: two groups; inside each, what leads to a person comes first
     assert [_flat(g) for g in _by_class(folds[0], "trust-evidence-group")] == [
-        ui_clean.GROUP_NO_ADVICE + " · 2", ui_clean.GROUP_LINK + " · 1"]
-    # inside each kind: most consequential first, and what reaches a person says so
+        ui_clean.GROUP_HAZARD_B + " · 2", ui_clean.GROUP_TARGET_B + " · 2"]
     assert [_flat(i) for i in _by_class(folds[0], "trust-evidence-item")] == [
-        "spill_1 → man_1 · reaches man_1",
-        "brush_1 → grass_1",
-        "tanker_1 → spill_1 · reaches man_1"]
-    assert len(_by_class(folds[0], "person")) == 2
+        "tanker_1 leads to man_1", "brush_1", "spill_1 leads to man_1", "grass_1"]
+    assert {"tanker_1", "brush_1", "spill_1", "grass_1"} <= set(_oids(folds[0]))   # hoverable
+    assert "→" not in _flat(folds[0])                    # no arrows
     (small,) = _by_class(card, "trust-small")
-    assert _flat(small) == ("smaller: acts on dangers it does not hold −0.09 · "
+    assert _flat(small) == ("smaller: in the advice, missing from its own graph −0.09 · "
                             "does not hang together −0.06 · targets disagree −0.05")
     tips = " ".join(str(k.title) for k in small.children[1:])
-    assert "fire_1 → tanker_1" in tips                    # the small ones keep theirs on hover
+    assert "tanker_1" in tips                             # the small ones keep theirs on hover
     assert "asked directly: spill_1" in tips and "rec 5: same quad as rec 1" in tips
-    from agentic import ui_clean
+    # the other direction names its own two groups
+    ev = ui_clean.trust_evidence("advice_backed_by_belief", s4)
+    assert [(i["text"], i["group"]) for i in ev] == [("tanker_1", ui_clean.GROUP_TARGET_A)]
     import inspect
-    src = (inspect.getsource(ui_clean.trust_evidence) + inspect.getsource(ui_clean.trust_losses)
-           + inspect.getsource(ui_clean._arrow_items))
-    assert "gt" not in src.lower().replace("target", "").replace("got", "").replace("tgt", "")
-    # arrows that reach nobody: said on the closed fold
-    s4["alignment"]["b_only"] = [{"source": "brush_1", "effect": "may_spread_to",
-                                  "target": "grass_1"}]
-    card = _by_class(_findings(s4=s4, extra=[_YES]), "trust-card")[0]
-    assert _flat(_by_class(card, "trust-evidence")[0].children[0]) == (
-        "evidence · 1 arrow · 1 from a hazard not addressed · none reaches a person")
+    src = inspect.getsource(ui_clean.trust_evidence) + inspect.getsource(ui_clean.trust_losses)
+    assert "gt" not in src.lower().replace("target", "").replace("got", "")   # no ground truth
     # consequence orders the evidence; it never changes the saved score
     assert "0.429 · low" in _flat(card) and "lost 0.57" in _flat(card)
-    for bad in (None, "x", [None, {"source": "a"}, {"source": "a", "target": "b"}]):
-        assert isinstance(ui_clean._arrow_items(bad, {"graph_b": "g", "graph_a": 3}), list)
+    for bad in ({}, {"alignment": "x"}, {"alignment": {"decomposition": "y"}},
+                {"alignment": {"decomposition": {"hazards_only_in_b": "z"}}, "graph_b": 3}):
+        assert isinstance(ui_clean.trust_evidence("dangers_acted_on", bad), list)
+        assert ui_clean._reaches("a_1", bad) == ""
 
 
 def test_the_trust_card_is_quiet_and_gives_no_order():
@@ -1395,3 +1390,10 @@ def test_the_trust_card_is_quiet_and_gives_no_order():
         assert isinstance(ui_clean.trust_losses(bad), list)
 
 
+
+
+def test_the_causal_groundedness_title_is_the_large_coloured_one():
+    card = _findings(s4=_s4_full())
+    (title,) = _by_class(card, "iv-title")
+    assert _flat(title) == "CAUSAL GROUNDEDNESS"
+    assert title.style["fontSize"] == "17px" and title.style["color"] == "#1d4ed8"

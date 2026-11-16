@@ -727,3 +727,17 @@ Renamed (Sunny, 2026-11-16: "yes rename it"): the loss "holds dangers it
 does not act on" now reads "links in its own graph that no advice uses".
 It counts arrows, not hazards. Its mirror, "acts on dangers it does not
 hold" (arrows in the advice that its own graph lacks), is unchanged.
+
+Arrows off (Sunny, 2026-11-16: "only do same hazard and same victims. Turn
+off arrows now"). The two graph checks (in its own graph, missing from the
+advice / in the advice, missing from its own graph) compared hazards,
+victims AND whole arrows; the arrow part charged a hazard that is addressed
+whenever the recorded arrow pointed at another target (C: fire_1 -> spill_1
+beside "contain spill_1 to keep the fuel away from fire_1").
+`evals4.AB_ROLE_WEIGHTS` is now hazards 1/3, victims 2/3, pairs 0 (the 1:2
+ratio kept; `pairs` still computed and saved). New runs score this way;
+saved runs keep their numbers. The trust card's evidence for those two
+losses is the hazards and the targets one graph has and the other lacks,
+in two named groups, what leads to a person first. The ad hoc "rule added
+after the run" line is removed. The CAUSAL GROUNDEDNESS title is large and
+coloured.
