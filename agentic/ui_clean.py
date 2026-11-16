@@ -92,22 +92,63 @@ _OTHER_COLOUR = "#64748b"
 
 # ── 1 · THE VERDICT ──────────────────────────────────────────────────────
 
+# A check that lost points, said short: the mirror of _HOLDS_UP. The
+# record's own sentence and evidence are the hover.
+_PULLS_DOWN = {"advice_backed_by_belief": "acts on dangers it does not hold",
+               "dangers_acted_on": "holds dangers it does not act on",
+               "uncertainty": "unstable on re-ask",
+               "internal_alignment": "does not hang together",
+               "pick_agreement": "targets disagree",
+               "conformance": "graph rule breaks"}
+
+# A singular error, said short. The record's own sentence is the hover.
+_ERROR_SHORT = {
+    "hazard_unaddressed": "declared, not acted on",
+    "hazard_protected_only": "protected, never treated as a source",
+    "victim_left_behind": "at risk, no advice",
+    "emergency_invented": "emergency advice on a scene it called safe",
+    "action_is_not_an_action": "advice that instructs no one",
+}
+
+
 def clean_verdict(s4: dict, rule_update: list | None = None) -> list:
-    """Score, band, a bar, what to do, the two biggest pull-downs, and what
-    holds up. Minor factors, the per-recommendation list and the footnotes
-    stay in the detailed view."""
+    """The trust card, short (Sunny, 2026-11-16: "less crowded ... lots of
+    long sentences"): the score, then one line per kind of fact.
+
+        TRUST 0.429 · low                          5 of 6 signals
+        declared, not acted on:  brush_1 (−0.18)
+        protected, never treated as a source:  tanker_truck_1 (−0.08)
+        pulls down:  holds dangers it does not act on −0.19 · acts on dangers it
+                     does not hold −0.09 · +3
+        holds up:  targets agree
+
+    Every label is the record's own signal or error name; the record's full
+    sentence is on hover. "What to do" is not repeated here: the headline
+    above the card says it. Per-recommendation trust and the footnotes stay
+    in the detailed view."""
     trust = (s4 or {}).get("trust") or {}
     score = trust.get("score")
     if score is None:
         return []
     band = str(trust.get("band") or "")
     col = _band_colour(band)
+    lab = {"fontWeight": "700", "color": "#64748b"}
+    line = {"fontSize": "11.5px", "margin": "2px 0", "lineHeight": "1.9"}
+    na = [x for x in (trust.get("not_applicable") or []) if isinstance(x, dict)]
+    measured = str(trust.get("signals_measured") or "")
+    scope_tip = "; ".join(
+        f"{_SIGNAL_NAME.get(str(x.get('signal')), str(x.get('signal')).replace('_', ' '))}: "
+        f"{_plain_reason(str(x.get('reason') or ''))}" for x in na)
     rows: list[Any] = [
         html.Div([
             html.Span("TRUST ", style={"fontSize": "10px", "fontWeight": "800",
                                        "letterSpacing": ".08em", "color": "#64748b"}),
-            html.Span(f"{score} · {band}",
+            html.Span(f"{score} · {band}", title=_WHAT_TO_DO.get(band, ""),
                       style={"fontSize": "16px", "fontWeight": "800", "color": col}),
+            html.Span((measured.replace("/", " of ") + " signals") if measured else "",
+                      className="trust-scope",
+                      title=("not measured — " + scope_tip) if scope_tip else "",
+                      style={"float": "right", "fontSize": "10.5px", "color": "#94a3b8"}),
         ]),
         html.Div(html.Div(style={"width": f"{max(0, min(100, float(score) * 100)):.0f}%",
                                  "height": "6px", "background": col,
@@ -115,77 +156,61 @@ def clean_verdict(s4: dict, rule_update: list | None = None) -> list:
                  style={"background": "#e2e8f0", "borderRadius": "3px",
                         "margin": "4px 0 6px", "height": "6px"}),
     ]
-    wd = _WHAT_TO_DO.get(band)
-    if wd:
-        rows.append(html.Div([html.Span("what to do: ", style={"fontWeight": "700",
-                                                                 "color": "#64748b"}),
-                              html.Span(wd, style={"color": col, "fontWeight": "600"})],
-                             style={"fontSize": "11.5px", "marginBottom": "4px"}))
-    hits = sorted((c for c in (trust.get("contributors") or [])
-                   if isinstance(c, dict) and (c.get("contribution") or 0) > 0),
-                  key=lambda c: -float(c.get("contribution") or 0))
-    if hits:
-        label = ("minor notes: " if band == "high" else "pulls down: ")
+
+    def error_line(e: dict, later: bool) -> None:
+        if not isinstance(e, dict) or e.get("waived"):
+            return
+        detail = str(e.get("detail") or e.get("id") or "")
+        text = _ERROR_SHORT.get(str(e.get("id")), detail.split(":")[0].strip())
+        ents = [str(x) for x in (e.get("entities") or [])]
+        ecol = "#b45309" if later else "#b91c1c"
         rows.append(html.Div(
-            [html.Span(label, style={"fontWeight": "700", "color": "#64748b"})]
-            + [html.Span(f"{c.get('text', '')} (−{c.get('contribution')})"
-                         + (" · " if i < min(2, len(hits)) - 1 else ""),
-                         style={"color": "#94a3b8" if band == "high" else col})
-               for i, c in enumerate(hits[:2])]
-            + ([html.Span(f" · +{len(hits) - 2} more in detailed view",
-                          style={"color": "#94a3b8"})] if len(hits) > 2 else []),
-            style={"fontSize": "11px", "marginBottom": "2px"}))
-    # the single errors, each naming its entity (C_tanker ui_1b538f75: the
-    # card said trust dropped but not that brush_1 was the danger left out)
+            [html.Span(text + (": " if ents else " "), style={**lab, "color": ecol})]
+            + [ent_chip(x, ecol) for x in ents]
+            + ([html.Span(f"(−{e['deduction']})", style={"color": ecol})]
+               if e.get("deduction") is not None else [])
+            + ([html.Span(" · rule added after this run", style={"color": "#94a3b8"})]
+               if later else []),
+            className="trust-rule-update" if later else "trust-lost",
+            title=detail + (" — the saved score above does not include this"
+                            if later else ""),
+            style=line))
     for e in (trust.get("singular_errors") or []):
-        if not isinstance(e, dict):
-            continue
-        text = str(e.get("detail") or e.get("id") or "").split(":")[0].strip()
-        ents = [str(x) for x in (e.get("entities") or [])]
-        rows.append(html.Div(
-            [html.Span("lost points: ", style={"fontWeight": "700", "color": "#64748b"}),
-             html.Span(text + (": " if ents else ""), style={"color": "#b91c1c"})]
-            + [ent_chip(x, "#b91c1c") for x in ents]
-            + ([html.Span(f"(−{e['deduction']})", style={"color": "#b91c1c"})]
-               if e.get("deduction") is not None else []),
-            className="trust-lost",
-            style={"fontSize": "11px", "marginBottom": "2px", "lineHeight": "1.9"}))
-    # what TODAY's rules find on this saved run beyond its saved trust
+        error_line(e, False)
     for e in (rule_update or []):
-        if not isinstance(e, dict):
-            continue
-        text = str(e.get("detail") or e.get("id") or "").split(":")[0].strip()
-        ents = [str(x) for x in (e.get("entities") or [])]
-        rows.append(html.Div(
-            [html.Span("under today's rule this run would also lose: ",
-                       style={"fontWeight": "700", "color": "#64748b"}),
-             html.Span(text + (": " if ents else ""), style={"color": "#b45309"})]
-            + [ent_chip(x, "#b45309") for x in ents]
-            + ([html.Span(f"(−{e['deduction']})", style={"color": "#b45309"})]
-               if e.get("deduction") is not None else []),
-            className="trust-rule-update",
-            title="the saved score above is unchanged; this rule was added after the run",
-            style={"fontSize": "11px", "marginBottom": "2px", "lineHeight": "1.9"}))
+        error_line(e, True)
+
+    def name_of(c: dict) -> str:
+        sig = str(c.get("signal"))
+        return _PULLS_DOWN.get(sig, _SIGNAL_NAME.get(sig, sig.replace("_", " ")))
+    hits = sorted((c for c in (trust.get("contributors") or [])
+                   if isinstance(c, dict)
+                   and isinstance(c.get("contribution"), (int, float))
+                   and c["contribution"] > 0),
+                  key=lambda c: -float(c["contribution"]))
+    if hits:
+        kids: list = [html.Span("pulls down: ", style=lab)]
+        for i, c in enumerate(hits[:2]):
+            kids.append(html.Span(
+                f"{name_of(c)} −{float(c['contribution']):.2f}"
+                + (" · " if i < min(2, len(hits)) - 1 else ""),
+                title=f"{c.get('text', '')} — {c.get('evidence', '')}".strip(" —"),
+                style={"color": "#94a3b8" if band == "high" else col}))
+        if len(hits) > 2:
+            kids.append(html.Span(f" · +{len(hits) - 2}", title="in the detailed view",
+                                  style={"color": "#94a3b8"}))
+        rows.append(html.Div(kids, className="trust-pulls", style=line))
     clean = [c for c in (trust.get("contributors") or [])
              if isinstance(c, dict) and (c.get("contribution") or 0) == 0]
     if clean:
         rows.append(html.Div(
-            "holds up: " + " · ".join(_HOLDS_UP.get(str(c.get("signal")), str(c.get("signal")))
-                                      for c in clean),
-            style={"fontSize": "11px", "color": "#16a34a", "fontWeight": "600"}))
-    # what this number does NOT rest on (F_park ui_22e4d376: 0.765 on a calm
-    # scene, and nothing said that three of the six signals had no meaning)
-    na = [x for x in (trust.get("not_applicable") or []) if isinstance(x, dict)]
-    if na:
-        by_reason: dict[str, list[str]] = {}
-        for x in na:
-            by_reason.setdefault(_plain_reason(str(x.get("reason") or "")), []).append(
-                _SIGNAL_NAME.get(str(x.get("signal")), str(x.get("signal")).replace("_", " ")))
-        rows.append(html.Div(
-            f"rests on {trust.get('signals_measured') or 'fewer'} signals · not measured: "
-            + " · ".join(f"{', '.join(v)} ({k})" for k, v in by_reason.items()),
-            className="trust-scope",
-            style={"fontSize": "10.5px", "color": "#94a3b8", "marginTop": "2px"}))
+            [html.Span("holds up: ", style=lab),
+             html.Span(" · ".join(
+                 _HOLDS_UP.get(str(c.get("signal")),
+                               _SIGNAL_NAME.get(str(c.get("signal")),
+                                                str(c.get("signal")).replace("_", " ")))
+                 for c in clean), style={"color": "#16a34a"})],
+            className="trust-holds", style=line))
     return [html.Div(rows, className="unc-panel",
                      style={"borderColor": col, "padding": "8px 10px"})]
 

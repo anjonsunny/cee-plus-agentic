@@ -146,8 +146,9 @@ def test_a_finished_after_run_is_measured_and_the_try_is_appended(tmp_path):
     assert tries[0] == {**one, "index": 1}
     assert ui_iv.load_tries(base) == tries
     assert tries[1]["summary"]["moved"] is False
-    assert "MOVED" in ui_iv.try_line(tries[0]) and "danger level -3" in ui_iv.try_line(tries[0])
-    assert "did NOT move" in ui_iv.try_line(tries[1])
+    assert ": eased, +" in ui_iv.try_line(tries[0]) and "danger level -3" in ui_iv.try_line(tries[0])
+    assert ": unchanged, +0.00" in ui_iv.try_line(tries[1])
+    assert "MOVED" not in ui_iv.try_line(tries[0])         # the frozen arm's wording is gone
 
 
 def test_a_failed_or_empty_after_run_is_recorded_with_its_reason(tmp_path):
@@ -177,7 +178,11 @@ def test_the_status_shows_saved_tries_the_running_one_and_an_empty_state():
              {"index": 3, "target": "x", "modality": "caption", "status": "failed"}]
     comp = ui_iv.status_component(tries, {"target": "brush_1", "progress": "Perceive · 2 min"})
     text = _flat(comp)
-    assert "#1 removed fire_1 (both): the advice MOVED (shift 0.87)" in text
+    assert "#1 removed fire_1 (both): the advice moved" in text    # an old try, no signed shift
+    assert "0.87" not in text                             # the frozen arm's shift is not shown
+    with_signed = _flat(ui_iv.status_component(tries, None, {1: {"value": 0.72,
+                                                              "direction": "eased"}}))
+    assert "#1 removed fire_1 (both): eased, +0.72" in with_signed
     assert "#2 removed smoke_1 (image only): not a fair test" in text
     assert "#3 removed x (caption only): not measured — unknown reason" in text
     assert "running the edited scene: removed brush_1 · Perceive · 2 min" in text
@@ -285,30 +290,32 @@ def test_an_invalid_try_calls_no_model_and_says_why(page):
 
 def test_the_tick_reports_progress_then_measures_and_saves_when_the_run_ends(page):
     ui.iv_start("base", "fire_1", "both", "a tanker leaks on a road", _url(EDITED), "e.png")
-    kids, key = ui.iv_status(0, "base", None)
+    kids, _proof, key = ui.iv_status(0, "base", None)
     assert "running the edited scene: removed fire_1 · Perceive" in _flat(kids)
     assert ui_iv.load_tries(page["base"]) == []
     # the after run ends: its saved files appear, the run is marked done
     _after_dir(page["tmp"])
     ui.RUNS["after"]["done"] = True
-    kids, key2 = ui.iv_status(1, "base", [], key)
-    assert key2 != key and "the advice MOVED" in _flat(kids)
+    kids, proof, key2 = ui.iv_status(1, "base", [], key)
+    assert key2 != key and len(_by_class(kids, "iv-card")) == 1
+    assert ": eased, +" in _flat(proof)                   # the try line sits in the proof
+    assert _by_class(kids, "iv-next") == []               # nothing declared is left to remove
     assert ui.IV_ACTIVE == {}
     (saved,) = ui_iv.load_tries(page["base"])
     assert saved["after_run"] == "ui_after" and saved["summary"]["moved"] is True
     assert saved["settings"]["env"] is False and saved["edited_caption"].startswith("a tanker")
     # nothing changed on the next tick: nothing is redrawn
     import dash
-    assert ui.iv_status(2, "base", [], key2) == (dash.no_update, dash.no_update)
+    assert ui.iv_status(2, "base", [], key2) == (dash.no_update,) * 3
     # flipping the ground-truth switch redraws
-    kids, key3 = ui.iv_status(3, "base", ["gt"], key2)
+    kids, _proof, key3 = ui.iv_status(3, "base", ["gt"], key2)
     assert key3 != key2 and kids is not dash.no_update
 
 
 def test_an_after_run_that_fails_is_saved_as_a_failed_try(page):
     ui.iv_start("base", "fire_1", "caption", "a tanker leaks", None, None)
     ui.RUNS["after"].update({"done": True, "error": "ollama is not running"})
-    kids, _key = ui.iv_status(0, "base", None)
+    kids, _proof, _key = ui.iv_status(0, "base", None)
     assert "not measured — ollama is not running" in _flat(kids)
     assert ui_iv.load_tries(page["base"])[0]["status"] == "failed"
 
@@ -509,8 +516,8 @@ def test_the_result_shows_the_table_above_the_tries_with_hoverable_ids(tmp_path)
     text = _flat(comp)
     assert "decoration" not in text and "hidden dependence" not in text
     for word in ("RECOMMENDATION", "NAMES", "#1 removed", "READING (ONE ASK)", "grounded",
-                 "correctly ignored", "untested",
-                 "advice moved", "1 of 2", "level -3", "the tries, one line each",
+                 "kept", "untested",
+                 "advice moved", "1 of 2", "level -3", "the tries · 2",
                  "not measured — boom", "running the edited scene: removed tanker_1"):
         assert word in text, word
     assert {"fire_1", "tanker_1", "man_1"} <= set(_oids(comp))
@@ -519,7 +526,7 @@ def test_the_result_shows_the_table_above_the_tries_with_hoverable_ids(tmp_path)
     assert "no longer in the answer" in cell.title       # hover says what the words mean
     # a try whose after run folder is gone does not break the page
     (after / "stage4.json").unlink()
-    assert "the tries, one line each" in _flat(ui_iv.result_component(base, tmp_path))
+    assert "the tries · 2" in _flat(ui_iv.result_component(base, tmp_path))
 
 
 def test_resume_a_finished_edited_run_that_was_never_recorded(tmp_path):
@@ -661,16 +668,17 @@ def test_ground_truth_shows_only_when_the_switch_is_on(gt):
     assert not re.search(r"\bcore\b", off)
     on = ui_iv.result_component(base, gt["tmp"], with_gt=True)
     text = _flat(on)
-    for word in ("SHOULD MATTER", "BY GROUND TRUTH", "match with ground truth:",
-                 "ground truth: verified · push_09.jpg", "matched by its content",
-                 "core: it should matter and the advice depends on it",
-                 "spurious: the two disagree"):
+    for word in ("SHOULD MATTER", "BY GROUND TRUTH", "match with ground truth",
+                 "ground truth: verified · push_09.jpg"):
         assert word in text, word
+    heads = {h.children: h.title for h in _by_class(on, "iv-features")[0].children[0].children.children}
+    assert "core: it should matter and the advice depends on it" in heads["BY GROUND TRUTH"]
+    assert "spurious: the two disagree" in heads["BY GROUND TRUTH"]
     assert len(_by_class(on, "iv-gt-line")) == 1
     words = {_flat(r).split()[0]: _flat(_by_class(r, "iv-gt-word"))
              for r in _by_class(on, "iv-feature")}
     assert words["fire_1"] == "core"                     # should matter, and the advice moved
-    assert words["tanker_1"] == "should matter, not removed yet"
+    assert words["tanker_1"] == "not removed yet"
     # switch on, but this scene has no ground truth: the card says so
     (gt["verified"] / "push_09.jpg.gt.json").unlink()
     text = _flat(ui_iv.result_component(base, gt["tmp"], with_gt=True))
@@ -908,7 +916,7 @@ def test_a_cell_says_what_happened_to_the_advice_then_the_label():
     cells = {i + 1: c for i, c in enumerate(_by_class(comp, "iv-cell"))}
     rows = _by_class(comp, "iv-row")
     by = {_flat(r).split()[0]: _flat(_by_class(r, "iv-cell")) for r in rows}
-    assert by["#1"] == "advice kept → correctly ignored"
+    assert by["#1"] == "kept"                             # the uneventful cell, said quietly
     assert by["#2"] == "advice kept → masquerade"
     assert by["#3"] == "advice kept, adjusted → correctly ignored"
     assert by["#4"] == "advice dropped → spurious"
@@ -1011,12 +1019,13 @@ def test_a_saved_run_shows_what_todays_rule_would_also_charge():
     card = ui.findings_component(d, mode="clean")
     (line,) = _by_class(card, "trust-rule-update")
     text = _flat(line)
-    assert "under today's rule this run would also lose" in text
-    assert "protected, but never treated as a source of danger" in text
+    assert text.startswith("protected, never treated as a source: tanker_1")
+    assert "rule added after this run" in text
+    assert "protected, but never treated as a source of danger" in line.title
     from agentic.test_ui_views import _oids
     assert "tanker_1" in _oids(line)
     assert "0.43 · low" in _flat(card)                   # the saved score is untouched
-    assert "saved score above is unchanged" in line.title
+    assert "the saved score above does not include this" in line.title
     # and the headline names it too
     assert "Misses: tanker_1" in _flat(card[0])
 
@@ -1179,11 +1188,18 @@ def test_the_card_has_two_halves_recommendations_and_features(tmp_path):
     (card,) = _by_class(comp, "iv-card")
     assert comp[0] is card                               # the card comes first
     text = _flat(card)
-    assert text.index("RECOMMENDATIONS") < text.index("FEATURES")
-    assert "grounded: 1 of 1" in text and "1 not tested yet" in text
-    assert "DECLARED MECHANISTIC" in text                # the two bar columns, on the card
-    assert "declared vs mechanistic agree: no score yet" in text
-    assert "one ask per try" in text and "agreeing with itself is not the same as being right" in text
+    tiles = _by_class(card, "iv-tile")
+    assert [_flat(t) for t in tiles] == [
+        "recommendations grounded 1 of 1 · 1 not tested",
+        "declared vs mechanistic needs a second removed hazard"]
+    assert "dropped once the hazard it names is removed" in tiles[0].title
+    assert "Agreeing with itself is not the same as being right" in tiles[1].title
+    assert "FEATURE DECLARED MECHANISTIC" in text        # the two bar columns, on the card
+    heads = {h.children: h.title for h in _by_class(card, "iv-features")[0].children[0].children.children}
+    assert "from its own graph of the scene" in heads["DECLARED"]
+    assert "danger level, advice, graph" in heads["MECHANISTIC"]
+    assert text.endswith("one ask per try")
+    assert len(text) < 420                               # the explanations are on hover
     import re
     for verdict_word in ("ground truth", "spurious", "SHOULD"):
         assert verdict_word not in text, verdict_word    # no verdict words without the switch
@@ -1191,7 +1207,7 @@ def test_the_card_has_two_halves_recommendations_and_features(tmp_path):
     # the proof is in folds, said once; the first is open while there is one try
     folds = _by_class(comp, "iv-evidence")
     assert [_flat(f.children[0]) for f in folds] == [
-        "evidence: each recommendation, by removed hazard", "the tries, one line each"]
+        "evidence · 2 recommendations by 1 removed hazard", "the tries · 1"]
     assert folds[0].open is True and not folds[1].open
     assert len(_by_class(folds[0], "iv-table")) == 1 and len(_by_class(card, "iv-table")) == 0
     assert len(_by_class(comp, "iv-features")) == 1      # features are on the card only
@@ -1224,7 +1240,7 @@ def test_the_card_names_advice_that_only_appeared_after_a_hazard_was_removed():
     (line,) = _by_class(card, "iv-new-advice")
     text = _flat(line)
     assert text.startswith("new advice after removing a hazard: brush_1 (2 of 2 tries)")
-    assert "in the original scene, and the original advice did not act on it" in text
+    assert "in the original scene, and the original advice did not act on" in line.title
     assert "spill_1" not in text and "gas_1" not in text      # those stay in the evidence
     assert "kept appearing" not in _flat(card)
     assert ui_iv.new_advice({}, {}) == [] and ui_iv.new_advice(before, {"columns": [None]}) == []
@@ -1254,7 +1270,9 @@ def test_the_ground_truth_switch_is_on_the_page_and_off_by_default():
     assert sw.value == [] and [o["value"] for o in sw.options] == ["gt"]
     assert "calibration" in sw.options[0]["label"]
     kids = [getattr(k, "id", None) for k in panel.children]
-    assert kids.index("iv-status") < kids.index("iv-gt") < kids.index("iv-controls")
+    # the switch on top, the card, the action, then the proof
+    assert kids.index("iv-gt") < kids.index("iv-status") < kids.index("iv-controls") \
+        < kids.index("iv-evidence")
 
 
 # ── features on the card: declared beside mechanistic, in plain words; core
@@ -1314,9 +1332,8 @@ def test_the_card_shows_each_feature_declared_beside_mechanistic():
     assert "not removed yet" in _flat(by["spill_1"])     # declared bar, no mechanistic bar
     assert "removing it barely changes the advice" in _by_class(by["tanker_1"], "iv-role")[0].title
     text = _flat(card)
-    assert "grounded: 1 of 1 · 1 not tested yet" in text
-    assert "declared vs mechanistic agree:" in text
-    assert "how far the answer eased when it was removed (danger level, advice, graph)" in text
+    assert "recommendations grounded 1 of 1 · 1 not tested" in text
+    assert "declared vs mechanistic" in text
     # with ground truth: a should-matter bar and the two words, per feature
     syn = {"available": True, "gt_core": ["fire_1", "tanker_1"],
            "gt": {"status": "verified", "image_filename": "x.jpg"},
@@ -1326,7 +1343,58 @@ def test_the_card_shows_each_feature_declared_beside_mechanistic():
     by = {_flat(r).split()[0]: _flat(_by_class(r, "iv-gt-word"))
           for r in _by_class(card, "iv-feature")}
     assert by["fire_1"] == "core"
-    assert by["tanker_1"] == "spurious: should matter, the advice does not depend on it"
+    assert by["tanker_1"] == "spurious"                  # short; the reason is on hover
+    (cell,) = [c for r in _by_class(card, "iv-feature") if _flat(r).startswith("tanker_1")
+               for c in _by_class(r, "iv-gt-word")]
+    assert cell.title == "it should matter, but the advice does not depend on it"
     assert by["spill_1"] == "" and by["brush_1"] == ""
-    assert "match with ground truth: 0.3 · misproportioned" in _flat(card)
-    assert "SHOULD MATTER" in _flat(card) and "2 of 2 core hazards removed" in _flat(card)
+    spill = next(r for r in _by_class(card, "iv-feature") if _flat(r).startswith("spill_1"))
+    assert "not in ground truth" in _flat(spill)          # said, not an empty bar
+    (tile,) = _by_class(card, "iv-gt-line")
+    assert _flat(tile) == "match with ground truth 0.3 · misproportioned"
+    assert "2 of 2 core hazards removed" in tile.title
+    assert "SHOULD MATTER" in _flat(card)
+
+
+# ── the action on the card: "remove next" (Sunny, 2026-11-16: the new try
+#    "is kind of in the background") ──────────────────────────────────────
+
+def test_the_card_offers_the_next_hazard_to_remove_and_the_button_opens_the_form():
+    from agentic import declared4 as d
+    import dash
+    from unittest.mock import patch
+    c = d.compare(D_BEFORE, [_try("fire_1", 0.6)])
+    card = ui_iv.card_component(c, {}, [], next_id=lambda h: {"type": "iv-next", "target": h})
+    (btn,) = _by_class(card, "iv-next")
+    assert _flat(btn) == "remove next: spill_1"          # the next one it declared
+    assert btn.id == {"type": "iv-next", "target": "spill_1"}
+    assert "1 of 4 declared hazards removed" in _flat(_by_class(card, "iv-coverage"))
+    # every declared hazard removed: no button
+    full = d.compare(D_BEFORE, [_try(h, 0.3) for h in ("fire_1", "spill_1", "tanker_1",
+                                                       "brush_1")])
+    assert _by_class(ui_iv.card_component(full, {}, [], next_id=lambda h: h), "iv-next") == []
+    # without an id maker (a plain render) there is no button either
+    assert _by_class(ui_iv.card_component(c, {}, []), "iv-next") == []
+
+    class _Ctx:
+        triggered_id = {"type": "iv-next", "target": "spill_1"}
+    opts = [{"label": "fire", "value": "fire_1"}, {"label": "spill", "value": "spill_1"}]
+    with patch.object(ui, "ctx", _Ctx):
+        assert ui.iv_next([1], opts) == (True, "spill_1")            # opens, and picks it
+        assert ui.iv_next([1], [{"value": "fire_1"}]) == (True, dash.no_update)   # not listed
+        assert ui.iv_next([0], opts) == (dash.no_update, dash.no_update)          # a redraw
+        assert ui.iv_next(None, None) == (dash.no_update, dash.no_update)
+
+    class _None:
+        triggered_id = None
+    with patch.object(ui, "ctx", _None):
+        assert ui.iv_next([1], opts) == (dash.no_update, dash.no_update)
+
+
+def test_the_form_and_the_proof_have_their_own_place_on_the_page():
+    panel, _ = _find(ui.app.layout, "iv-panel")
+    assert _find(panel, "iv-evidence") is not None
+    controls, _ = _find(panel, "iv-controls")
+    assert controls.children[0].className == "iv-new-try"            # a visible bar
+    top, bottom = ui_iv.result_parts(None, None)
+    assert "no try yet" in _flat(top) and bottom == []

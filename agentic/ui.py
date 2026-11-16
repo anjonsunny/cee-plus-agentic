@@ -5982,8 +5982,16 @@ app.index_string = """<!DOCTYPE html>
      wrap div to "wrap mode-clean" / "wrap mode-detailed". */
   .mode-clean .only-detailed { display:none; }
   /* the intervention panel (CAUSAL GROUNDEDNESS) */
-  .iv-new-try { font-size:11px; font-weight:800; color:#1d4ed8; cursor:pointer;
-                margin-top:8px; }
+  .iv-new-try { font-size:11.5px; font-weight:800; color:#1d4ed8; cursor:pointer;
+                margin-top:8px; padding:6px 10px; border:1px solid #bfdbfe;
+                border-radius:8px; background:#eff6ff; }
+  .iv-fold-head { font-size:11px; font-weight:700; color:#334155; cursor:pointer;
+                  margin-top:6px; padding:6px 10px; border-radius:6px;
+                  background:#f1f5f9; }
+  .iv-next { font-size:10.5px; font-weight:700; color:#1d4ed8; cursor:pointer;
+             border:1px solid #bfdbfe; border-radius:6px; background:#eff6ff;
+             padding:2px 8px; }
+  .iv-next:hover, .iv-new-try:hover { background:#dbeafe; }
   .iv-note { font-size:10px; color:#94a3b8; margin:4px 0; }
   .iv-lbl { font-size:10px; font-weight:800; letter-spacing:.06em;
             text-transform:uppercase; color:#64748b; width:58px; flex:none; }
@@ -6367,15 +6375,17 @@ app.layout = html.Div([
                       # after side (agentic/ui_intervene.py).
                       html.Div([
                           # results first; the form is folded under them
-                          html.Div(id="iv-status"),
                           # calibration only: a deployment has no ground truth,
                           # so the card never needs it (Sunny, 2026-11-16)
                           dcc.Checklist(
                               id="iv-gt", value=[],
                               options=[{"label": " compare with ground truth (calibration)",
                                         "value": "gt"}],
-                              className="ctl-toggle",
-                              style={"fontSize": "10.5px", "marginTop": "6px"}),
+                              className="ctl-toggle iv-gt-switch",
+                              style={"fontSize": "10.5px", "textAlign": "right",
+                                     "marginBottom": "4px"}),
+                          # the card (the takeaway) and the running try
+                          html.Div(id="iv-status"),
                           html.Details([
                               html.Summary("new try", className="iv-new-try"),
                               html.Div(id="iv-note", className="iv-note"),
@@ -6424,6 +6434,8 @@ app.layout = html.Div([
                                        style={"fontSize": "11.5px", "color": "#b91c1c",
                                               "marginTop": "4px"}),
                           ], id="iv-controls", open=False, style={"display": "none"}),
+                          # the proof, under the action: folded, said once
+                          html.Div(id="iv-evidence"),
                           dcc.Store(id="iv-key"),
                       ], id="iv-panel", className="iv-panel"),
                   ], className="phase-card only-clean", open=True,
@@ -6717,7 +6729,8 @@ def iv_poll(base_name: str) -> dict | None:
     return None
 
 
-@app.callback(Output("iv-status", "children"), Output("iv-key", "data"),
+@app.callback(Output("iv-status", "children"), Output("iv-evidence", "children"),
+              Output("iv-key", "data"),
               Input("tick", "n_intervals"), Input("run-id", "data"),
               Input("iv-gt", "value"), State("iv-key", "data"))
 def iv_status(_n, run_id, gt=None, key=None):
@@ -6726,7 +6739,7 @@ def iv_status(_n, run_id, gt=None, key=None):
     d = _iv_base_dir(run_id)
     if d is None:
         new_key = "none"
-        return (dash.no_update, dash.no_update) if key == new_key else ([], new_key)
+        return (dash.no_update,) * 3 if key == new_key else ([], [], new_key)
     active = iv_poll(d.name)
     if key is None or not str(key).startswith(d.name + "|"):
         # first look at this run: pick up edited runs that finished while
@@ -6738,8 +6751,27 @@ def iv_status(_n, run_id, gt=None, key=None):
     with_gt = "gt" in (gt or [])
     new_key = f"{d.name}|{len(tries)}|{(active or {}).get('progress')}|{with_gt}"
     if new_key == key:
+        return (dash.no_update,) * 3
+    top, bottom = ui_intervene.result_parts(
+        d, UI_RUNS_DIR, active, with_gt=with_gt,
+        next_id=lambda h: {"type": "iv-next", "target": h})
+    return top, bottom, new_key
+
+
+@app.callback(Output("iv-controls", "open", allow_duplicate=True),
+              Output("iv-target", "value", allow_duplicate=True),
+              Input({"type": "iv-next", "target": ALL}, "n_clicks"),
+              State("iv-target", "options"), prevent_initial_call=True)
+def iv_next(clicks, options):
+    """The card's "remove next" button: open the new-try form with that
+    hazard picked. A hazard that is not one of the listed candidates still
+    opens the form, with the pick left as it was."""
+    trig = ctx.triggered_id
+    if not isinstance(trig, dict) or not any(clicks or []):
         return dash.no_update, dash.no_update
-    return ui_intervene.result_component(d, UI_RUNS_DIR, active, with_gt=with_gt), new_key
+    target = trig.get("target")
+    known = any(isinstance(o, dict) and o.get("value") == target for o in (options or []))
+    return True, (target if known else dash.no_update)
 
 
 def scenes_component(runs_dir: Path | None = None) -> list[Any]:

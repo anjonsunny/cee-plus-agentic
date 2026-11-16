@@ -355,10 +355,13 @@ def _findings(mode="clean", s4=None, extra=None):
 
 def test_findings_card_holds_trust_chain_pathology_and_the_groundedness_box():
     text = _text(_findings(s4=_s4_full()))
-    assert "0.62 · moderate" in text and "what to do" in text
-    assert "pulls down" in text and "acts on a danger it doesn't hold" in text
-    assert "+1 more in detailed view" in text
-    assert "holds up: targets agree" in text
+    assert "0.62 · moderate" in text and "what to do" not in text    # the headline says it
+    flat = " ".join(text.split())
+    assert "pulls down: acts on dangers it does not hold −0.20 · unstable on re-ask −0.10" in flat
+    assert "· +1" in flat and "holds up: targets agree" in flat
+    pulls = _by_class(_findings(s4=_s4_full()), "trust-pulls")[0]
+    assert any("acts on a danger it doesn't hold" in str(getattr(k, "title", ""))
+               for k in pulls.children)                  # the record's sentence, on hover
     assert "THE RUN'S CHAIN" in text and "PATHOLOGIES" in text
     assert "no longer acts on tanker_1" in text and "causal chain" in text
     assert "1 detector looked" in text
@@ -884,8 +887,8 @@ def test_fix2_the_trust_card_names_the_entity_that_lost_the_points():
     line = _by_class(card, "trust-lost")
     assert len(line) == 1
     text = _flat(line[0])
-    assert "declared a danger, and no recommendation acts on it" in text
-    assert "0.18" in text
+    assert text == "declared, not acted on: brush_1 (−0.18)"
+    assert "declared a danger, and no recommendation acts on it" in line[0].title
     assert "brush_1" in _oids(line[0])          # a hoverable chip, not plain text
     # malformed entries never break the card
     s4["trust"]["singular_errors"] = [None, "x", {"id": "odd"}, {"detail": 7, "entities": None}]
@@ -1015,12 +1018,13 @@ def test_fix7_the_trust_card_says_what_the_number_does_not_rest_on():
     scope = _by_class(_findings(s4=s4), "trust-scope")
     assert len(scope) == 1
     text = _flat(scope[0])
-    assert "rests on 3/6 signals" in text
-    assert "advice backed by belief, dangers acted on (safe scene)" in text
-    assert "answer stability (the recommendation was not re-asked)" in text
-    # nothing unmeasured, or a malformed list -> no line, no crash
+    assert text == "3 of 6 signals"
+    tip = scope[0].title
+    assert "advice backed by belief: safe scene" in tip and "dangers acted on: safe scene" in tip
+    assert "answer stability: the recommendation was not re-asked" in tip
+    # nothing unmeasured, or a malformed list -> no hover, no crash
     s4["trust"]["not_applicable"] = []
-    assert _by_class(_findings(s4=s4), "trust-scope") == []
+    assert _by_class(_findings(s4=s4), "trust-scope")[0].title == ""
     s4["trust"]["not_applicable"] = [None, "x", {"signal": None, "reason": None}]
     assert "TRUST" in _flat(_findings(s4=s4))
 
@@ -1221,7 +1225,7 @@ def test_the_card_and_headline_name_a_danger_that_is_only_protected():
     card = _findings(s4=s4, extra=[_YES])
     lost = _by_class(card, "trust-lost")
     assert len(lost) == 2
-    assert "no recommendation acts on it" in _flat(lost[0]) and "brush_1" in _oids(lost[0])
-    assert "protected, but never treated as a source of danger" in _flat(lost[1])
+    assert _flat(lost[0]).startswith("declared, not acted on:") and "brush_1" in _oids(lost[0])
+    assert _flat(lost[1]).startswith("protected, never treated as a source:")
     assert "tanker_truck_1" in _oids(lost[1]) and "0.08" in _flat(lost[1])
     assert _headline(s4, [_YES])[1] == "Check before acting. Misses: brush_1, tanker_truck_1."

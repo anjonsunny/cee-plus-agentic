@@ -621,3 +621,35 @@ removed hazard) and the tries.
 
 C with the switch on: fire_1 core, spill_1 core, tanker_truck_1 spurious
 (should matter 0.39, the advice does not depend on it), match 0.62.
+
+## 21. Cleaner cards (Sunny, 2026-11-16, after testing C)
+
+"Cleaner without losing substance"; the new try and the evidence "are
+kind of in the background"; the trust panel has "lots of long sentences";
+"do not use phrases that require explanations ... do not invent something".
+
+Causal groundedness:
+- The numbers sit in one row of tiles: recommendations grounded ·
+  declared vs mechanistic · (switch on) match with ground truth.
+- Under them: "n of m declared hazards removed" and a "remove next: X"
+  button that opens the new-try form with that hazard picked. The form is
+  a visible bar and sits between the card and the proof.
+- FEATURES rows are unchanged in substance; "core" / "spurious" are one
+  word with the reason on hover; a hazard ground truth does not name says
+  "not in ground truth" instead of an empty bar. Column explanations are
+  on the column heads' hover; the grey explanation lines are gone.
+- The proof is under the form in bars that say what is inside ("evidence ·
+  5 recommendations by 3 removed hazards", "the tries · 3"). In the table
+  the uneventful cell reads a quiet "kept".
+- A try line reads the signed shift ("eased, +0.18"), the same as the
+  table; the frozen arm's "MOVED (shift 0.56)" is gone.
+- The ground-truth switch sits at the top right of the card.
+
+Trust:
+- One line per kind of fact, each label the record's own signal or error
+  name, the record's full sentence on hover: "declared, not acted on:
+  brush_1 (−0.18)", "protected, never treated as a source: tanker_truck_1
+  (−0.08) · rule added after this run", "pulls down: holds dangers it does
+  not act on −0.19 · acts on dangers it does not hold −0.09 · +3", "holds
+  up: ...". "5 of 6 signals" sits at the top right with what was not
+  measured on hover. "What to do" is not repeated: the headline says it.

@@ -408,6 +408,12 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
             tip = _CELL_MEANS.get(state, "")
             if after:
                 tip += (f"  |  before: {r.get('action')}  |  after: {after.get('action')}")
+            if state == "stays" and lab == "correctly_ignored":
+                # the expected, uneventful cell: said quietly, meaning on hover
+                tds.append(html.Td("kept", className="iv-cell stays quiet",
+                                   title=tip + "  |  " + _MEANS.get(lab, ""),
+                                   style={**_TD, "color": "#94a3b8"}))
+                continue
             # one line: what happened to the advice -> the label that follows
             tds.append(html.Td(
                 [html.Span(word)]
@@ -528,56 +534,112 @@ _ROLE_MEANS = {
 _GT_COL = {"core": "#16a34a", "should matter, not removed yet": "#94a3b8"}
 
 
-def card_component(cmp: dict, tbl: dict, fresh: list[dict], syn: dict | None = None) -> list:
-    """The causal-groundedness card: the takeaway, updated with every try.
-    Two halves (Sunny, 2026-11-16):
+_GT_SHORT = {
+    "core": ("core", "it should matter, and the advice depends on it"),
+    "spurious: should matter, the advice does not depend on it":
+        ("spurious", "it should matter, but the advice does not depend on it"),
+    "spurious: the advice depends on it, it should not matter":
+        ("spurious", "the advice depends on it, but it should not matter"),
+    "should matter, not removed yet": ("not removed yet", "it should matter; no try has "
+                                                         "removed it"),
+}
+_HEAD_TIP = {
+    "DECLARED": "how much the model says this hazard matters, from its own graph of the scene",
+    "MECHANISTIC": "how far the answer eased when this hazard was removed "
+                   "(danger level, advice, graph)",
+    "SHOULD MATTER": "the weight of this hazard in the ground truth",
+    "BY GROUND TRUTH": "core: it should matter and the advice depends on it · "
+                       "spurious: the two disagree",
+}
 
-      RECOMMENDATIONS  how much of the advice is causally grounded: is each
-                       recommendation dropped once the hazard it names is
-                       removed.
-      FEATURES         each hazard, DECLARED (how much the model says it
-                       matters) beside MECHANISTIC (how much the shift
-                       signals show the advice depends on it), and what
-                       that makes it, in plain words.
+
+def _tile(label: str, value: str, colour: str, title: str = "", cls: str = "") -> Any:
+    return html.Div([
+        html.Div(label, style={"fontSize": "9.5px", "fontWeight": "800",
+                               "letterSpacing": ".06em", "color": "#64748b",
+                               "textTransform": "uppercase"}),
+        html.Div(value, style={"fontSize": "15px", "fontWeight": "800", "color": colour}),
+    ], className=("iv-tile " + cls).strip(), title=title,
+        style={"flex": "1", "minWidth": "110px", "padding": "5px 9px",
+               "border": "1px solid #e2e8f0", "borderRadius": "8px", "background": "#fff"})
+
+
+def card_component(cmp: dict, tbl: dict, fresh: list[dict], syn: dict | None = None,
+                   next_id: Any = None) -> list:
+    """The causal-groundedness card: the takeaway, updated with every try.
+
+      the numbers   grounded (how many recommendations are dropped once the
+                    hazard they name is removed) · declared vs mechanistic
+                    (how far the two agree) · with the switch, the match
+                    with ground truth
+      FEATURES      each hazard, a DECLARED bar beside a MECHANISTIC bar,
+                    and what that makes it, in plain words
 
     Nothing here needs ground truth, so this is the card a deployment can
     show, and it uses no verdict words. `syn` is given only when the
     "compare with ground truth" switch is on: it adds a SHOULD MATTER bar
-    and the words core / spurious, judged by ground truth. The proof per
-    recommendation sits in the fold under the card."""
+    and the words core / spurious. Every explanation is on hover (Sunny,
+    2026-11-16: "cleaner without losing substance"). `next_id(hazard)`
+    gives the id of the "remove next" button; ui.py owns its callback."""
     from agentic import declared4
     from agentic.ui_clean import ent_chip
     cmp = cmp if isinstance(cmp, dict) else {}
     tbl = tbl if isinstance(tbl, dict) else {}
     lab = {"fontWeight": "700", "color": "#64748b"}
-    line = {"fontSize": "11.5px", "margin": "2px 0", "lineHeight": "1.9"}
-    sec = {"fontSize": "10px", "fontWeight": "800", "letterSpacing": ".08em",
-           "color": "#64748b", "margin": "8px 0 2px"}
+    line = {"fontSize": "11.5px", "margin": "4px 0 2px", "lineHeight": "1.9"}
     score, reading = cmp.get("score"), str(cmp.get("reading") or "")
     col = _SCORE_COL.get(reading, "#64748b")
-    rows: list = [html.Div(
-        f"{cmp.get('tested', 0)} of {cmp.get('declared', 0)} declared hazards removed"
-        + (" · provisional" if cmp.get("provisional") else ""),
-        className="iv-coverage", style={"fontSize": "10.5px", "color": "#94a3b8"})]
+    gt_on = isinstance(syn, dict) and bool(syn.get("available"))
+    dist = (syn.get("distribution") if gt_on and isinstance(syn.get("distribution"), dict)
+            else {})
 
-    # ── RECOMMENDATIONS
-    rows.append(html.Div("RECOMMENDATIONS", style=sec))
+    # ── the numbers, in one row
     verdicts = [str(r.get("verdict")) for r in (tbl.get("rows") or []) if isinstance(r, dict)]
     judged = [v for v in verdicts if v != "untested"]
     tied = sum(1 for v in judged if v == "grounded")
-    rows.append(html.Div(
-        [html.Span("grounded: ", style=lab),
-         html.Span(f"{tied} of {len(judged)}" if judged else "none tested yet",
-                   className="iv-grounded-n",
-                   style={"fontWeight": "800", "fontSize": "14px",
-                          "color": "#16a34a" if judged and tied == len(judged)
-                          else "#b45309" if judged else "#94a3b8"})]
-        + ([html.Span(f" · {len(verdicts) - len(judged)} not tested yet",
-                      style={"color": "#94a3b8"})] if len(verdicts) > len(judged) else []),
-        className="iv-tied",
-        title="a recommendation is grounded when it is dropped once the hazard it "
-              "names is removed",
-        style=line))
+    tiles = [_tile(
+        "recommendations grounded",
+        (f"{tied} of {len(judged)}" if judged else "none tested yet")
+        + (f" · {len(verdicts) - len(judged)} not tested" if len(verdicts) > len(judged) else ""),
+        "#16a34a" if judged and tied == len(judged) else "#b45309" if judged else "#94a3b8",
+        "a recommendation is grounded when it is dropped once the hazard it names "
+        "is removed", "iv-tied"),
+        _tile("declared vs mechanistic",
+              f"{score:.2f} · {reading}" if isinstance(score, (int, float))
+              else "needs a second removed hazard",
+              col,
+              "how far what the model says matters and what its advice depends on agree, "
+              "over the hazards removed so far (1.00 = the same shares). Agreeing with "
+              "itself is not the same as being right.", "iv-score")]
+    if gt_on:
+        v = str(dist.get("verdict"))
+        c = dist.get("coverage") if isinstance(dist.get("coverage"), (list, tuple)) else []
+        tiles.append(_tile(
+            "match with ground truth", f"{dist.get('overlap')} · {v.replace('_', ' ')}",
+            "#7c3aed",
+            (_DIST_MEANS.get(v, "") + (f" · {c[0]} of {c[1]} core hazards removed"
+                                       if len(c) == 2 else "")).strip(" ·"),
+            "iv-gt-line"))
+    rows: list = [html.Div(tiles, className="iv-tiles",
+                           style={"display": "flex", "gap": "8px", "flexWrap": "wrap"})]
+
+    # ── what is still open, and the way to close it
+    left = [str(x) for x in (cmp.get("not_removed") or []) if x]
+    cov: list = [html.Span(f"{cmp.get('tested', 0)} of {cmp.get('declared', 0)} declared "
+                           "hazards removed", style={"color": "#64748b"})]
+    if left and next_id is not None:
+        cov.append(html.Button(f"remove next: {left[0]}", id=next_id(left[0]), n_clicks=0,
+                               className="iv-next",
+                               title="opens a new try with this hazard picked"))
+    rows.append(html.Div(cov, className="iv-coverage",
+                         style={"fontSize": "11px", "margin": "6px 0 2px",
+                                "display": "flex", "alignItems": "center", "gap": "8px"}))
+    if isinstance(syn, dict) and not gt_on:
+        rows.append(html.Div(
+            "ground truth: not available — "
+            + str(syn.get("why") or "no ground truth for this scene"),
+            className="iv-gt-line", style={"fontSize": "10.5px", "color": "#94a3b8"}))
+
     held = [f for f in (fresh or []) if isinstance(f, dict) and f.get("in_original_scene")]
     if held:
         kids: list = [html.Span("new advice after removing a hazard: ", style=lab)]
@@ -585,16 +647,14 @@ def card_component(cmp: dict, tbl: dict, fresh: list[dict], syn: dict | None = N
             kids += [ent_chip(str(f.get("hazard")), "#b45309"),
                      html.Span(f"({f.get('tries')} of {f.get('of')} tries) ",
                                style={"color": "#64748b"})]
-        kids.append(html.Div("in the original scene, and the original advice did not "
-                             "act on it", style={"fontSize": "10.5px", "color": "#94a3b8",
-                                                 "lineHeight": "1.3"}))
-        rows.append(html.Div(kids, className="iv-new-advice", style=line))
+        rows.append(html.Div(
+            kids, className="iv-new-advice", style=line,
+            title="these hazards were in the original scene, and the original advice "
+                  "did not act on them"))
 
     # ── FEATURES: declared beside mechanistic
-    gt_on = isinstance(syn, dict) and bool(syn.get("available"))
     gt_rows: dict[str, dict] = {}
     if gt_on:
-        dist = syn.get("distribution") if isinstance(syn.get("distribution"), dict) else {}
         gt_d = dist.get("gt_dist") if isinstance(dist.get("gt_dist"), dict) else {}
         core = syn.get("gt_core") if isinstance(syn.get("gt_core"), (list, set, tuple)) else []
         gt_rows = {g["object_id"]: g for g in declared4.against_ground_truth(cmp, gt_d, core)}
@@ -604,77 +664,45 @@ def card_component(cmp: dict, tbl: dict, fresh: list[dict], syn: dict | None = N
     feats += [{"object_id": h, "says": 0.0, "does": None, "role": "not declared by the model"}
               for h in gt_rows if h not in known]
     if feats:
-        rows.append(html.Div("FEATURES", style=sec))
-        head = ["", "DECLARED", "MECHANISTIC"] + (["SHOULD MATTER"] if gt_on else []) + [""] \
-            + (["BY GROUND TRUTH"] if gt_on else [])
+        head = ["FEATURE", "DECLARED", "MECHANISTIC"] + (["SHOULD MATTER"] if gt_on else []) \
+            + [""] + (["BY GROUND TRUTH"] if gt_on else [])
+        quiet = {"color": "#94a3b8", "fontSize": "10.5px"}
         body = []
         for r in feats:
             oid, role = str(r.get("object_id")), str(r.get("role") or "")
             tds = [html.Td(ent_chip(oid, "#ef4444"), style=_TD),
                    html.Td(_bar(r.get("says"), "#334155"), style=_TD),
                    html.Td(_bar(r.get("does"), "#16a34a") if r.get("does") is not None
-                           else html.Span("not removed yet", style={"color": "#94a3b8",
-                                                                    "fontSize": "10.5px"}),
-                           style=_TD)]
+                           else html.Span("not removed yet", style=quiet), style=_TD)]
+            g = gt_rows.get(oid) or {}
             if gt_on:
-                g = gt_rows.get(oid) or {}
-                tds.append(html.Td(_bar(g.get("should"), "#7c3aed"), style=_TD))
+                named = bool(g.get("is_core")) or float(g.get("should") or 0) > 0
+                tds.append(html.Td(_bar(g.get("should"), "#7c3aed") if named
+                                   else html.Span("not in ground truth", style=quiet),
+                                   style=_TD))
             tds.append(html.Td("" if role == "not removed yet" else role,
                                className="iv-role", title=_ROLE_MEANS.get(role, ""),
                                style={**_TD, "fontWeight": "700",
                                       "color": _ROLE.get(role, "#64748b")}))
             if gt_on:
-                word = str((gt_rows.get(oid) or {}).get("word") or "")
-                tds.append(html.Td(word, className="iv-gt-word",
+                word = str(g.get("word") or "")
+                short, why = _GT_SHORT.get(word, (word, ""))
+                tds.append(html.Td(short, className="iv-gt-word", title=why,
+                                   **{"data-word": word},
                                    style={**_TD, "fontWeight": "800",
-                                          "color": _GT_COL.get(word, "#b91c1c")}))
+                                          "color": "#16a34a" if short == "core" else
+                                          "#94a3b8" if short == "not removed yet" else "#b91c1c"}))
             body.append(html.Tr(tds, className="iv-feature"))
         rows.append(html.Table(
-            [html.Thead(html.Tr([html.Th(x, style=_TH) for x in head])), html.Tbody(body)],
-            className="iv-features", style={"borderCollapse": "collapse", "width": "100%"}))
-        rows.append(html.Div(
-            "declared: how much the model says it matters, from its own graph of the scene · "
-            "mechanistic: how far the answer eased when it was removed (danger level, "
-            "advice, graph)"
-            + (" · should matter: its weight in the ground truth" if gt_on else ""),
-            style={"fontSize": "10px", "color": "#94a3b8", "margin": "2px 0"}))
-    rows.append(html.Div(
-        [html.Span("declared vs mechanistic agree: ", style=lab),
-         html.Span(f"{score:.2f} · {reading}" if isinstance(score, (int, float))
-                   else "no score yet: remove a second hazard to compare",
-                   className="iv-score",
-                   title="how far the declared shares and the mechanistic shares agree "
-                         "over the hazards removed so far (1.00 = the same)",
-                   style={"fontWeight": "800", "color": col})],
-        style=line))
-    if isinstance(syn, dict):
-        if gt_on:
-            d = syn.get("distribution") if isinstance(syn.get("distribution"), dict) else {}
-            v = str(d.get("verdict"))
-            c = d.get("coverage") if isinstance(d.get("coverage"), (list, tuple)) else []
-            rows.append(html.Div(
-                [html.Span("match with ground truth: ", style=lab),
-                 html.Span(f"{d.get('overlap')} · {v.replace('_', ' ')}",
-                           style={"fontWeight": "800", "color": "#7c3aed"}),
-                 html.Span((" — " + _DIST_MEANS.get(v, "") if _DIST_MEANS.get(v) else "")
-                           + (f" · {c[0]} of {c[1]} core hazards removed" if len(c) == 2 else ""),
-                           style={"color": "#64748b"})],
-                className="iv-gt-line", style=line))
-            gt = syn.get("gt") if isinstance(syn.get("gt"), dict) else {}
-            rows.append(html.Div(
-                f"ground truth: {gt.get('status')} · {gt.get('image_filename')}"
-                + (" (the same picture, matched by its content)"
-                   if gt.get("matched_by") == "content" else "")
-                + " · core: it should matter and the advice depends on it · spurious: "
-                  "the two disagree",
-                className="iv-gt", style={"fontSize": "10px", "color": "#94a3b8"}))
-        else:
-            rows.append(html.Div(
-                "ground truth: not available — "
-                + str(syn.get("why") or "no ground truth for this scene"),
-                className="iv-gt-line", style={**line, "color": "#94a3b8"}))
-    rows.append(html.Div("one ask per try · agreeing with itself is not the same as "
-                         "being right",
+            [html.Thead(html.Tr([html.Th(x, style=_TH, title=_HEAD_TIP.get(x, ""))
+                                 for x in head])), html.Tbody(body)],
+            className="iv-features",
+            style={"borderCollapse": "collapse", "width": "100%", "marginTop": "4px"}))
+    foot = "one ask per try"
+    if gt_on:
+        gt = syn.get("gt") if isinstance(syn.get("gt"), dict) else {}
+        foot += f" · ground truth: {gt.get('status')} · {gt.get('image_filename')}"
+    rows.append(html.Div(foot, className="iv-gt" if gt_on else "iv-foot",
                          style={"fontSize": "10px", "color": "#94a3b8", "marginTop": "4px"}))
     return [html.Div(rows, className="unc-panel iv-card",
                      style={"borderColor": col, "padding": "8px 10px"})]
@@ -682,52 +710,67 @@ def card_component(cmp: dict, tbl: dict, fresh: list[dict], syn: dict | None = N
 
 def _fold(title: str, kids: list, open_: bool = False, cls: str = "") -> Any:
     return html.Details([
-        html.Summary(title, style={"fontSize": "10.5px", "fontWeight": "700",
-                                   "color": "#475569", "cursor": "pointer",
-                                   "marginTop": "6px"}),
+        html.Summary(title, className="iv-fold-head"),
         html.Div(kids, style={"padding": "4px 0 2px 4px"})],
         open=open_, className=("iv-evidence " + cls).strip())
 
 
-def result_component(base_dir: Path | None, runs_dir: Path | None,
-                     active: dict | None = None, with_gt: bool = False) -> list:
-    """Everything shown above the form: the card (the takeaway), then the
-    evidence in folds, said once: each recommendation by removed hazard,
-    each hazard says against does, and the tries. `with_gt` is the "compare
-    with ground truth" switch (calibration only; off in deployment)."""
+def result_parts(base_dir: Path | None, runs_dir: Path | None,
+                 active: dict | None = None, with_gt: bool = False,
+                 next_id: Any = None) -> tuple[list, list]:
+    """(top, bottom). Top: the card (the takeaway) and the running try.
+    Bottom: the proof in folds, said once — each recommendation by removed
+    hazard, then the tries. The "new try" form sits between the two on the
+    page, so the action is next to the card and the proof is under it.
+    `with_gt` is the "compare with ground truth" switch (calibration only;
+    off in deployment)."""
     from agentic import chain4, declared4, grounding4
     tries = load_tries(base_dir)
-    out: list = []
     measured = [t for t in tries if t.get("status") == "measured"
                 and (t.get("summary") or {}).get("fair") is not False
                 and t.get("after_run") and runs_dir]
-    lines = status_component(tries, active)
+    signed: dict[Any, dict] = {}
+    top: list = []
+    bottom: list = []
+    if measured and base_dir:
+        try:
+            before = iv4.result_from_run_dir(base_dir)
+            pairs = [(t, iv4.result_from_run_dir(Path(runs_dir) / str(t["after_run"])))
+                     for t in measured]
+            tbl = grounding4.table(before, pairs)
+            for col, (t, after) in zip(tbl["columns"], pairs):
+                try:
+                    col["chain"] = chain4.direction(before, after)
+                except Exception:
+                    col["chain"] = None         # the table still stands without it
+                col["signed"] = chain4.signed_shift(t.get("signals"), col["chain"])
+                signed[t.get("index")] = col["signed"]
+            cmp = declared4.compare(before, pairs)
+            syn = iv4.synthesis(before, pairs) if with_gt else None
+            top += card_component(cmp, tbl, new_advice(before, tbl), syn, next_id=next_id)
+            n_r, n_c = len(tbl["rows"]), len(tbl["columns"])
+            bottom.append(_fold(
+                f"evidence · {n_r} recommendation{'s' if n_r != 1 else ''} by "
+                f"{n_c} removed hazard{'s' if n_c != 1 else ''}",
+                table_component(tbl, runs_dir), open_=n_c < 2, cls="by-recommendation"))
+        except Exception as exc:                # never lose the try lines to a bad card
+            top.append(html.Div(f"the card could not be built: {exc}",
+                                className="ticket-empty"))
+    lines = status_component(tries, active, signed)
     running = [x for x in lines if "iv-active" in str(getattr(x, "className", ""))]
-    if not (measured and base_dir):
-        return lines
-    try:
-        before = iv4.result_from_run_dir(base_dir)
-        pairs = [(t, iv4.result_from_run_dir(Path(runs_dir) / str(t["after_run"])))
-                 for t in measured]
-        tbl = grounding4.table(before, pairs)
-        for col, (t, after) in zip(tbl["columns"], pairs):
-            try:
-                col["chain"] = chain4.direction(before, after)
-            except Exception:
-                col["chain"] = None             # the table still stands without it
-            col["signed"] = chain4.signed_shift(t.get("signals"), col["chain"])
-        cmp = declared4.compare(before, pairs)
-        syn = iv4.synthesis(before, pairs) if with_gt else None
-        out += card_component(cmp, tbl, new_advice(before, tbl), syn)
-        out.append(_fold("evidence: each recommendation, by removed hazard",
-                         table_component(tbl, runs_dir),
-                         open_=len(tbl["columns"]) < 2, cls="by-recommendation"))
-    except Exception as exc:                    # never lose the try lines to a bad card
-        out.append(html.Div(f"the card could not be built: {exc}",
-                            className="ticket-empty"))
-    out.append(_fold("the tries, one line each",
-                     [x for x in lines if x not in running], cls="tries"))
-    return out + running
+    rest = [x for x in lines if x not in running]
+    if measured and base_dir:
+        n = len(tries)
+        bottom.append(_fold(f"the tries · {n}", rest, cls="tries"))
+        return top + running, bottom
+    return rest + running, []
+
+
+def result_component(base_dir: Path | None, runs_dir: Path | None,
+                     active: dict | None = None, with_gt: bool = False) -> list:
+    """The card and its proof as one list (top then bottom)."""
+    top, bottom = result_parts(base_dir, runs_dir, active, with_gt)
+    return top + bottom
 
 
 def scene_summary(base_dir: Path | None, runs_dir: Path | None) -> dict | None:
@@ -786,32 +829,44 @@ def summary_line(sm: Any) -> str:
                if sm.get("provisional") else ""))
 
 
-def try_line(t: dict) -> str:
-    """One plain sentence for a saved try."""
+def try_line(t: dict, signed: dict | None = None) -> str:
+    """One plain sentence for a saved try. With `signed` (the signed shift
+    worked out for the table) it gives that reading; the frozen arm's own
+    shift is not shown (C_tanker ui_22840b13 try 3 read "MOVED (shift 0.56)"
+    here and "+0.18 eased" in the table)."""
     head = f"#{t.get('index', '?')} removed {t.get('target')} ({MODALITY_LABEL.get(str(t.get('modality')), t.get('modality'))})"
     if t.get("status") != "measured":
         return f"{head}: not measured — {t.get('why') or 'unknown reason'}"
     s = t.get("summary") or {}
     if s.get("fair") is False:
         return f"{head}: not a fair test — the input was not changed"
+    lvl = s.get("level_delta")
+    lvl_txt = f" · danger level {lvl:+d}" if isinstance(lvl, int) and lvl else ""
+    sg = signed if isinstance(signed, dict) else t.get("signed_shift")
+    if isinstance(sg, dict) and isinstance(sg.get("value"), (int, float)):
+        return f"{head}: {sg.get('direction')}, {sg['value']:+.2f}{lvl_txt}"
     if s.get("moved") is None:
         return f"{head}: could not be judged"
-    shift = s.get("content_shift")
-    shift_txt = f" (shift {shift:.2f})" if isinstance(shift, (int, float)) else ""
-    lvl = s.get("level_delta")
-    lvl_txt = f", danger level {lvl:+d}" if isinstance(lvl, int) and lvl else ""
-    return (f"{head}: the advice " + ("MOVED" if s["moved"] else "did NOT move")
-            + shift_txt + lvl_txt)
+    return f"{head}: the advice " + ("moved" if s["moved"] else "did not move") + lvl_txt
 
 
-def status_component(tries: list[dict], active: dict | None) -> list:
-    """The tries so far, newest last, and the running one."""
+def status_component(tries: list[dict], active: dict | None,
+                     signed: dict | None = None) -> list:
+    """The tries so far, newest last, and the running one. `signed` maps a
+    try's index to its signed shift."""
     out: list = []
     for t in tries or []:
-        s = t.get("summary") or {}
-        moved = s.get("moved") if t.get("status") == "measured" else None
-        col = "#16a34a" if moved else "#b91c1c" if moved is False else "#64748b"
-        out.append(html.Div(try_line(t), className="iv-try",
+        sg = (signed or {}).get(t.get("index")) or t.get("signed_shift")
+        word = sg.get("direction") if isinstance(sg, dict) else None
+        if t.get("status") != "measured":
+            col = "#64748b"
+        elif word:
+            col = _DIR_COL.get(str(word), "#64748b")
+        else:
+            moved = (t.get("summary") or {}).get("moved")
+            col = "#16a34a" if moved else "#b91c1c" if moved is False else "#64748b"
+        out.append(html.Div(try_line(t, sg if isinstance(sg, dict) else None),
+                            className="iv-try",
                             title=f"before {t.get('before_run')} · after {t.get('after_run')}",
                             style={"fontSize": "11.5px", "color": col,
                                    "fontWeight": "600", "margin": "2px 0"}))
