@@ -6368,6 +6368,14 @@ app.layout = html.Div([
                       html.Div([
                           # results first; the form is folded under them
                           html.Div(id="iv-status"),
+                          # calibration only: a deployment has no ground truth,
+                          # so the card never needs it (Sunny, 2026-11-16)
+                          dcc.Checklist(
+                              id="iv-gt", value=[],
+                              options=[{"label": " compare with ground truth (calibration)",
+                                        "value": "gt"}],
+                              className="ctl-toggle",
+                              style={"fontSize": "10.5px", "marginTop": "6px"}),
                           html.Details([
                               html.Summary("new try", className="iv-new-try"),
                               html.Div(id="iv-note", className="iv-note"),
@@ -6711,8 +6719,8 @@ def iv_poll(base_name: str) -> dict | None:
 
 @app.callback(Output("iv-status", "children"), Output("iv-key", "data"),
               Input("tick", "n_intervals"), Input("run-id", "data"),
-              State("iv-key", "data"))
-def iv_status(_n, run_id, key):
+              Input("iv-gt", "value"), State("iv-key", "data"))
+def iv_status(_n, run_id, gt=None, key=None):
     """The tries saved on the run on screen, and the running one."""
     from agentic import ui_intervene
     d = _iv_base_dir(run_id)
@@ -6727,10 +6735,11 @@ def iv_status(_n, run_id, key):
                    for p in IV_ACTIVE.values()}
         ui_intervene.adopt_orphans(d, UI_RUNS_DIR, running)
     tries = ui_intervene.load_tries(d)
-    new_key = f"{d.name}|{len(tries)}|{(active or {}).get('progress')}"
+    with_gt = "gt" in (gt or [])
+    new_key = f"{d.name}|{len(tries)}|{(active or {}).get('progress')}|{with_gt}"
     if new_key == key:
         return dash.no_update, dash.no_update
-    return ui_intervene.result_component(d, UI_RUNS_DIR, active), new_key
+    return ui_intervene.result_component(d, UI_RUNS_DIR, active, with_gt=with_gt), new_key
 
 
 def scenes_component(runs_dir: Path | None = None) -> list[Any]:

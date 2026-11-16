@@ -564,3 +564,36 @@ A dispatch line that made the model drop a hazard reads `Dropped house_2
 when told "only one crew" (1 of 5).` C reads: "Do not rely on this advice.
 Misses: brush_1, tanker_truck_1. Rests on the right hazards, wrong
 emphasis." The detail stays on the cards below.
+
+## 20. The causal-groundedness card: declared against mechanistic (2026-11-16)
+
+Sunny: a card like the trust card for the intervention result, updated
+with every try; no redundancy with the panel; "frozen arm off
+everywhere"; no ground truth in deployment, so ground truth is a switch;
+"we will show declarative vs mechanistic. That should be the focus."
+
+- `agentic/declared4.py`: DECLARED = the model's own graph of the scene,
+  each hazard worth the arrows leaving it, weighed by chain. MECHANISTIC =
+  the signed shift when the hazard is removed. Score = the shared part of
+  the two shares over the hazards removed so far; none until two are
+  removed; provisional until every declared hazard is removed. Readings
+  per hazard: matches, said more than done, done more than said, more
+  alarmed when removed, not removed yet. No ground truth anywhere in it.
+- The card (`ui_intervene.card_component`): score and reading, coverage,
+  says/does most, depends least on, advice tied to the hazard it names,
+  new advice that only appeared after a hazard was removed (only for a
+  hazard that was in the original scene and not acted on), not removed
+  yet. The old "scene" and "distribution" lines are gone.
+- The proof sits in folds, said once: each recommendation by removed
+  hazard (open while there is one try), each hazard says against does,
+  the tries.
+- "compare with ground truth (calibration)" switch, off by default: adds
+  one card line and two columns in the hazard evidence.
+- The frozen arm's own reading of a try is drawn nowhere; it stays in the
+  saved data. The labels under the switch are still worked out by the
+  frozen code from our signed shift.
+- Headline and the run's chain read the same summary (no ground truth).
+
+C_tanker ui_22840b13: 0.95, does what it says, 3 of 5 declared hazards
+removed (brush_1 and smoke_1 not yet). The model is consistent with
+itself; the wrong emphasis shows only against ground truth (0.62).

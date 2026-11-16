@@ -291,7 +291,7 @@ def test_the_tick_reports_progress_then_measures_and_saves_when_the_run_ends(pag
     # the after run ends: its saved files appear, the run is marked done
     _after_dir(page["tmp"])
     ui.RUNS["after"]["done"] = True
-    kids, key2 = ui.iv_status(1, "base", key)
+    kids, key2 = ui.iv_status(1, "base", [], key)
     assert key2 != key and "the advice MOVED" in _flat(kids)
     assert ui.IV_ACTIVE == {}
     (saved,) = ui_iv.load_tries(page["base"])
@@ -299,7 +299,10 @@ def test_the_tick_reports_progress_then_measures_and_saves_when_the_run_ends(pag
     assert saved["settings"]["env"] is False and saved["edited_caption"].startswith("a tanker")
     # nothing changed on the next tick: nothing is redrawn
     import dash
-    assert ui.iv_status(2, "base", key2) == (dash.no_update, dash.no_update)
+    assert ui.iv_status(2, "base", [], key2) == (dash.no_update, dash.no_update)
+    # flipping the ground-truth switch redraws
+    kids, key3 = ui.iv_status(3, "base", ["gt"], key2)
+    assert key3 != key2 and kids is not dash.no_update
 
 
 def test_an_after_run_that_fails_is_saved_as_a_failed_try(page):
@@ -627,7 +630,8 @@ def test_with_verified_ground_truth_a_try_gets_its_frozen_cell_and_labels(gt):
     json.dumps(syn)                                      # plain data, saveable
 
 
-def test_without_verified_ground_truth_the_frozen_labels_are_not_shown(gt):
+
+def test_without_verified_ground_truth_the_ground_truth_labels_are_not_given(gt):
     from agentic import intervention4 as iv4
     base, after = _run_dir(gt["tmp"]), _after_dir(gt["tmp"])
     pairs = [({"index": 1, "target": "fire_1", "modality": "both", "caption_changed": True,
@@ -638,28 +642,32 @@ def test_without_verified_ground_truth_the_frozen_labels_are_not_shown(gt):
     (gt["candidates"] / "push_09.jpg.gt.json").write_text(json.dumps(GT_FILE))
     syn = iv4.synthesis(iv4.result_from_run_dir(base), pairs)
     assert syn["available"] is False and "proposed, not verified" in syn["why"]
-    assert "not shown" in _flat(ui_iv.synthesis_component(syn))
     for bad in (None, "x", {}, {"gt": "y"}):
         assert iv4.synthesis(bad, [])["available"] is False
-        assert "not shown" in _flat(ui_iv.synthesis_component(bad))
 
 
-def test_the_result_shows_core_and_spurious_under_the_table(gt):
+
+def test_ground_truth_shows_only_when_the_switch_is_on(gt):
+    """Sunny, 2026-11-16: "there is no ground truth in deployment ... make it
+    a switch". Off is the default and the card never needs it."""
     (gt["verified"] / "push_09.jpg.gt.json").write_text(json.dumps(GT_FILE))
     base, after = _run_dir(gt["tmp"]), _after_dir(gt["tmp"])
     ui_iv.save_try(base, ui_iv.finish_try(base, after, PENDING))
-    comp = ui_iv.result_component(base, gt["tmp"])
-    text = _flat(comp)
-    for word in ("ground truth: verified · push_09.jpg", "matched by its content",
-                 "EACH HAZARD · CORE AND SPURIOUS", "SHOULD MATTER", "DOES MATTER",
-                 "the scene:", "the distribution:", "overlap"):
+    off = _flat(ui_iv.result_component(base, gt["tmp"]))
+    assert "ground truth" not in off and "SHOULD" not in off
+    on = ui_iv.result_component(base, gt["tmp"], with_gt=True)
+    text = _flat(on)
+    for word in ("against ground truth:", "SHOULD (GROUND TRUTH)", "AGAINST GROUND TRUTH",
+                 "ground truth: verified · push_09.jpg", "matched by its content"):
         assert word in text, word
-    rows = _by_class(comp, "iv-hazard")
-    assert len(rows) == 2
-    status = {_flat(r).split()[0]: _flat(_by_class(r, "iv-hazard-status")) for r in rows}
-    assert status["fire_1"] == "grounded" and status["tanker_1"] == "untested"
-    # the table above it is still there
-    assert len(_by_class(comp, "iv-table")) == 1
+    assert len(_by_class(on, "iv-gt-line")) == 1
+    status = {_flat(r).split()[0]: _flat(_by_class(r, "iv-hazard-status"))
+              for r in _by_class(on, "iv-hazard")}
+    assert status["fire_1"].startswith("grounded")
+    # switch on, but this scene has no ground truth: the card says so
+    (gt["verified"] / "push_09.jpg.gt.json").unlink()
+    text = _flat(ui_iv.result_component(base, gt["tmp"], with_gt=True))
+    assert "against ground truth: not available" in text
 
 
 # ── direction by chain (Sunny, 2026-11-13: "weigh them based on what the
@@ -751,14 +759,15 @@ def test_loops_repeats_and_bad_graphs_never_break_the_chain():
     assert c.links_of(None) == {}
 
 
-def test_the_table_shows_direction_by_chain_next_to_the_frozen_count(tmp_path):
+
+def test_the_table_shows_direction_by_chain(tmp_path):
     base, after = _run_dir(tmp_path), _after_dir(tmp_path)
     one = ui_iv.finish_try(base, after, PENDING)
-    assert one["chain"]["direction"] == "eased" and one["chain"]["frozen_count"]["direction"]
+    assert one["chain"]["direction"] == "eased"
     ui_iv.save_try(base, one)
     comp = ui_iv.result_component(base, tmp_path)
     text = _flat(comp)
-    assert "danger in the advice" in text and "by chain:" in text and "frozen count:" in text
+    assert "danger in the advice" in text and "by chain:" in text
     (cell,) = _by_class(comp, "iv-chain")
     assert "eased" in _flat(cell) and "before:" in cell.title and "after:" in cell.title
     # the hover names the chain of an arrow that has one
@@ -770,11 +779,7 @@ def test_the_table_shows_direction_by_chain_next_to_the_frozen_count(tmp_path):
                                  "frozen_count": {"before": 7.5, "after": 9.0,
                                                   "direction": "escalated"}})
     assert "chain: tanker_1 → spill_1 → man_1" in cell[0].title
-    assert "frozen count: 7.5 → 9.0 · escalated (differs)" in _flat(cell)
-    same = ui_iv.direction_cell({"before": 5, "after": 3, "direction": "eased",
-                                 "frozen_count": {"before": 4, "after": 2,
-                                                  "direction": "de-escalated"}})
-    assert "(differs)" not in _flat(same)
+    assert len(cell) == 1                                # one line: ours
     for bad in (None, "x", {}, {"direction": None, "before_arrows": "y", "frozen_count": 3}):
         ui_iv.direction_cell(bad)                    # never raises
 
@@ -824,7 +829,8 @@ def test_signed_shift_grows_when_the_signals_say_so_and_zero_means_unchanged():
         assert s["value"] == 0.0 and s["direction"] == "unchanged" and len(s["parts"]) == 3
 
 
-def test_the_table_shows_the_signed_shift_next_to_the_frozen_number(tmp_path):
+
+def test_the_table_shows_the_signed_shift(tmp_path):
     base, after = _run_dir(tmp_path), _after_dir(tmp_path)
     one = ui_iv.finish_try(base, after, PENDING)
     assert one["signed_shift"]["direction"] == "eased" and one["signed_shift"]["value"] > 0
@@ -836,8 +842,7 @@ def test_the_table_shows_the_signed_shift_next_to_the_frozen_number(tmp_path):
     assert "equal weights" in cell.title
     from agentic import chain4 as c
     cell = ui_iv.signed_cell(c.signed_shift(SPILL, {"direction": "eased"}))
-    assert _flat(cell[0]) == "+0.64 · eased"
-    assert "frozen: -0.64 · escalated (differs)" in _flat(cell)
+    assert _flat(cell) == "+0.64 · eased" and len(cell) == 1
     assert "graph: +0.71 (by chain)" in cell[0].title
     for bad in (None, "x", {}, {"value": None, "parts": [None], "frozen": 3}):
         ui_iv.signed_cell(bad)                       # never raises
@@ -846,24 +851,21 @@ def test_the_table_shows_the_signed_shift_next_to_the_frozen_number(tmp_path):
 # ── one reading on the whole screen (Sunny, 2026-11-13: the table said
 #    "eased" and the hazard list said "escalated" for the same try) ───────
 
-def test_the_hazard_list_uses_the_signed_reading_and_names_the_frozen_label(gt, monkeypatch):
-    from agentic import chain4, intervention4 as iv4
+
+def test_the_frozen_arms_own_result_is_shown_nowhere(gt, monkeypatch):
+    """Sunny, 2026-11-16: "I don't want the frozen arm result to show up ...
+    frozen arm off everywhere". The labels under the ground-truth switch are
+    still worked out by the frozen CODE, from our signed shift; the frozen
+    arm's own reading of a try is kept in the data and never drawn."""
+    from agentic import intervention4 as iv4
     (gt["verified"] / "push_09.jpg.gt.json").write_text(json.dumps(GT_FILE))
     base, after = _run_dir(gt["tmp"]), _after_dir(gt["tmp"])
     ui_iv.save_try(base, ui_iv.finish_try(base, after, PENDING))
     pairs = [(ui_iv.load_tries(base)[0], iv4.result_from_run_dir(after))]
     before = iv4.result_from_run_dir(base)
-    # as measured, both readings agree on this try
-    syn = iv4.synthesis(before, pairs)
-    assert syn["tries"][0]["cell"] == syn["tries"][0]["frozen_cell"] == "grounded"
-    assert syn["frozen"]["hazards"]["fire_1"] == "grounded"
-    assert "(differs)" not in _flat(ui_iv.synthesis_component(syn))
-
-    # now a try the frozen arm reads as escalated (its graph count rose)
-    # while every signal, read by itself, eased
     real = iv4.measure
 
-    def escalated_by_count(*a, **k):
+    def escalated_by_count(*a, **k):                     # the frozen arm would say "escalated"
         res = real(*a, **k)
         res["signals"] = {**res["signals"], "graph_direction": "escalated"}
         res["verdict"] = iv4._frozen().adjudicate_groundedness(
@@ -872,18 +874,15 @@ def test_the_hazard_list_uses_the_signed_reading_and_names_the_frozen_label(gt, 
     monkeypatch.setattr(iv4, "measure", escalated_by_count)
     syn = iv4.synthesis(before, pairs)
     (one,) = syn["tries"]
-    assert one["frozen_cell"] == "escalated" and one["cell"] == "grounded"
-    by = {h["object_id"]: h for h in syn["hazards"]}
-    assert by["fire_1"]["status"] == "grounded" and by["fire_1"]["operative"] > 0
-    assert syn["frozen"]["hazards"]["fire_1"] == "escalated"
-    comp = ui_iv.synthesis_component(syn)
-    row = next(r for r in _by_class(comp, "iv-hazard") if _flat(r).startswith("fire_1"))
-    assert "grounded" in _flat(row) and "frozen: escalated (differs)" in _flat(row)
-    assert "the same reading as the table above" in _flat(comp)
-    # the size handed to the frozen code is the signed shift, not its own number
-    sg = chain4.signed_shift(real(before, pairs[0][1], "fire_1")["signals"],
-                             chain4.direction(before, pairs[0][1]))
-    assert by["fire_1"]["operative"] == pytest.approx(abs(sg["value"]), abs=0.001)
+    assert one["frozen_cell"] == "escalated" and one["cell"] == "grounded"   # kept as data
+    for with_gt in (False, True):
+        text = _flat(ui_iv.result_component(base, gt["tmp"], with_gt=with_gt))
+        for word in ("frozen", "(differs)", "escalated"):
+            assert word not in text, (word, with_gt)
+    from agentic import ui_clean
+    import inspect
+    assert "frozen:" not in inspect.getsource(ui_iv.signed_cell)
+    assert "frozen count" not in inspect.getsource(ui_iv.direction_cell)
 
 
 # ── cell wording (Sunny, 2026-11-13: "gone or stays or changed ... it's a
@@ -943,6 +942,7 @@ GT_SPLIT = {"image_filename": "push_09.jpg", "caption": "c",
                        "via_state": "spreading"}]}
 
 
+
 def test_ground_truth_hazards_are_weighed_by_consequence_not_by_arrow_count(gt):
     from agentic import intervention4 as iv4
     assert iv4.CORE_BASIS == "consequence"
@@ -960,10 +960,6 @@ def test_ground_truth_hazards_are_weighed_by_consequence_not_by_arrow_count(gt):
     assert d["tanker_1"] > d["fire_1"]                    # the one that reaches the man
     by_count = iv4.synthesis(before, pairs, core_basis="edge")["distribution"]["gt_dist"]
     assert by_count["tanker_1"] == pytest.approx(by_count["fire_1"])
-    text = _flat(ui_iv.synthesis_component(ours))
-    assert "should matter: by consequence" in text and "double when it reaches a person" in text
-    assert "should matter: by arrow count" in _flat(ui_iv.synthesis_component(
-        iv4.synthesis(before, pairs, core_basis="edge")))
 
 
 # ── one message on the page (Sunny's screenshots, 2026-11-13): the trust
@@ -1026,40 +1022,44 @@ def test_the_tries_reach_the_headline_and_the_runs_chain(gt, monkeypatch):
     # before any try: the chain says so, the headline says nothing about tries
     card = ui.findings_component(d, mode="clean", record_name="ui_base")
     assert "not tested yet: remove a hazard under CAUSAL GROUNDEDNESS" in _flat(card)
-    assert "Rests" not in _flat(card[0])
+    assert "removed so far" not in _flat(card[0])
     ui_iv.save_try(base, ui_iv.finish_try(base, after, PENDING))
     sm = ui_iv.scene_summary(base, gt["tmp"])
-    assert sm["n"] == 1 and sm["targets"] == ["fire_1"] and sm["available"] is True
+    assert sm["n"] == 1 and sm["targets"] == ["fire_1"] and "score" in sm
     d = ui.derive(_events(RECORD, [], {**S4, "pathology": {"tickets": []}}))
     card = ui.findings_component(d, mode="clean", record_name="ui_base")
     text = _flat(card)
-    assert "Rests on" in _flat(card[0]) or "Partly tested" in _flat(card[0])   # the headline
-    assert "1 hazard removed (fire_1) · the scene:" in text          # in the chain
+    assert "1 hazard removed so far." in _flat(card[0])              # in the headline
+    assert "1 hazard removed (fire_1) · no score yet" in text        # in the chain
     assert "not yet ported" not in text and "placeholder" not in text
     # a run opened without its folder (an example record) just has no summary
     card = ui.findings_component(ui.derive(_events(RECORD, [], S4)), mode="clean")
-    assert "Rests" not in _flat(card[0]) and "Partly tested" not in _flat(card[0])
+    assert "removed so far" not in _flat(card[0])
+
 
 
 def test_the_summary_sentences_cover_every_outcome():
     s, line = ui_iv.summary_sentence, ui_iv.summary_line
     assert s(None) == "" and s({}) == "" and s({"n": 0}) == ""
     assert "not tested yet" in line(None)
-    base = {"n": 3, "targets": ["fire_1", "spill_1", "tanker_1"], "available": True}
-    assert s({**base, "cell": "grounded", "distribution": "misproportioned"}) == (
-        "Rests on the right hazards, wrong emphasis.")
-    assert s({**base, "cell": "grounded", "distribution": "grounded"}) == (
-        "Rests on the right hazards.")
-    assert s({**base, "cell": "masquerade"}) == "Does not rest on the hazard that matters most."
-    assert s({**base, "cell": "spurious_grounding"}) == "Rests mostly on a wrong hazard."
-    assert s({**base, "cell": "pending"}) == "Partly tested: not every core hazard removed yet."
-    assert s({"n": 2, "available": False}) == "2 hazards removed; see the table."
-    assert line({**base, "cell": "grounded", "distribution": "misproportioned",
-                 "overlap": 0.623}) == (
-        "3 hazards removed (fire_1, spill_1, tanker_1) · the scene: grounded · "
-        "the distribution: misproportioned (overlap 0.623)")
-    assert "needs ground truth" in line({"n": 1, "targets": ["x"], "available": False})
+    base = {"n": 3, "targets": ["fire_1", "spill_1", "tanker_1"], "score": 0.954,
+            "tested": 3, "declared": 5, "provisional": True}
+    assert s({**base, "reading": "does what it says"}) == (
+        "Advice depends on what it says matters (3 of 5 hazards removed).")
+    assert s({**base, "reading": "does what it says", "provisional": False}) == (
+        "Advice depends on what it says matters.")
+    assert s({**base, "reading": "partly does what it says"}).startswith(
+        "Advice partly depends on what it says matters")
+    assert s({**base, "reading": "does not do what it says"}).startswith(
+        "Advice does not depend on what it says matters")
+    assert s({"n": 1, "reading": "", "score": None}) == "1 hazard removed so far."
+    assert line({**base, "reading": "does what it says"}) == (
+        "3 hazards removed (fire_1, spill_1, tanker_1) · declared vs mechanistic: 0.95, "
+        "does what it says · 3 of 5 declared hazards removed")
+    assert "no score yet" in line({"n": 1, "targets": ["x"], "score": None})
     assert ui_iv.scene_summary(None, None) is None
+    for text in (s({**base, "reading": "does what it says"}), line(base)):
+        assert "ground truth" not in text                # the deployment wording
 
 
 def test_the_chain_reading_is_grey_and_the_signed_shift_carries_the_colour():
@@ -1070,3 +1070,177 @@ def test_the_chain_reading_is_grey_and_the_signed_shift_carries_the_colour():
     from agentic import chain4 as c
     signed = ui_iv.signed_cell(c.signed_shift(SPILL, {"direction": "eased"}))
     assert signed[0].style["color"] == "#16a34a"
+
+
+# ── declared against mechanistic (Sunny, 2026-11-16: "we will show
+#    declarative vs mechanistic. That should be the focus") ───────────────
+
+def _belief(objs, belief, advice=()):
+    return {"detected_objects": [{"object_id": o, "label": o.rsplit("_", 1)[0], "state": "s"}
+                                 for o in objs],
+            "recommendations": [], "causal_graph": _g(advice), "graph_b": _g(belief)}
+
+
+D_OBJS = ["fire_1", "spill_1", "tanker_1", "brush_1", "man_1", "grass_1"]
+D_BEFORE = _belief(D_OBJS, [("fire_1", "may_harm", "man_1"),          # 2 x 2 = 4
+                            ("fire_1", "may_spread_to", "grass_1"),   # 1.5
+                            ("spill_1", "may_harm", "man_1"),         # 4
+                            ("tanker_1", "increases_risk_to", "spill_1"),   # chain -> man: 3
+                            ("brush_1", "may_spread_to", "grass_1"),  # 1.5
+                            ("man_1", "blocks_access_to", "grass_1")])      # a life: no hazard
+
+
+def _try(target, value):
+    """A saved try whose signed shift is `value` (level, advice, graph agree)."""
+    way = "de-escalated" if value > 0 else "escalated" if value < 0 else "unchanged"
+    return ({"target": target, "signals": {
+        "hazard_shift": abs(value), "graph_shift": abs(value),
+        "recommendation_shift": abs(value), "content_shift": abs(value),
+        "hazard_level_delta": -1 if value > 0 else 1 if value < 0 else 0,
+        "rec_direction": way, "graph_direction": way}}, _AFTER[way])
+
+
+_AFTER = {"de-escalated": _belief(D_OBJS, [], []),
+          "escalated": _belief(D_OBJS, [], [("fire_1", "may_harm", "man_1")]),
+          "unchanged": _belief(D_OBJS, [], [])}
+
+
+def test_declared_is_the_models_own_graph_weighed_by_chain():
+    from agentic import declared4 as d
+    assert d.declared(D_BEFORE) == {"fire_1": 5.5, "spill_1": 4.0, "tanker_1": 3.0,
+                                    "brush_1": 1.5}
+    assert "man_1" not in d.declared(D_BEFORE)            # a person is not a hazard
+    for bad in (None, "x", {}, {"graph_b": "g"}, {"graph_b": {"edges": [None, {"source": "a"}]}}):
+        assert d.declared(bad) == {}
+
+
+def test_the_comparison_needs_no_ground_truth_and_grows_with_each_try():
+    from agentic import declared4 as d
+    none = d.compare(D_BEFORE, [])
+    assert none["score"] is None and none["reading"] == "" and none["tested"] == 0
+    assert none["declared"] == 4 and none["provisional"] is True
+    assert none["says_most"] == "fire_1" and none["does_most"] is None
+    assert [r["reading"] for r in none["hazards"]] == [d.UNTESTED] * 4
+    # one hazard removed: it is all of both sides, so there is nothing to score yet
+    one = d.compare(D_BEFORE, [_try("fire_1", 0.7)])
+    assert one["score"] is None and one["tested"] == 1 and one["does_most"] == "fire_1"
+    # two removed, in the proportion it declared (5.5 : 4): it does what it says
+    two = d.compare(D_BEFORE, [_try("fire_1", 0.55), _try("spill_1", 0.40)])
+    assert two["score"] == pytest.approx(1.0, abs=0.01) and two["reading"] == "does what it says"
+    assert two["provisional"] is True and two["tested"] == 2
+    assert two["not_removed"] == ["tanker_1", "brush_1"]
+    assert two["said_more"] == [] and two["done_more"] == []
+    import inspect
+    src = inspect.getsource(d)
+    assert "gt_dir" not in src and "synthesis(" not in src          # nobody's answer key
+
+
+def test_said_more_done_more_and_more_alarmed_are_named():
+    from agentic import declared4 as d
+    # says fire most (5.5 of 9.5), yet the advice depends almost only on the spill
+    c = d.compare(D_BEFORE, [_try("fire_1", 0.05), _try("spill_1", 0.90)])
+    assert c["said_more"] == ["fire_1"] and c["done_more"] == ["spill_1"]
+    assert c["reading"] == "does not do what it says" and c["score"] < 0.6
+    assert c["says_most"] == "fire_1" and c["does_most"] == "spill_1"
+    assert c["does_least"] == "fire_1"
+    by = {r["object_id"]: r for r in c["hazards"]}
+    assert by["fire_1"]["reading"] == d.SAID_MORE and by["spill_1"]["reading"] == d.DONE_MORE
+    # removing it made the answer MORE alarmed: it counts as depending on it not at all
+    c = d.compare(D_BEFORE, [_try("fire_1", -0.5), _try("spill_1", 0.6)])
+    assert c["alarmed"] == ["fire_1"]
+    assert {r["object_id"]: r["does"] for r in c["hazards"]}["fire_1"] == 0.0
+    # every declared hazard removed: no longer provisional
+    full = d.compare(D_BEFORE, [_try(h, 0.3) for h in ("fire_1", "spill_1", "tanker_1",
+                                                       "brush_1")])
+    assert full["provisional"] is False and full["tested"] == full["declared"] == 4
+    # a hazard removed twice counts once; a removed thing it never declared is listed
+    twice = d.compare(D_BEFORE, [_try("fire_1", 0.2), _try("fire_1", 0.6),
+                                 _try("smoke_9", 0.4)])
+    # (the fixture's graphs are empty, so the graph third of the signed shift
+    # adds nothing: 0.6 on level and advice averages to 0.4)
+    assert d.mechanistic(D_BEFORE, [_try("fire_1", 0.2), _try("fire_1", 0.6)]) == {"fire_1": 0.4}
+    assert twice["removed"] == 2 and twice["tested"] == 1
+    for bad in (None, "x", {}):
+        assert d.compare(bad, [(None, bad), ("x", None)])["score"] is None
+
+
+def test_the_card_leads_with_declared_against_mechanistic_and_stays_brief(tmp_path):
+    base, after = _run_dir(tmp_path), _after_dir(tmp_path)
+    assert _by_class(ui_iv.result_component(base, tmp_path), "iv-card") == []    # no try yet
+    ui_iv.save_try(base, ui_iv.finish_try(base, after, PENDING))
+    comp = ui_iv.result_component(base, tmp_path)
+    (card,) = _by_class(comp, "iv-card")
+    assert comp[0] is card                               # the card comes first
+    text = _flat(card)
+    assert text.startswith("DECLARED vs MECHANISTIC")
+    assert "no score yet: remove a second hazard to compare" in text
+    assert "advice tied to the hazard it names: 1 of 1" in text and "1 not tested yet" in text
+    assert "one ask per try" in text and "agreeing with itself is not the same as being right" in text
+    assert "ground truth" not in text and "grounded" not in text      # plain words only
+    # the proof is in folds, said once; the first is open while there is one try
+    folds = _by_class(comp, "iv-evidence")
+    assert [_flat(f.children[0]) for f in folds] == [
+        "evidence: each recommendation, by removed hazard",
+        "evidence: each hazard, says against does", "the tries, one line each"]
+    assert folds[0].open is True and not folds[1].open and not folds[2].open
+    assert len(_by_class(folds[0], "iv-table")) == 1 and len(_by_class(card, "iv-table")) == 0
+    # the scene and distribution lines of the old layout are gone
+    assert "the scene:" not in _flat(comp) and "the distribution:" not in _flat(comp)
+    # a second try folds the table away and the card carries the result
+    ui_iv.save_try(base, ui_iv.finish_try(base, base, {**PENDING, "target": "tanker_1"}))
+    comp = ui_iv.result_component(base, tmp_path)
+    assert not _by_class(comp, "by-recommendation")[0].open
+    assert "advice tied to the hazard it names" in _flat(_by_class(comp, "iv-card")[0])
+
+
+def test_the_card_names_advice_that_only_appeared_after_a_hazard_was_removed():
+    from agentic import grounding4 as g
+    before = _res(["fire_1", "spill_1", "brush_1", "man_1"],
+                  [_rec(1, "fire_1", ["man_1"]), _rec(2, "spill_1", ["man_1"])],
+                  threats=["fire_1", "spill_1", "brush_1"])
+    a1 = _res(["spill_1", "brush_1", "man_1"],
+              [_rec(1, "spill_1", ["man_1"]), _rec(2, "brush_1", ["man_1"], "Cut a firebreak."),
+               _rec(3, "spill_1", ["brush_1"], "Boom the spill.", effect="may_spread_to")])
+    a2 = _res(["fire_1", "brush_1", "man_1", "gas_1"],
+              [_rec(1, "fire_1", ["man_1"]), _rec(2, "brush_1", ["man_1"], "Cut a firebreak."),
+               _rec(3, "gas_1", ["man_1"], "Vent the gas.")])
+    tbl = g.table(before, [({"index": 1, "target": "fire_1"}, a1),
+                           ({"index": 2, "target": "spill_1"}, a2)])
+    fresh = {f["hazard"]: f for f in ui_iv.new_advice(before, tbl)}
+    assert fresh["brush_1"] == {"hazard": "brush_1", "tries": 2, "of": 2,
+                                "in_original_scene": True}
+    assert fresh["spill_1"]["in_original_scene"] is False     # the original already acted on it
+    assert fresh["gas_1"]["in_original_scene"] is False       # not in the original scene at all
+    card = ui_iv.card_component({"hazards": []}, tbl, list(fresh.values()))
+    (line,) = _by_class(card, "iv-new-advice")
+    text = _flat(line)
+    assert text.startswith("new advice after removing a hazard: brush_1 (2 of 2 tries)")
+    assert "in the original scene, and the original advice did not act on it" in text
+    assert "spill_1" not in text and "gas_1" not in text      # those stay in the evidence
+    assert "kept appearing" not in _flat(card)
+    assert ui_iv.new_advice({}, {}) == [] and ui_iv.new_advice(before, {"columns": [None]}) == []
+    for bad in (None, "x", {}, {"hazards": "y", "score": "z"}):
+        ui_iv.card_component(bad, {}, [None, "x"])            # never raises
+        ui_iv.hazards_component(bad)
+
+
+def test_the_headline_and_the_chain_speak_declared_against_mechanistic(tmp_path, monkeypatch):
+    monkeypatch.setattr(ui, "UI_RUNS_DIR", tmp_path)
+    base, after = _run_dir(tmp_path), _after_dir(tmp_path)
+    ui_iv.save_try(base, ui_iv.finish_try(base, after, PENDING))
+    ui_iv.save_try(base, ui_iv.finish_try(base, base, {**PENDING, "target": "tanker_1"}))
+    sm = ui_iv.scene_summary(base, tmp_path)
+    assert sm["n"] == 2 and set(sm) >= {"score", "reading", "tested", "declared", "provisional"}
+    assert "available" not in sm and "cell" not in sm        # no ground truth in it
+    d = ui.derive(_events(RECORD, [], {**S4, "pathology": {"tickets": []}}))
+    card = ui.findings_component(d, mode="clean", record_name="ui_base")
+    assert "ground truth" not in _flat(card)
+
+
+def test_the_ground_truth_switch_is_on_the_page_and_off_by_default():
+    panel, _ = _find(ui.app.layout, "iv-panel")
+    sw, _ = _find(panel, "iv-gt")
+    assert sw.value == [] and [o["value"] for o in sw.options] == ["gt"]
+    assert "calibration" in sw.options[0]["label"]
+    kids = [getattr(k, "id", None) for k in panel.children]
+    assert kids.index("iv-status") < kids.index("iv-gt") < kids.index("iv-controls")
