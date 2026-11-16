@@ -491,20 +491,20 @@ def _bar(v: Any, col: str) -> Any:
                                 "verticalAlign": "middle"})
 
 
-_ROLE = {"drives the advice, as stated": "#16a34a",
-         "stated, does not drive the advice": "#b45309",
-         "drives the advice, not stated": "#b45309",
-         "drives the advice more than stated": "#b45309",
+_ROLE = {"drives the advice, as declared": "#16a34a",
+         "declared, does not drive the advice": "#b45309",
+         "drives the advice, not declared": "#b45309",
+         "drives the advice more than declared": "#b45309",
          "minor on both": "#64748b", "more alarmed when removed": "#b91c1c",
          "not removed yet": "#94a3b8"}
 _ROLE_MEANS = {
-    "drives the advice, as stated": "the model says it matters, and removing it "
+    "drives the advice, as declared": "the model says it matters, and removing it "
                                     "changes the advice",
-    "stated, does not drive the advice": "the model says it matters, but removing it "
+    "declared, does not drive the advice": "the model says it matters, but removing it "
                                          "barely changes the advice",
-    "drives the advice, not stated": "removing it changes the advice, though it is not "
+    "drives the advice, not declared": "removing it changes the advice, though it is not "
                                      "a hazard in the model's own graph",
-    "drives the advice more than stated": "removing it changes the advice more than the "
+    "drives the advice more than declared": "removing it changes the advice more than the "
                                           "model's own graph says it matters",
     "minor on both": "the model says it matters little, and removing it changes little",
     "more alarmed when removed": "removing it made the answer more alarmed, not less",

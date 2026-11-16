@@ -34,10 +34,10 @@ ALARMED, UNTESTED = "more alarmed when removed", "not removed yet"
 # 2026-11-16: without ground truth nobody on the screen knows what is
 # right, so "core" and "spurious" are kept for the ground-truth switch).
 # A side is "high" when its share is at least half of the top share.
-DRIVES_STATED = "drives the advice, as stated"
-STATED_ONLY = "stated, does not drive the advice"
-DRIVES_UNSTATED = "drives the advice, not stated"       # not in its own graph at all
-DRIVES_MORE = "drives the advice more than stated"
+DRIVES_STATED = "drives the advice, as declared"
+STATED_ONLY = "declared, does not drive the advice"
+DRIVES_UNSTATED = "drives the advice, not declared"       # not in its own graph at all
+DRIVES_MORE = "drives the advice more than declared"
 MINOR = "minor on both"
 HALF = 0.5
 
