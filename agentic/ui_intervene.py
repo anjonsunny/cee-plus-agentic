@@ -491,31 +491,6 @@ def _bar(v: Any, col: str) -> Any:
                                 "verticalAlign": "middle"})
 
 
-def new_advice(before: dict, tbl: dict) -> list[dict]:
-    """Advice that is not in the original answer and shows up after a
-    hazard was removed, grouped by the hazard it names: [{hazard, tries, of,
-    in_original_scene}]. `in_original_scene` is True when that hazard was in
-    the original picture and the original advice never named it as a cause:
-    the model saw it and wrote nothing until something else was gone."""
-    cols = [c for c in (tbl.get("columns") or []) if isinstance(c, dict)]
-    seen = {str(o.get("object_id")) for o in (before.get("detected_objects") or [])
-            if isinstance(o, dict)}
-    named = {str(r.get("threat")) for r in (tbl.get("rows") or []) if isinstance(r, dict)}
-    count: dict[str, int] = {}
-    for c in cols:
-        hazards = set()
-        for rec in c.get("new") or []:
-            q = rec.get("structured_reasoning") if isinstance(rec, dict) else None
-            h = str((q or {}).get("threat") or "") if isinstance(q, dict) else ""
-            if h:
-                hazards.add(h)
-        for h in hazards:
-            count[h] = count.get(h, 0) + 1
-    return [{"hazard": h, "tries": n, "of": len(cols),
-             "in_original_scene": h in seen and h not in named}
-            for h, n in sorted(count.items(), key=lambda kv: (-kv[1], kv[0]))]
-
-
 _ROLE = {"drives the advice, as stated": "#16a34a",
          "stated, does not drive the advice": "#b45309",
          "drives the advice, not stated": "#b45309",
@@ -564,7 +539,7 @@ def _tile(label: str, value: str, colour: str, title: str = "", cls: str = "") -
                "border": "1px solid #e2e8f0", "borderRadius": "8px", "background": "#fff"})
 
 
-def card_component(cmp: dict, tbl: dict, fresh: list[dict], syn: dict | None = None,
+def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
                    next_id: Any = None) -> list:
     """The causal-groundedness card: the takeaway, updated with every try.
 
@@ -639,18 +614,6 @@ def card_component(cmp: dict, tbl: dict, fresh: list[dict], syn: dict | None = N
             "ground truth: not available — "
             + str(syn.get("why") or "no ground truth for this scene"),
             className="iv-gt-line", style={"fontSize": "10.5px", "color": "#94a3b8"}))
-
-    held = [f for f in (fresh or []) if isinstance(f, dict) and f.get("in_original_scene")]
-    if held:
-        kids: list = [html.Span("new advice after removing a hazard: ", style=lab)]
-        for f in held:
-            kids += [ent_chip(str(f.get("hazard")), "#b45309"),
-                     html.Span(f"({f.get('tries')} of {f.get('of')} tries) ",
-                               style={"color": "#64748b"})]
-        rows.append(html.Div(
-            kids, className="iv-new-advice", style=line,
-            title="these hazards were in the original scene, and the original advice "
-                  "did not act on them"))
 
     # ── FEATURES: declared beside mechanistic
     gt_rows: dict[str, dict] = {}
@@ -747,7 +710,7 @@ def result_parts(base_dir: Path | None, runs_dir: Path | None,
                 signed[t.get("index")] = col["signed"]
             cmp = declared4.compare(before, pairs)
             syn = iv4.synthesis(before, pairs) if with_gt else None
-            top += card_component(cmp, tbl, new_advice(before, tbl), syn, next_id=next_id)
+            top += card_component(cmp, tbl, syn, next_id=next_id)
             n_r, n_c = len(tbl["rows"]), len(tbl["columns"])
             bottom.append(_fold(
                 f"evidence · {n_r} recommendation{'s' if n_r != 1 else ''} by "

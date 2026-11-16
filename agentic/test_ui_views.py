@@ -364,7 +364,7 @@ def test_findings_card_holds_trust_chain_pathology_and_the_groundedness_box():
                for k in pulls.children)                  # the record's sentence, on hover
     assert "THE RUN'S CHAIN" in text and "PATHOLOGIES" in text
     assert "no longer acts on tanker_1" in text and "causal chain" in text
-    assert "1 detector looked" in text
+    assert "1 of 1 detectors ran" in text
     assert "CAUSAL GROUNDEDNESS" in text and "not yet ported" not in text
     assert "not tested yet: remove a hazard" in text     # the chain's last step
 
@@ -865,14 +865,16 @@ def test_fix1_a_skipped_dispatch_arm_says_not_checked_not_passed():
     hazard, the arm skipped, and the card said only "no pathology ticket"."""
     s4 = {**_s4_full(), "pathology": {"tickets": []}, "env_probes": {}}
     skipped = [_SET_ON, {"type": "env_probes_skipped", "reason": "no declared hazard"}]
-    text = _flat(_findings(s4=s4, extra=skipped))
-    assert "concealment · environment did not run: no declared hazard" in text
-    assert "not checked, not passed" in text
-    # the arm was never asked for -> no such line
+    (box,) = _by_class(_findings(s4=s4, extra=skipped), "pathology-summary")
+    # ONE line inside the pathology box (Sunny, 2026-11-16: three loose
+    # lines under the box "do not fit")
+    assert _flat(box) == ("no pathology ticket · dispatch lines did not run "
+                          "(no declared hazard): not checked, not passed")
+    # the arm was never asked for -> not said
     off = [{**_SET_ON, "env": False},
            {"type": "env_probes_skipped", "reason": "no declared hazard"}]
     assert "did not run" not in _flat(_findings(s4=s4, extra=off))
-    # nothing skipped -> no such line
+    # nothing skipped -> not said
     assert "did not run" not in _flat(_findings(s4=s4, extra=[_SET_ON]))
 
 
@@ -906,23 +908,36 @@ def test_fix3_a_reask_that_stopped_after_one_clean_answer_says_so():
     """C, D, E, H: re-ask ×5 was ticked, the first answer was clean, so the
     line was asked once. The screen must say "asked 1 of 5"."""
     s4 = {**_s4_full(), "pathology": {"tickets": []}, "env_probes": _probes()}
-    text = _flat(_findings(s4=s4, extra=[_SET_ON]))
-    assert "only one crew: asked 1 of 5" in text
-    assert "the other 4 were not asked" in text
-    # re-ask off -> plainly "asked once"
-    text = _flat(_findings(s4=s4, extra=[{**_SET_ON, "env_reask": 0}]))
-    assert "only one crew: asked once" in text and "of 5" not in text
-    # all five asked, something hidden -> points at the ticket
+    def box(extra):
+        (b,) = _by_class(_findings(s4=s4, extra=extra), "pathology-summary")
+        return _flat(b), b.title
+    text, tip = box([_SET_ON])
+    assert text == "no pathology ticket · 1 dispatch line asked, 1 of 5"
+    assert "only one crew: asked 1 of 5" in tip and "the other 4 were not asked" in tip
+    # re-ask off -> plainly "once"
+    text, tip = box([{**_SET_ON, "env_reask": 0}])
+    assert text == "no pathology ticket · 1 dispatch line asked, once"
+    assert "only one crew: asked once" in tip and "of 5" not in text
+    # all five asked, something hidden -> the hover points at the ticket
     s4["env_probes"] = _probes(screened="raised", answers=[{}] * 5,
                                votes={"n": 5, "hazard hidden house_2": 2})
-    assert "asked 5 of 5 · see the ticket above" in _flat(_findings(s4=s4, extra=[_SET_ON]))
+    text, tip = box([_SET_ON])
+    assert "1 dispatch line asked, every re-ask" in text
+    assert "asked 5 of 5 · see the ticket" in tip
     s4["env_probes"] = _probes(screened="raised", answers=[{}] * 5, votes={"n": 5})
-    assert "asked 5 of 5 · nothing hidden" in _flat(_findings(s4=s4, extra=[_SET_ON]))
+    assert "asked 5 of 5 · nothing hidden" in box([_SET_ON])[1]
+    # two lines that did different things: counted, detail on hover
+    s4["env_probes"] = {"a": {"label": "only one crew", "screened": "clean"},
+                        "b": {"label": "no crew", "screened": "raised", "answers": [{}] * 5,
+                              "votes": {"n": 5}}}
+    text, tip = box([_SET_ON])
+    assert text == "no pathology ticket · 2 dispatch lines asked"
+    assert "only one crew: asked 1 of 5" in tip and "no crew: asked 5 of 5" in tip
     # a line that failed, and malformed entries
     s4["env_probes"] = {"one_crew": {"label": "only one crew", "error": "timeout"},
                         "bad": None, "worse": "x", "odd": {"votes": "no", "answers": 3}}
-    text = _flat(_findings(s4=s4, extra=[_SET_ON]))
-    assert "only one crew: did not run: timeout" in text
+    text, tip = box([_SET_ON])
+    assert "1 did not run" in text and "only one crew: did not run: timeout" in tip
     s4["env_probes"] = "not a dict"
     assert "PATHOLOGIES" in _flat(_findings(s4=s4, extra=[_SET_ON]))
 
@@ -1229,3 +1244,20 @@ def test_the_card_and_headline_name_a_danger_that_is_only_protected():
     assert _flat(lost[1]).startswith("protected, never treated as a source:")
     assert "tanker_truck_1" in _oids(lost[1]) and "0.08" in _flat(lost[1])
     assert _headline(s4, [_YES])[1] == "Check before acting. Misses: brush_1, tanker_truck_1."
+
+
+def test_the_pathology_box_holds_one_line_also_when_there_is_a_ticket():
+    """With a ticket the same facts sit in one small line under it; nothing
+    floats under the box as loose text."""
+    s4 = {**_s4_full(), "env_probes": _probes(screened="raised", answers=[{}] * 5,
+                                             votes={"n": 5, "hazard hidden tanker_1": 1})}
+    card = _findings(s4=s4, extra=[_SET_ON])
+    (line,) = _by_class(card, "pathology-summary")
+    assert "ticket-empty" not in str(line.className)
+    assert _flat(line) == "1 dispatch line asked, every re-ask · 1 of 1 detectors ran"
+    assert _by_class(card, "probe-line") == [] and _by_class(card, "probe-skipped") == []
+    # nothing to say at all: just the empty box
+    bare = {"recommendations": _s4_full()["recommendations"], "trust": _s4_full()["trust"],
+            "pathology": {"tickets": []}}
+    (box,) = _by_class(_findings(s4=bare), "pathology-summary")
+    assert _flat(box) == "no pathology ticket"

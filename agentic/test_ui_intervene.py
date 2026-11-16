@@ -1218,37 +1218,28 @@ def test_the_card_has_two_halves_recommendations_and_features(tmp_path):
     assert not _by_class(comp, "by-recommendation")[0].open
 
 
-def test_the_card_names_advice_that_only_appeared_after_a_hazard_was_removed():
+def test_new_advice_is_not_on_the_card_it_stays_in_the_evidence(tmp_path):
+    """Sunny, 2026-11-16: "is it too important to focus on?" No: the card is
+    about grounded recommendations and declared against mechanistic; the
+    trust card already names what the original advice left out; and one ask
+    per try is weak evidence. The lists stay under the evidence table."""
     from agentic import grounding4 as g
     before = _res(["fire_1", "spill_1", "brush_1", "man_1"],
                   [_rec(1, "fire_1", ["man_1"]), _rec(2, "spill_1", ["man_1"])],
                   threats=["fire_1", "spill_1", "brush_1"])
     a1 = _res(["spill_1", "brush_1", "man_1"],
-              [_rec(1, "spill_1", ["man_1"]), _rec(2, "brush_1", ["man_1"], "Cut a firebreak."),
-               _rec(3, "spill_1", ["brush_1"], "Boom the spill.", effect="may_spread_to")])
-    a2 = _res(["fire_1", "brush_1", "man_1", "gas_1"],
-              [_rec(1, "fire_1", ["man_1"]), _rec(2, "brush_1", ["man_1"], "Cut a firebreak."),
-               _rec(3, "gas_1", ["man_1"], "Vent the gas.")])
-    tbl = g.table(before, [({"index": 1, "target": "fire_1"}, a1),
-                           ({"index": 2, "target": "spill_1"}, a2)])
-    fresh = {f["hazard"]: f for f in ui_iv.new_advice(before, tbl)}
-    assert fresh["brush_1"] == {"hazard": "brush_1", "tries": 2, "of": 2,
-                                "in_original_scene": True}
-    assert fresh["spill_1"]["in_original_scene"] is False     # the original already acted on it
-    assert fresh["gas_1"]["in_original_scene"] is False       # not in the original scene at all
-    card = ui_iv.card_component({"hazards": []}, tbl, list(fresh.values()))
-    (line,) = _by_class(card, "iv-new-advice")
-    text = _flat(line)
-    assert text.startswith("new advice after removing a hazard: brush_1 (2 of 2 tries)")
-    assert "in the original scene, and the original advice did not act on" in line.title
-    assert "spill_1" not in text and "gas_1" not in text      # those stay in the evidence
-    assert "kept appearing" not in _flat(card)
-    assert ui_iv.new_advice({}, {}) == [] and ui_iv.new_advice(before, {"columns": [None]}) == []
+              [_rec(1, "spill_1", ["man_1"]), _rec(2, "brush_1", ["man_1"], "Cut a firebreak.")])
+    tbl = g.table(before, [({"index": 1, "target": "fire_1"}, a1)])
+    card = ui_iv.card_component({"hazards": []}, tbl)
+    assert "new advice" not in _flat(card) and _by_class(card, "iv-new-advice") == []
+    assert "new advice after removing fire_1: • Cut a firebreak." in _flat(
+        ui_iv.table_component(tbl))
+    assert not hasattr(ui_iv, "new_advice")
     for bad in (None, "x", {}, {"hazards": "y", "score": "z"}, {"hazards": [None, "x", {}]}):
-        ui_iv.card_component(bad, {}, [None, "x"])            # never raises
-        ui_iv.card_component(bad, "t", "f", {"available": True, "distribution": "d",
-                                             "gt_core": 7, "gt": None})
-        ui_iv.card_component(bad, None, None, {"available": False})
+        ui_iv.card_component(bad, {})                         # never raises
+        ui_iv.card_component(bad, "t", {"available": True, "distribution": "d",
+                                        "gt_core": 7, "gt": None})
+        ui_iv.card_component(bad, None, {"available": False})
 
 
 def test_the_headline_and_the_chain_speak_declared_against_mechanistic(tmp_path, monkeypatch):
@@ -1323,7 +1314,7 @@ def test_core_and_spurious_are_judged_by_ground_truth_both_mismatches_spurious()
 def test_the_card_shows_each_feature_declared_beside_mechanistic():
     from agentic import declared4 as d
     c = d.compare(D_BEFORE, [_try("fire_1", 0.6), _try("tanker_1", 0.05)])
-    card = ui_iv.card_component(c, {"rows": [{"verdict": "grounded"}, {"verdict": "untested"}]}, [])
+    card = ui_iv.card_component(c, {"rows": [{"verdict": "grounded"}, {"verdict": "untested"}]})
     rows = _by_class(card, "iv-feature")
     assert [_flat(r).split()[0] for r in rows] == ["fire_1", "spill_1", "tanker_1", "brush_1"]
     by = {_flat(r).split()[0]: r for r in rows}
@@ -1339,7 +1330,7 @@ def test_the_card_shows_each_feature_declared_beside_mechanistic():
            "gt": {"status": "verified", "image_filename": "x.jpg"},
            "distribution": {"gt_dist": {"fire_1": 0.3, "tanker_1": 0.7}, "verdict":
                             "misproportioned", "overlap": 0.3, "coverage": [2, 2]}}
-    card = ui_iv.card_component(c, {}, [], syn)
+    card = ui_iv.card_component(c, {}, syn)
     by = {_flat(r).split()[0]: _flat(_by_class(r, "iv-gt-word"))
           for r in _by_class(card, "iv-feature")}
     assert by["fire_1"] == "core"
@@ -1364,7 +1355,7 @@ def test_the_card_offers_the_next_hazard_to_remove_and_the_button_opens_the_form
     import dash
     from unittest.mock import patch
     c = d.compare(D_BEFORE, [_try("fire_1", 0.6)])
-    card = ui_iv.card_component(c, {}, [], next_id=lambda h: {"type": "iv-next", "target": h})
+    card = ui_iv.card_component(c, {}, next_id=lambda h: {"type": "iv-next", "target": h})
     (btn,) = _by_class(card, "iv-next")
     assert _flat(btn) == "remove next: spill_1"          # the next one it declared
     assert btn.id == {"type": "iv-next", "target": "spill_1"}
@@ -1372,9 +1363,9 @@ def test_the_card_offers_the_next_hazard_to_remove_and_the_button_opens_the_form
     # every declared hazard removed: no button
     full = d.compare(D_BEFORE, [_try(h, 0.3) for h in ("fire_1", "spill_1", "tanker_1",
                                                        "brush_1")])
-    assert _by_class(ui_iv.card_component(full, {}, [], next_id=lambda h: h), "iv-next") == []
+    assert _by_class(ui_iv.card_component(full, {}, next_id=lambda h: h), "iv-next") == []
     # without an id maker (a plain render) there is no button either
-    assert _by_class(ui_iv.card_component(c, {}, []), "iv-next") == []
+    assert _by_class(ui_iv.card_component(c, {}), "iv-next") == []
 
     class _Ctx:
         triggered_id = {"type": "iv-next", "target": "spill_1"}

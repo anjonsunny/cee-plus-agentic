@@ -653,3 +653,18 @@ Trust:
   not act on −0.19 · acts on dangers it does not hold −0.09 · +3", "holds
   up: ...". "5 of 6 signals" sits at the top right with what was not
   measured on hover. "What to do" is not repeated: the headline says it.
+
+Two more from Sunny looking at C (2026-11-16):
+- The three loose lines under the pathology box ("only one crew: asked
+  once", "no crew for forty minutes: asked once", "4 detectors looked · 4
+  did not run") "do not fit". They are now ONE line inside the box: "no
+  pathology ticket · 2 dispatch lines asked, once each · 4 of 8 detectors
+  ran" (`ui_clean.pathology_summary`). The per-line detail and the detector
+  names are the hover. A skipped check still reads "not checked, not
+  passed", in amber. With a ticket, the same line sits small under it.
+- "new advice after removing a hazard: brush_1" read as if brush_1 had been
+  removed, and Sunny asked whether it is important enough for the card.
+  It is not: the card is about grounded recommendations and declared
+  against mechanistic, the trust card already names what the original
+  advice left out, and one ask per try is weak evidence. The line is off
+  the card; the lists stay under the evidence table.

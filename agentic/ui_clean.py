@@ -475,16 +475,20 @@ def findings(s4: dict, d: dict, *, chain: Callable[[dict], Any],
     out.append(chain(s4))
     out.append(_heading("PATHOLOGIES"))
     path = _register_of(s4).get("pathology") or []
-    out += [pathology_ticket(tk) for tk in path] or [
-        html.Div("no pathology ticket", className="ticket-empty")]
-    out += probe_status(s4, d)
-    pa = s4.get("pathology") or {}
-    looked = pa.get("checked") or []
-    if looked:
-        out.append(html.Div(f"{len(looked)} detector{'s' if len(looked) != 1 else ''} looked"
-                            + (f" · {len(pa.get('not_run') or [])} did not run"
-                               if pa.get("not_run") else ""),
-                            style={"fontSize": "10.5px", "color": "#94a3b8"}))
+    line, tip, not_checked = pathology_summary(s4, d)
+    if path:
+        out += [pathology_ticket(tk) for tk in path]
+        if line:
+            out.append(html.Div(line, className="pathology-summary", title=tip,
+                                style={"fontSize": "10.5px", "margin": "2px 0",
+                                       "color": "#b45309" if not_checked else "#94a3b8"}))
+    else:
+        out.append(html.Div(
+            [html.Span("no pathology ticket")]
+            + ([html.Span(" · " + line, style={"fontSize": "11px",
+                                                "color": "#b45309" if not_checked
+                                                else "#94a3b8"})] if line else []),
+            className="ticket-empty pathology-summary", title=tip))
     out.append(_heading("CAUSAL GROUNDEDNESS"))
     out.append(html.Div(
         "remove one hazard from the scene, run the edited scene, and see "
@@ -674,22 +678,13 @@ def run_settings_line(d: dict) -> Any | None:
         style={"fontSize": "10.5px", "color": "#475569", "marginBottom": "6px"})
 
 
-def probe_status(s4: dict, d: dict) -> list:
-    """What each dispatch line actually did, so "no ticket" is never read
-    as "passed" when the line did not run (B_pool, F_park: skipped quietly)
-    and a re-ask that stopped after one clean answer says so (C, D, E, H)."""
+def probe_lines(s4: dict, d: dict) -> list[dict]:
+    """What each dispatch line actually did: [{label, kind, text}], kind in
+    once | screened | all | failed. "No ticket" must never be read as
+    "passed" when a line did not run (B_pool, F_park: skipped quietly), and
+    a re-ask that stopped after one clean answer says so (C, D, E, H)."""
     s4, d = s4 or {}, d or {}
-    out: list = []
-    style = {"fontSize": "11px", "color": "#475569", "margin": "2px 0"}
-    asked_for = bool((d.get("reasks") or {}).get("env")
-                     or (d.get("run_settings") or {}).get("env"))
-    if d.get("stage4_env_skipped") and asked_for:
-        out.append(html.Div(
-            [html.Span("concealment · environment did not run: ",
-                       style={"fontWeight": "700", "color": "#b45309"}),
-             html.Span(f"{d['stage4_env_skipped']}. No ticket here means "
-                       "not checked, not passed.")],
-            className="probe-skipped", style=style))
+    out: list[dict] = []
     reask = int(d.get("env_reask") or 0)
     probes = s4.get("env_probes")
     for name, one in (probes.items() if isinstance(probes, dict) else ()):
@@ -699,23 +694,71 @@ def probe_status(s4: dict, d: dict) -> list:
         votes = one.get("votes") if isinstance(one.get("votes"), dict) else {}
         answers = one.get("answers") if isinstance(one.get("answers"), list) else []
         if one.get("skipped") or one.get("error"):
-            text = "did not run: " + str(one.get("skipped") or one.get("error"))
+            kind, text = "failed", "did not run: " + str(one.get("skipped") or one.get("error"))
         else:
             n = votes.get("n") if isinstance(votes.get("n"), int) else len(answers)
             n = n or 1
             if one.get("screened") == "clean" and reask > 1:
+                kind = "screened"
                 text = (f"asked 1 of {reask} · the first answer was clean, "
                         f"so the other {reask - 1} were not asked")
             elif n > 1:
                 hits = sum(v for k, v in votes.items()
                            if k != "n" and isinstance(v, int))
-                text = f"asked {n} of {n}" + (" · see the ticket above" if hits
+                kind = "all"
+                text = f"asked {n} of {n}" + (" · see the ticket" if hits
                                              else " · nothing hidden")
             else:
-                text = "asked once"
-        out.append(html.Div([html.Span(label + ": ", style={"fontWeight": "700"}),
-                             html.Span(text)], className="probe-line", style=style))
+                kind, text = "once", "asked once"
+        out.append({"label": label, "kind": kind, "text": text})
     return out
+
+
+def pathology_summary(s4: dict, d: dict) -> tuple[str, str, bool]:
+    """(line, hover, not_checked). ONE line for the pathology box in place of
+    three loose ones (Sunny, 2026-11-16: "this text looks like it does not
+    fit"): what the dispatch lines did and how many detectors ran. The
+    per-line detail and the detector names are the hover. `not_checked` is
+    True when the dispatch lines were asked for and did not run, so the box
+    is never read as a pass."""
+    s4, d = s4 or {}, d or {}
+    parts: list[str] = []
+    tip: list[str] = []
+    asked_for = bool((d.get("reasks") or {}).get("env")
+                     or (d.get("run_settings") or {}).get("env"))
+    skipped = bool(d.get("stage4_env_skipped") and asked_for)
+    if skipped:
+        parts.append(f"dispatch lines did not run ({d['stage4_env_skipped']}): "
+                     "not checked, not passed")
+    lines = probe_lines(s4, d)
+    if lines:
+        n = len(lines)
+        ran = [x for x in lines if x["kind"] != "failed"]
+        failed = n - len(ran)
+        kinds = {x["kind"] for x in ran}
+        reask = int(d.get("env_reask") or 0)
+        word = f"{len(ran)} dispatch line{'s' if len(ran) != 1 else ''} asked"
+        if kinds == {"once"}:
+            word += ", once each" if len(ran) > 1 else ", once"
+        elif kinds == {"screened"}:
+            word += f", 1 of {reask} each" if len(ran) > 1 else f", 1 of {reask}"
+        elif kinds == {"all"}:
+            word += ", every re-ask"
+        if ran:
+            parts.append(word)
+        if failed:
+            parts.append(f"{failed} did not run")
+        tip += [f"{x['label']}: {x['text']}" for x in lines]
+    pa = s4.get("pathology") if isinstance(s4.get("pathology"), dict) else {}
+    looked = [str(x) for x in (pa.get("checked") or [])]
+    not_run = [str(x) for x in (pa.get("not_run") or [])]
+    if looked or not_run:
+        parts.append(f"{len(looked)} of {len(looked) + len(not_run)} detectors ran")
+        if looked:
+            tip.append("ran: " + ", ".join(looked))
+        if not_run:
+            tip.append("did not run: " + ", ".join(not_run))
+    return " · ".join(parts), "  |  ".join(tip), skipped
 
 
 # ── assembly ─────────────────────────────────────────────────────────────
