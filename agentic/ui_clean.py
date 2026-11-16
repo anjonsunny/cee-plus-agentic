@@ -95,7 +95,7 @@ _OTHER_COLOUR = "#64748b"
 # A check that lost points, said short: the mirror of _HOLDS_UP. The
 # record's own sentence and evidence are the hover.
 _PULLS_DOWN = {"advice_backed_by_belief": "acts on dangers it does not hold",
-               "dangers_acted_on": "holds dangers it does not act on",
+               "dangers_acted_on": "links in its own graph that no advice uses",
                "uncertainty": "unstable on re-ask",
                "internal_alignment": "does not hang together",
                "pick_agreement": "targets disagree",

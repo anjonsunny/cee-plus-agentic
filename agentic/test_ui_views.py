@@ -1311,7 +1311,7 @@ def test_the_losses_add_up_to_what_the_score_lost():
     losses = ui_clean.trust_losses(_c_trust())
     assert [x["loss"] for x in losses] == sorted((x["loss"] for x in losses), reverse=True)
     assert round(sum(x["loss"] for x in losses), 2) == round(1 - 0.429, 2) == 0.57
-    assert [x["name"] for x in losses][:2] == ["holds dangers it does not act on",
+    assert [x["name"] for x in losses][:2] == ["links in its own graph that no advice uses",
                                                "declared, not acted on"]
     assert all(round(x["loss"], 2) > 0 for x in losses)   # the 0.001 one is left out
     card = _by_class(_findings(s4=_c_trust(), extra=[_YES]), "trust-card")[0]
@@ -1334,7 +1334,7 @@ def test_each_main_loss_carries_its_evidence_folded_and_ordered_by_consequence()
         {"source": "spill_1", "effect": "may_harm", "target": "man_1"}]          # 4, a person
     card = _by_class(_findings(s4=s4, extra=[_YES]), "trust-card")[0]
     assert [_flat(x) for x in _by_class(card, "trust-lost")] == [
-        "−0.19 holds dangers it does not act on", "−0.18 declared, not acted on"]
+        "−0.19 links in its own graph that no advice uses", "−0.18 declared, not acted on"]
     folds = _by_class(card, "trust-evidence")
     assert len(folds) == 2 and not any(getattr(f, "open", False) for f in folds)
     # closed, the fold still says how heavy the evidence is

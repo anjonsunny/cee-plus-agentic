@@ -722,3 +722,8 @@ still reads "holds dangers it does not act on", which sounds like whole
 hazards were ignored; proposed "links in its own graph that no advice
 uses", waiting for Sunny's yes. Whether kind (2) should cost trust at all
 is a scoring question for later.
+
+Renamed (Sunny, 2026-11-16: "yes rename it"): the loss "holds dangers it
+does not act on" now reads "links in its own graph that no advice uses".
+It counts arrows, not hazards. Its mirror, "acts on dangers it does not
+hold" (arrows in the advice that its own graph lacks), is unchanged.
