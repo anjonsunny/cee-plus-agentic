@@ -668,3 +668,16 @@ Two more from Sunny looking at C (2026-11-16):
   against mechanistic, the trust card already names what the original
   advice left out, and one ask per try is weak evidence. The line is off
   the card; the lists stay under the evidence table.
+
+Headline and the all-scenes table (Sunny, 2026-11-16):
+- The headline on the run page is only its first part ("Do not rely on
+  this advice." / "Check before acting." / "Advice looks sound." / "No
+  disaster seen. Nothing needs doing."). "Misses: ..." repeated the trust
+  card under it and the groundedness clause repeated the groundedness card.
+  Trust and groundedness are never folded into one sentence.
+- The all-scenes table shows trust AND causal groundedness per scene:
+  RECOMMENDATIONS GROUNDED, DECLARED VS MECHANISTIC, HAZARDS REMOVED, from
+  the tries saved on that run ("not tested" when there are none). Its
+  HEADLINE column keeps the full trust sentence, with today's rule.
+- A scene's row is the newest finished run that has tries, else the
+  newest: a later rerun no longer takes the row and reads "not tested".

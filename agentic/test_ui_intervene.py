@@ -1027,7 +1027,9 @@ def test_a_saved_run_shows_what_todays_rule_would_also_charge():
     assert "0.43 · low" in _flat(card)                   # the saved score is untouched
     assert "the saved score above does not include this" in line.title
     # and the headline names it too
-    assert "Misses: tanker_1" in _flat(card[0])
+    assert _flat(card[0]) == "Do not rely on this advice."     # the headline stays short
+    from agentic import ui_clean
+    assert "Misses: tanker_1" in ui_clean.headline_text(d["stage4"], d)   # the full sentence
 
 
 def test_the_tries_reach_the_headline_and_the_runs_chain(gt, monkeypatch):
@@ -1045,7 +1047,7 @@ def test_the_tries_reach_the_headline_and_the_runs_chain(gt, monkeypatch):
     d = ui.derive(_events(RECORD, [], {**S4, "pathology": {"tickets": []}}))
     card = ui.findings_component(d, mode="clean", record_name="ui_base")
     text = _flat(card)
-    assert "1 hazard removed so far." in _flat(card[0])              # in the headline
+    assert "removed" not in _flat(card[0])                # never in the headline: kept apart
     assert "1 hazard removed (fire_1) · no score yet" in text        # in the chain
     assert "not yet ported" not in text and "placeholder" not in text
     # a run opened without its folder (an example record) just has no summary

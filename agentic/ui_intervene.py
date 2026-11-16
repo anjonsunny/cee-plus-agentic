@@ -755,6 +755,17 @@ def scene_summary(base_dir: Path | None, runs_dir: Path | None) -> dict | None:
     out.update({k: cmp.get(k) for k in ("score", "reading", "tested", "declared",
                                         "provisional", "does_most", "said_more",
                                         "done_more", "alarmed")})
+    try:
+        from agentic import grounding4
+        before = iv4.result_from_run_dir(base_dir)
+        tbl = grounding4.table(before, [
+            (t, iv4.result_from_run_dir(Path(runs_dir) / str(t["after_run"]))) for t in tries])
+        judged = [str(r.get("verdict")) for r in tbl["rows"] if r.get("verdict") != "untested"]
+        out["grounded"] = sum(1 for v in judged if v == "grounded")
+        out["judged"] = len(judged)
+        out["recommendations"] = len(tbl["rows"])
+    except Exception:
+        pass
     return out
 
 

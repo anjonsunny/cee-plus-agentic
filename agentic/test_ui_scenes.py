@@ -186,3 +186,68 @@ def test_the_replay_list_still_names_the_image_when_settings_come_first(tmp_path
     assert labels[0].endswith("ui_new")
     row_scene = ui_scenes.run_head(tmp_path / "ui_new" / "events.jsonl")["image_name"]
     assert row_scene == "H_car_house_fire.png"
+
+
+# ── trust AND causal groundedness per scene (Sunny, 2026-11-16: "currently
+#    we only have trust headline") ───────────────────────────────────────
+
+def _full_run(tmp, name, image, s4, record, assess, mtime, image_bytes=b"img"):
+    """A run folder with its events and the three saved files a try reads."""
+    p = _run(tmp, name, image, [
+        {"type": "assembled", "result": record},
+        {**_YES, "threats": [], "at_risk": []}, _done(s4)], mtime=mtime)
+    d = p.parent
+    (d / f"{image.rsplit('.', 1)[0]}__perception.json").write_text(json.dumps(record))
+    (d / "assessment.json").write_text(json.dumps({"assessment": assess}))
+    (d / "stage4.json").write_text(json.dumps(s4))
+    (d / image).write_bytes(image_bytes)
+    return d
+
+
+def test_a_row_shows_groundedness_from_the_tries_and_prefers_the_run_that_has_them(tmp_path):
+    from agentic import ui_intervene as ui_iv
+    from agentic.test_intervention4 import ASSESS, RECORD, S4, _after_without_fire
+    base = _full_run(tmp_path, "ui_old", "C_tanker.jpg", S4, RECORD, ASSESS, mtime=100)
+    rec, a, s4 = _after_without_fire()
+    after = _full_run(tmp_path, "ui_after", "C_tanker.jpg", s4, rec, a, mtime=150,
+                      image_bytes=b"edited")
+    (after / "after_of.json").write_text(json.dumps({"before_run": "ui_old"}))
+    pending = {"target": "fire_1", "modality": "both", "caption": "no fire",
+               "caption_changed": True, "image_changed": True}
+    ui_iv.save_try(base, ui_iv.finish_try(base, after, pending))
+    ui_iv.save_try(base, ui_iv.finish_try(base, base, {**pending, "target": "tanker_1"}))
+    # a NEWER run of the same scene, with no try
+    _full_run(tmp_path, "ui_new", "C_tanker.jpg", S4, RECORD, ASSESS, mtime=300)
+    _full_run(tmp_path, "ui_b", "B_pool.jpg", S4, RECORD, ASSESS, mtime=200)
+    rows = {r["scene"]: r for r in ui_scenes.scene_rows(tmp_path, ui.derive)}
+    c = rows["C_tanker"]
+    assert c["run"] == "ui_old"                          # the run with the tries, not the newest
+    g = c["grounded"]
+    assert g["n"] == 2 and g["targets"] == ["fire_1", "tanker_1"]
+    assert g["grounded"] == 1 and g["judged"] == 2
+    assert rows["B_pool"]["grounded"] is None
+    comp = ui.scenes_component(tmp_path)
+    text = _flat(comp)
+    for word in ("RECOMMENDATIONS GROUNDED", "DECLARED VS MECHANISTIC", "HAZARDS REMOVED",
+                 "not tested"):
+        assert word in text, word
+    cells = {_flat(r).split()[0]: _flat(_by_class(r, "scene-grounded"))
+             for r in _by_class(comp, "scene-row")}
+    assert cells["C_tanker"] == "1 of 2" and cells["B_pool"] == "not tested"
+    # the headline column stays about trust: groundedness has its own columns
+    assert "removed" not in c["headline"] and "depends" not in c["headline"]
+
+
+def test_the_groundedness_cells_cover_every_state():
+    quiet = ui_scenes._grounded_cells(None)
+    assert _flat(quiet) == "not tested" and len(quiet) == 3
+    one = ui_scenes._grounded_cells({"n": 1, "grounded": 2, "judged": 2, "score": None,
+                                     "tested": 1, "declared": 4, "targets": ["fire_1"]})
+    assert _flat(one) == "2 of 2 needs a second removed hazard 1 of 4"
+    full = ui_scenes._grounded_cells({"n": 3, "grounded": 5, "judged": 5, "score": 0.954,
+                                      "reading": "does what it says", "tested": 3,
+                                      "declared": 5, "targets": ["a", "b", "c"]})
+    assert _flat(full) == "5 of 5 0.95 · does what it says 3 of 5"
+    assert "a, b, c" in full[2].title
+    for bad in ("x", {}, {"n": 2}, {"n": 1, "judged": "z", "score": "q"}):
+        assert len(ui_scenes._grounded_cells(bad)) == 3

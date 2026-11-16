@@ -497,7 +497,7 @@ def findings(s4: dict, d: dict, *, chain: Callable[[dict], Any],
     return out
 
 
-def headline_parts(s4: dict, d: dict) -> tuple[str, list]:
+def headline_parts(s4: dict, d: dict, brief: bool = False) -> tuple[str, list]:
     """(tone, parts) for the headline. `parts` is a list of strings and
     ("ent", id) pairs, so the text can be tested as plain words and the ids
     rendered as hoverable chips. Pure: the record only.
@@ -570,6 +570,11 @@ def headline_parts(s4: dict, d: dict) -> tuple[str, list]:
     else:
         tone, opener = "moderate", "Trust not scored."
     parts: list = [opener]
+    if brief:
+        # the run page: only what is said nowhere else. The trust card under
+        # it names what is missed, the pathology box the tickets, and the
+        # groundedness card has its own result (Sunny, 2026-11-16).
+        return tone, parts
     if missed:
         shown, more = missed[:4], len(missed) - 4
         parts += [" Misses: "] + _ent_list(shown) \
@@ -601,13 +606,9 @@ def headline_parts(s4: dict, d: dict) -> tuple[str, list]:
                  or (d.get("run_settings") or {}).get("env"))
     if d.get("stage4_env_skipped") and asked and not quiet:
         parts.append(" Concealment not checked.")
-
-    # ── what the advice that exists rests on
-    if d.get("intervention"):
-        from agentic.ui_intervene import summary_sentence
-        said = summary_sentence(d["intervention"])
-        if said:
-            parts.append(" " + said)
+    # Trust and groundedness stay apart (Sunny, 2026-11-16): what removing
+    # hazards showed is on its own card and in its own columns of the
+    # all-scenes table, never folded into this sentence.
     return tone, parts
 
 
@@ -626,9 +627,10 @@ def headline_text(s4: dict, d: dict) -> str:
                    for p in headline_parts(s4, d)[1])
 
 
-def headline(s4: dict, d: dict) -> Any | None:
-    """The headline as a component: one tinted line, ids as hover chips."""
-    tone, parts = headline_parts(s4, d)
+def headline(s4: dict, d: dict, brief: bool = True) -> Any | None:
+    """The headline as a component: one tinted line, ids as hover chips.
+    Brief on the run page; the full sentence is `headline_text`."""
+    tone, parts = headline_parts(s4, d, brief=brief)
     if not parts:
         return None
     col = _BAND_COLOUR.get(tone, "#64748b")

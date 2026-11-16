@@ -76,7 +76,22 @@ def row_of(path: Path, derive: Callable[[list], dict]) -> dict | None:
                    if isinstance(t, dict)]
     except Exception:
         tickets = []
+    # the same extra line the run page's trust card shows for a saved run
+    try:
+        from agentic.errors4 import new_under_todays_rule
+        d["rule_update"] = new_under_todays_rule(
+            d.get("result"), verdict.get("at_risk"), s4.get("recommendations"),
+            s4.get("graph_b"), trust.get("singular_errors"))
+    except Exception:
+        d["rule_update"] = []
     tone, _parts = ui_clean.headline_parts(s4, d)
+    # causal groundedness, from the tries saved on this run (None: not tested)
+    grounded = None
+    try:
+        from agentic import ui_intervene
+        grounded = ui_intervene.scene_summary(Path(path).parent, Path(path).parent.parent)
+    except Exception:
+        grounded = None
     ts = [e["t"] for e in events if isinstance(e.get("t"), (int, float))]
     probes = s4.get("env_probes") if isinstance(s4.get("env_probes"), dict) else {}
     ran = {k: v for k, v in probes.items()
@@ -105,6 +120,7 @@ def row_of(path: Path, derive: Callable[[list], dict]) -> dict | None:
         "trust": trust.get("score"), "band": str(trust.get("band") or ""),
         "n_tickets": len(tickets),
         "tone": tone, "headline": ui_clean.headline_text(s4, d),
+        "grounded": grounded,
         "unaddressed": unaddressed, "hidden": hidden,
         "env_asked": asked_env,
         "env_skipped": d.get("stage4_env_skipped") if asked_env else None,
@@ -114,9 +130,12 @@ def row_of(path: Path, derive: Callable[[list], dict]) -> dict | None:
 
 
 def scene_rows(runs_dir: Path, derive: Callable[[list], dict]) -> list[dict]:
-    """The latest FINISHED run of each scene, sorted by scene name. A scene
-    is its image name without the extension. Runs are walked newest first
-    and a run is parsed in full only while its scene has no row yet."""
+    """One FINISHED run of each scene, sorted by scene name: the newest run
+    that has intervention tries, else the newest. A scene is its image name
+    without the extension. The tries sit on one particular run; without
+    this preference a later rerun of the scene would take the row and read
+    "not tested". Runs are walked newest first and parsed in full only
+    when they can still change the scene's row."""
     runs_dir = Path(runs_dir)
     if not runs_dir.exists():
         return []
@@ -128,13 +147,14 @@ def scene_rows(runs_dir: Path, derive: Callable[[list], dict]) -> list[dict]:
             continue                        # the edited side of an intervention
         image = str(run_head(p).get("image_name") or "")
         scene = image.rsplit(".", 1)[0]
-        if not scene or scene in rows:
+        has_tries = (p.parent / "interventions.json").exists()
+        if not scene or (scene in rows and (rows[scene].get("grounded") or not has_tries)):
             continue
         try:
             row = row_of(p, derive)
         except Exception:
             row = None                      # one broken record never empties the page
-        if row is not None:
+        if row is not None and (scene not in rows or row.get("grounded")):
             rows[scene] = row
     return [rows[k] for k in sorted(rows)]
 
@@ -175,6 +195,39 @@ _TD = {"fontSize": "11.5px", "padding": "5px 8px", "borderBottom": "1px solid #e
        "verticalAlign": "top"}
 
 
+_READ_COL = {"does what it says": "#16a34a", "partly does what it says": "#b45309",
+             "does not do what it says": "#b91c1c"}
+
+
+def _grounded_cells(g: Any) -> list:
+    """The three causal-groundedness cells of a row, from the tries saved on
+    that run: recommendations grounded, declared vs mechanistic, hazards
+    removed. "not tested" when the run has no try."""
+    quiet = {**_TD, "color": "#94a3b8"}
+    if not isinstance(g, dict) or not g.get("n"):
+        return [html.Td("not tested", className="scene-grounded", style=quiet),
+                html.Td("", style=quiet), html.Td("", style=quiet)]
+    judged = g.get("judged")
+    tied = g.get("grounded")
+    first = (f"{tied} of {judged}" if isinstance(judged, int) and judged else "none tested yet")
+    score, reading = g.get("score"), str(g.get("reading") or "")
+    second = (f"{score:.2f} · {reading}" if isinstance(score, (int, float))
+              else "needs a second removed hazard")
+    return [
+        html.Td(first, className="scene-grounded",
+                title="recommendations dropped once the hazard they name is removed",
+                style={**_TD, "fontWeight": "700", "whiteSpace": "nowrap",
+                       "color": "#16a34a" if judged and tied == judged else "#b45309"}),
+        html.Td(second, className="scene-dvm",
+                title="how far what the model says matters and what its advice depends "
+                      "on agree, over the hazards removed so far",
+                style={**_TD, "fontWeight": "700",
+                       "color": _READ_COL.get(reading, "#94a3b8")}),
+        html.Td(f"{g.get('tested')} of {g.get('declared')}", className="scene-removed",
+                title="declared hazards removed so far: " + ", ".join(g.get("targets") or []),
+                style={**_TD, "whiteSpace": "nowrap"})]
+
+
 def table(rows: list[dict], open_id: Callable[[str], Any]) -> list:
     """The table and the patterns as Dash components. `open_id(path)` gives
     the id of a row's "open" button (ui.py owns the callback)."""
@@ -183,7 +236,9 @@ def table(rows: list[dict], open_id: Callable[[str], Any]) -> list:
                          "recommendations are written", className="ticket-empty")]
     import datetime as _dt
     head = html.Tr([html.Th(h, style=_TH) for h in
-                    ("SCENE", "VERDICT", "TRUST", "TICKETS", "MIN", "HEADLINE", "RUN", "")])
+                    ("SCENE", "VERDICT", "TRUST", "RECOMMENDATIONS GROUNDED",
+                     "DECLARED VS MECHANISTIC", "HAZARDS REMOVED", "TICKETS", "MIN",
+                     "HEADLINE", "RUN", "")])
     body = []
     for r in rows:
         col = _TONE.get(str(r.get("tone")), "#64748b")
@@ -201,6 +256,7 @@ def table(rows: list[dict], open_id: Callable[[str], Any]) -> list:
             html.Td(f"{r['trust']} · {r.get('band')}" if r.get("trust") is not None
                     else "not scored", style={**_TD, "color": col, "fontWeight": "700",
                                               "whiteSpace": "nowrap"}),
+            *_grounded_cells(r.get("grounded")),
             html.Td(str(r.get("n_tickets") or 0),
                     style={**_TD, "fontWeight": "700",
                            "color": "#be123c" if r.get("n_tickets") else "#94a3b8"}),
@@ -231,7 +287,7 @@ def table(rows: list[dict], open_id: Callable[[str], Any]) -> list:
                          style={"fontSize": "11.5px", "color": "#475569",
                                 "margin": "2px 0"})
                 for p in pats]
-    out.append(html.Div("the latest finished run of each scene · built from the "
-                        "saved records, nothing is re-run",
+    out.append(html.Div("one finished run of each scene: the newest with tries, else "
+                        "the newest · built from the saved records, nothing is re-run",
                         style={"fontSize": "10px", "color": "#94a3b8", "marginTop": "8px"}))
     return out

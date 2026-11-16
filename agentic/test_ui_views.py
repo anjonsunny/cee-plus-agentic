@@ -1222,7 +1222,8 @@ def test_headline_sits_first_in_findings_with_hoverable_ids_and_only_after_stage
         {"id": "hazard_unaddressed", "entities": ["brush_1"]}])
     card = _findings(s4=s4, extra=[_YES])
     assert "headline" in str(card[0].className) and "tone-moderate" in card[0].className
-    assert "brush_1" in _oids(card[0])
+    assert _flat(card[0]) == "Check before acting."      # short on the run page (2026-11-16)
+    assert "brush_1" in _oids(_by_class(card, "trust-lost")[0])     # the name is on the card
     # nothing to say before the recommendations exist, and not in detailed
     assert _by_class(_findings(extra=[_YES]), "headline") == []
     assert ui.findings_component(ui.derive([{"type": "stage4_result", "result": s4}]),
