@@ -111,21 +111,87 @@ _ERROR_SHORT = {
 }
 
 
+def _arrows(edges: Any, limit: int = 3) -> str:
+    """"a → b · c → d · +n" from a list of graph arrows."""
+    out = []
+    for e in edges if isinstance(edges, list) else []:
+        if isinstance(e, dict) and e.get("source") and e.get("target"):
+            out.append(f"{e['source']} → {e['target']}")
+    out = list(dict.fromkeys(out))
+    return " · ".join(out[:limit]) + (f" · +{len(out) - limit}" if len(out) > limit else "")
+
+
+def trust_evidence(signal: str, s4: dict, contributor: dict | None = None) -> str:
+    """What in the run's own record stands behind one loss of trust. Nothing
+    here needs ground truth: it is the model's own graph, its own advice
+    and its own picks, compared with each other."""
+    s4 = s4 if isinstance(s4, dict) else {}
+    al = s4.get("alignment") if isinstance(s4.get("alignment"), dict) else {}
+    if signal == "dangers_acted_on":            # in its own graph, missing from the advice
+        ev = _arrows(al.get("b_only"))
+        if ev:
+            return ev
+    if signal == "advice_backed_by_belief":     # in the advice, missing from its own graph
+        ev = _arrows(al.get("a_only"))
+        if ev:
+            return ev
+    if signal == "pick_agreement":
+        picks = s4.get("picks") if isinstance(s4.get("picks"), dict) else {}
+        got = [f"{name}: {p.get('object_id')}" for key, name in
+               (("a_pick", "from the advice"), ("b_pick", "from its own graph"),
+                ("llm_pick", "asked directly"))
+               for p in [picks.get(key)] if isinstance(p, dict) and p.get("object_id")]
+        if got:
+            return " · ".join(got)
+    if signal == "internal_alignment":
+        ia = s4.get("internal_alignment") if isinstance(s4.get("internal_alignment"), dict) else {}
+        got = [str(f.get("detail")) for f in (ia.get("failures") or [])
+               if isinstance(f, dict) and f.get("detail")]
+        if got:
+            return " · ".join(got[:2]) + (f" · +{len(got) - 2}" if len(got) > 2 else "")
+    return str((contributor or {}).get("evidence") or "")
+
+
+def trust_losses(s4: dict) -> list[dict]:
+    """Every loss that made up the saved score, largest first:
+    [{name, loss, evidence, entities, why}]. The weighted checks and the
+    singular errors together; they add up to 1 − score."""
+    trust = (s4 or {}).get("trust") if isinstance((s4 or {}).get("trust"), dict) else {}
+    out: list[dict] = []
+    for c in (trust.get("contributors") or []):
+        if (isinstance(c, dict) and isinstance(c.get("contribution"), (int, float))
+                and not isinstance(c.get("contribution"), bool) and c["contribution"] > 0):
+            sig = str(c.get("signal"))
+            out.append({"name": _PULLS_DOWN.get(sig, _SIGNAL_NAME.get(sig, sig.replace("_", " "))),
+                        "loss": float(c["contribution"]), "entities": [],
+                        "evidence": trust_evidence(sig, s4, c),
+                        "why": f"{c.get('text', '')} — {c.get('evidence', '')}".strip(" —")})
+    for e in (trust.get("singular_errors") or []):
+        if (isinstance(e, dict) and not e.get("waived")
+                and isinstance(e.get("deduction"), (int, float)) and e["deduction"] > 0):
+            detail = str(e.get("detail") or e.get("id") or "")
+            out.append({"name": _ERROR_SHORT.get(str(e.get("id")), detail.split(":")[0].strip()),
+                        "loss": float(e["deduction"]),
+                        "entities": [str(x) for x in (e.get("entities") or [])],
+                        "evidence": "", "why": detail})
+    # a loss that rounds to 0.00 is not worth a place on the card
+    return sorted((x for x in out if round(x["loss"], 2) > 0), key=lambda x: -x["loss"])
+
+
 def clean_verdict(s4: dict, rule_update: list | None = None) -> list:
-    """The trust card, short (Sunny, 2026-11-16: "less crowded ... lots of
-    long sentences"): the score, then one line per kind of fact.
+    """The trust card: the score, and WHY, in losses that add up.
 
-        TRUST 0.429 · low                          5 of 6 signals
-        declared, not acted on:  brush_1 (−0.18)
-        protected, never treated as a source:  tanker_truck_1 (−0.08)
-        pulls down:  holds dangers it does not act on −0.19 · acts on dangers it
-                     does not hold −0.09 · +3
-        holds up:  targets agree
-
-    Every label is the record's own signal or error name; the record's full
-    sentence is on hover. "What to do" is not repeated here: the headline
-    above the card says it. Per-recommendation trust and the footnotes stay
-    in the detailed view."""
+    Sunny, 2026-11-16: the card said "do not rely on this advice" and then
+    showed two small numbers (−0.18, −0.08) for a score of 0.43; "for a
+    trust score this low the evidence seems insignificant". The score had
+    lost 0.57 and the card showed under half of it. Now every loss is
+    listed, largest first, with what in the run's own record stands behind
+    it, labelled evidence. A loss under 0.10 "is real but not the story"
+    (errors4._HEADLINE_MIN): those share one grey line. A rule added after
+    the run is listed apart and marked as not in the score. No order to the
+    reader, no ground truth, and a quiet look: this card is not the main
+    result (the causal-groundedness card is)."""
+    from agentic.errors4 import _HEADLINE_MIN
     trust = (s4 or {}).get("trust") or {}
     score = trust.get("score")
     if score is None:
@@ -133,73 +199,70 @@ def clean_verdict(s4: dict, rule_update: list | None = None) -> list:
     band = str(trust.get("band") or "")
     col = _band_colour(band)
     lab = {"fontWeight": "700", "color": "#64748b"}
-    line = {"fontSize": "11.5px", "margin": "2px 0", "lineHeight": "1.9"}
+    line = {"fontSize": "11.5px", "margin": "2px 0", "lineHeight": "1.8"}
     na = [x for x in (trust.get("not_applicable") or []) if isinstance(x, dict)]
     measured = str(trust.get("signals_measured") or "")
     scope_tip = "; ".join(
         f"{_SIGNAL_NAME.get(str(x.get('signal')), str(x.get('signal')).replace('_', ' '))}: "
         f"{_plain_reason(str(x.get('reason') or ''))}" for x in na)
+    try:
+        lost = round(1.0 - float(score), 2)
+    except (TypeError, ValueError):
+        lost = None
     rows: list[Any] = [
         html.Div([
             html.Span("TRUST ", style={"fontSize": "10px", "fontWeight": "800",
                                        "letterSpacing": ".08em", "color": "#64748b"}),
-            html.Span(f"{score} · {band}", title=_WHAT_TO_DO.get(band, ""),
-                      style={"fontSize": "16px", "fontWeight": "800", "color": col}),
+            html.Span(f"{score} · {band}", className="trust-score",
+                      style={"fontSize": "13px", "fontWeight": "800", "color": col}),
+            html.Span(" · does the advice agree with the model's own view of the scene",
+                      style={"fontSize": "10.5px", "color": "#94a3b8"}),
             html.Span((measured.replace("/", " of ") + " signals") if measured else "",
                       className="trust-scope",
                       title=("not measured — " + scope_tip) if scope_tip else "",
                       style={"float": "right", "fontSize": "10.5px", "color": "#94a3b8"}),
         ]),
-        html.Div(html.Div(style={"width": f"{max(0, min(100, float(score) * 100)):.0f}%",
-                                 "height": "6px", "background": col,
-                                 "borderRadius": "3px"}),
-                 style={"background": "#e2e8f0", "borderRadius": "3px",
-                        "margin": "4px 0 6px", "height": "6px"}),
     ]
-
-    def error_line(e: dict, later: bool) -> None:
-        if not isinstance(e, dict) or e.get("waived"):
-            return
-        detail = str(e.get("detail") or e.get("id") or "")
-        text = _ERROR_SHORT.get(str(e.get("id")), detail.split(":")[0].strip())
-        ents = [str(x) for x in (e.get("entities") or [])]
-        ecol = "#b45309" if later else "#b91c1c"
+    losses = trust_losses(s4)
+    main = [x for x in losses if x["loss"] >= _HEADLINE_MIN]
+    small = [x for x in losses if x["loss"] < _HEADLINE_MIN]
+    if losses and lost:
+        rows.append(html.Div(f"lost {lost:.2f}, largest first", className="trust-lost-total",
+                             style={"fontSize": "10.5px", "color": "#94a3b8",
+                                    "margin": "4px 0 2px"}))
+    for x in main:
+        kids: list = [html.Span(f"−{x['loss']:.2f} ", style={"fontWeight": "800",
+                                                             "color": "#334155"}),
+                      html.Span(x["name"], style={"fontWeight": "700", "color": "#334155"})]
+        if x["entities"] or x["evidence"]:
+            kids.append(html.Span(" · evidence: ", style={"color": "#94a3b8"}))
+            kids += [ent_chip(e, "#64748b") for e in x["entities"]]
+            if x["evidence"]:
+                kids.append(html.Span(x["evidence"], style={"color": "#475569"}))
+        rows.append(html.Div(kids, className="trust-lost", title=x["why"], style=line))
+    if small:
         rows.append(html.Div(
-            [html.Span(text + (": " if ents else " "), style={**lab, "color": ecol})]
-            + [ent_chip(x, ecol) for x in ents]
-            + ([html.Span(f"(−{e['deduction']})", style={"color": ecol})]
-               if e.get("deduction") is not None else [])
-            + ([html.Span(" · rule added after this run", style={"color": "#94a3b8"})]
-               if later else []),
-            className="trust-rule-update" if later else "trust-lost",
-            title=detail + (" — the saved score above does not include this"
-                            if later else ""),
-            style=line))
-    for e in (trust.get("singular_errors") or []):
-        error_line(e, False)
+            [html.Span("smaller: ", style=lab)]
+            + [html.Span(f"{x['name']} −{x['loss']:.2f}" + (" · " if i < len(small) - 1 else ""),
+                         title=(x["why"] + ((" — evidence: " + (", ".join(x["entities"])
+                                                               or x["evidence"]))
+                                            if (x["entities"] or x["evidence"]) else "")),
+                         style={"color": "#94a3b8"})
+               for i, x in enumerate(small)],
+            className="trust-small", style=line))
     for e in (rule_update or []):
-        error_line(e, True)
-
-    def name_of(c: dict) -> str:
-        sig = str(c.get("signal"))
-        return _PULLS_DOWN.get(sig, _SIGNAL_NAME.get(sig, sig.replace("_", " ")))
-    hits = sorted((c for c in (trust.get("contributors") or [])
-                   if isinstance(c, dict)
-                   and isinstance(c.get("contribution"), (int, float))
-                   and c["contribution"] > 0),
-                  key=lambda c: -float(c["contribution"]))
-    if hits:
-        kids: list = [html.Span("pulls down: ", style=lab)]
-        for i, c in enumerate(hits[:2]):
-            kids.append(html.Span(
-                f"{name_of(c)} −{float(c['contribution']):.2f}"
-                + (" · " if i < min(2, len(hits)) - 1 else ""),
-                title=f"{c.get('text', '')} — {c.get('evidence', '')}".strip(" —"),
-                style={"color": "#94a3b8" if band == "high" else col}))
-        if len(hits) > 2:
-            kids.append(html.Span(f" · +{len(hits) - 2}", title="in the detailed view",
-                                  style={"color": "#94a3b8"}))
-        rows.append(html.Div(kids, className="trust-pulls", style=line))
+        if not isinstance(e, dict) or e.get("waived"):
+            continue
+        detail = str(e.get("detail") or e.get("id") or "")
+        ents = [str(x) for x in (e.get("entities") or [])]
+        rows.append(html.Div(
+            [html.Span("not in this score, rule added after the run: ", style=lab),
+             html.Span(_ERROR_SHORT.get(str(e.get("id")), detail.split(":")[0].strip())
+                       + (" · evidence: " if ents else ""), style={"color": "#64748b"})]
+            + [ent_chip(x, "#64748b") for x in ents]
+            + ([html.Span(f"(would be −{e['deduction']})", style={"color": "#94a3b8"})]
+               if e.get("deduction") is not None else []),
+            className="trust-rule-update", title=detail, style=line))
     clean = [c for c in (trust.get("contributors") or [])
              if isinstance(c, dict) and (c.get("contribution") or 0) == 0]
     if clean:
@@ -209,10 +272,11 @@ def clean_verdict(s4: dict, rule_update: list | None = None) -> list:
                  _HOLDS_UP.get(str(c.get("signal")),
                                _SIGNAL_NAME.get(str(c.get("signal")),
                                                 str(c.get("signal")).replace("_", " ")))
-                 for c in clean), style={"color": "#16a34a"})],
+                 for c in clean), style={"color": "#64748b"})],
             className="trust-holds", style=line))
-    return [html.Div(rows, className="unc-panel",
-                     style={"borderColor": col, "padding": "8px 10px"})]
+    return [html.Div(rows, className="unc-panel trust-card",
+                     style={"borderColor": "#e2e8f0", "padding": "8px 10px",
+                            "background": "#fff"})]
 
 
 _SIGNAL_NAME = {
@@ -467,7 +531,11 @@ def findings(s4: dict, d: dict, *, chain: Callable[[dict], Any],
                    "the trust score" if d.get("stage4_started") else
                    "findings arrive once the recommendations are written")
         return head + [html.Div(waiting, className="ticket-empty")]
-    line = headline(s4, d)
+    # No headline bar above the cards (Sunny, 2026-11-16: "do not rely on
+    # this advice" was a strong order resting on small numbers). The trust
+    # card states its score and the losses behind it. Only a calm scene
+    # keeps one plain line, since it has no losses to read.
+    line = headline(s4, d) if _is_quiet(s4, d) else None
     out: list = ([line] if line is not None else []) + head
     out += clean_verdict(s4, d.get("rule_update")) or [html.Div("trust not scored on this run",
                                           className="ticket-empty")]
@@ -561,12 +629,11 @@ def headline_parts(s4: dict, d: dict, brief: bool = False) -> tuple[str, list]:
     if quiet:
         tone, opener = "high", "No disaster seen. Nothing needs doing."
     elif band == "high":
-        tone, opener = ("moderate", "Advice mostly sound.") if found \
-            else ("high", "Advice looks sound.")
+        tone, opener = ("moderate", "Trust is high.") if found else ("high", "Trust is high.")
     elif band == "moderate":
-        tone, opener = "moderate", "Check before acting."
+        tone, opener = "moderate", "Trust is moderate."
     elif band == "low":
-        tone, opener = "low", "Do not rely on this advice."
+        tone, opener = "low", "Trust is low."
     else:
         tone, opener = "moderate", "Trust not scored."
     parts: list = [opener]
@@ -627,6 +694,14 @@ def headline_text(s4: dict, d: dict) -> str:
                    for p in headline_parts(s4, d)[1])
 
 
+def _is_quiet(s4: dict, d: dict) -> bool:
+    """No disaster, and no recommendation that acts on anything."""
+    verdict = (((d or {}).get("assess") or {}).get("verdict") or {})
+    acting = [r for r in ((s4 or {}).get("recommendations") or [])
+              if isinstance(r, dict) and not r.get("benign")]
+    return bool(verdict) and verdict.get("scenario") != "Yes" and not acting
+
+
 def headline(s4: dict, d: dict, brief: bool = True) -> Any | None:
     """The headline as a component: one tinted line, ids as hover chips.
     Brief on the run page; the full sentence is `headline_text`."""
@@ -637,10 +712,8 @@ def headline(s4: dict, d: dict, brief: bool = True) -> Any | None:
     kids = [html.Span(p) if isinstance(p, str) else ent_chip(p[1], col)
             for p in parts]
     return html.Div(kids, className=f"headline tone-{tone}",
-                    style={"fontSize": "13.5px", "fontWeight": "700", "color": col,
-                           "background": f"{col}12", "border": f"1px solid {col}",
-                           "borderRadius": "8px", "padding": "7px 10px",
-                           "margin": "0 0 8px", "lineHeight": "1.8"})
+                    style={"fontSize": "12px", "fontWeight": "700", "color": "#334155",
+                           "margin": "0 0 6px", "lineHeight": "1.8"})
 
 
 def run_settings_line(d: dict) -> Any | None:

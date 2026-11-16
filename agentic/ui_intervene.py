@@ -533,10 +533,11 @@ def _tile(label: str, value: str, colour: str, title: str = "", cls: str = "") -
         html.Div(label, style={"fontSize": "9.5px", "fontWeight": "800",
                                "letterSpacing": ".06em", "color": "#64748b",
                                "textTransform": "uppercase"}),
-        html.Div(value, style={"fontSize": "15px", "fontWeight": "800", "color": colour}),
+        html.Div(value, style={"fontSize": "19px", "fontWeight": "800", "color": colour}),
     ], className=("iv-tile " + cls).strip(), title=title,
-        style={"flex": "1", "minWidth": "110px", "padding": "5px 9px",
-               "border": "1px solid #e2e8f0", "borderRadius": "8px", "background": "#fff"})
+        style={"flex": "1", "minWidth": "110px", "padding": "8px 11px",
+               "border": f"1px solid {colour}55", "borderRadius": "8px",
+               "background": f"{colour}0d"})
 
 
 def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
@@ -668,7 +669,8 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
     rows.append(html.Div(foot, className="iv-gt" if gt_on else "iv-foot",
                          style={"fontSize": "10px", "color": "#94a3b8", "marginTop": "4px"}))
     return [html.Div(rows, className="unc-panel iv-card",
-                     style={"borderColor": col, "padding": "8px 10px"})]
+                     style={"border": f"2px solid {col}", "padding": "10px 12px",
+                            "boxShadow": "0 1px 6px rgba(15, 23, 42, .08)"})]
 
 
 def _fold(title: str, kids: list, open_: bool = False, cls: str = "") -> Any:

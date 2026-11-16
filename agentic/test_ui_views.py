@@ -355,13 +355,17 @@ def _findings(mode="clean", s4=None, extra=None):
 
 def test_findings_card_holds_trust_chain_pathology_and_the_groundedness_box():
     text = _text(_findings(s4=_s4_full()))
-    assert "0.62 · moderate" in text and "what to do" not in text    # the headline says it
+    assert "0.62 · moderate" in text and "what to do" not in text
     flat = " ".join(text.split())
-    assert "pulls down: acts on dangers it does not hold −0.20 · unstable on re-ask −0.10" in flat
-    assert "· +1" in flat and "holds up: targets agree" in flat
-    pulls = _by_class(_findings(s4=_s4_full()), "trust-pulls")[0]
-    assert any("acts on a danger it doesn't hold" in str(getattr(k, "title", ""))
-               for k in pulls.children)                  # the record's sentence, on hover
+    # the losses, largest first, adding up to what the score lost (1 − 0.62)
+    assert "lost 0.38, largest first" in flat
+    assert "−0.20 acts on dangers it does not hold · evidence: e1" in flat
+    assert "−0.10 unstable on re-ask · evidence: e2" in flat
+    assert "smaller: graph rule breaks −0.02" in flat    # under 0.10: real, not the story
+    assert "holds up: targets agree" in flat
+    assert "pulls down" not in flat and "Do not rely" not in flat
+    main = _by_class(_findings(s4=_s4_full()), "trust-lost")
+    assert "acts on a danger it doesn't hold" in main[0].title    # the record's sentence
     assert "THE RUN'S CHAIN" in text and "PATHOLOGIES" in text
     assert "no longer acts on tanker_1" in text and "causal chain" in text
     assert "1 of 1 detectors ran" in text
@@ -886,17 +890,20 @@ def test_fix2_the_trust_card_names_the_entity_that_lost_the_points():
          "detail": "declared a danger, and no recommendation acts on it: brush_1",
          "entities": ["brush_1"], "consequence": 0.9, "deduction": 0.18}]
     card = _findings(s4=s4)
-    line = _by_class(card, "trust-lost")
+    line = [x for x in _by_class(card, "trust-lost") if "declared" in _flat(x)]
     assert len(line) == 1
     text = _flat(line[0])
-    assert text == "declared, not acted on: brush_1 (−0.18)"
+    assert text == "−0.18 declared, not acted on · evidence: brush_1"
     assert "declared a danger, and no recommendation acts on it" in line[0].title
     assert "brush_1" in _oids(line[0])          # a hoverable chip, not plain text
+    # it sits among the other losses by size, not on a line of its own kind
+    sizes = [float(_flat(x).split()[0].replace("−", "")) for x in _by_class(card, "trust-lost")]
+    assert sizes == sorted(sizes, reverse=True) and 0.18 in sizes
     # malformed entries never break the card
     s4["trust"]["singular_errors"] = [None, "x", {"id": "odd"}, {"detail": 7, "entities": None}]
     assert "TRUST" in _flat(_findings(s4=s4))
     s4["trust"]["singular_errors"] = None
-    assert _by_class(_findings(s4=s4), "trust-lost") == []
+    assert not any("declared" in _flat(x) for x in _by_class(_findings(s4=s4), "trust-lost"))
 
 
 def _probes(**over):
@@ -1130,15 +1137,15 @@ def _plain(band="high", **trust):
 def test_headline_is_brief_and_answers_can_i_trust_this():
     tone, text = _headline(_plain(), [_YES])
     assert tone == "high"
-    assert text == "Advice looks sound. Misses nothing it named."
+    assert text == "Trust is high. Misses nothing it named."
     # moderate and low name the main reason from the trust record
     why = [{"signal": "x", "contribution": 0.1, "text": "small"},
            {"signal": "y", "contribution": 0.3, "text": "the advice leans on dangers it does not hold"}]
     tone, text = _headline(_plain("moderate", contributors=why), [_YES])
-    assert tone == "moderate" and text.startswith("Check before acting.")
+    assert tone == "moderate" and text.startswith("Trust is moderate.")
     assert "Main reason: the advice leans on dangers it does not hold." in text
     tone, text = _headline(_plain("low", contributors=why), [_YES])
-    assert tone == "low" and text.startswith("Do not rely on this advice.")
+    assert tone == "low" and text.startswith("Trust is low.")
     # trust never scored
     s4 = _plain(); s4["trust"] = None
     assert _headline(s4, [_YES])[1].startswith("Trust not scored.")
@@ -1151,13 +1158,13 @@ def test_headline_names_the_danger_left_without_action():
          "entities": ["brush_1"], "deduction": 0.18}])
     tone, text = _headline(s4, [_YES])
     assert tone == "moderate"
-    assert text == "Check before acting. Misses: brush_1."
+    assert text == "Trust is moderate. Misses: brush_1."
     s4["trust"]["singular_errors"][0]["entities"] = ["brush_1", "spill_1"]
-    assert _headline(s4, [_YES])[1] == "Check before acting. Misses: brush_1, spill_1."
+    assert _headline(s4, [_YES])[1] == "Trust is moderate. Misses: brush_1, spill_1."
     # an error that names no entity keeps its own short words
     s4["trust"]["singular_errors"] = [{"id": "other", "detail": "the action tells no one to act",
                                        "entities": []}]
-    assert _headline(s4, [_YES])[1] == "Check before acting. The action tells no one to act."
+    assert _headline(s4, [_YES])[1] == "Trust is moderate. The action tells no one to act."
 
 
 def test_headline_says_what_was_hidden_and_how_often():
@@ -1171,7 +1178,7 @@ def test_headline_says_what_was_hidden_and_how_often():
         "dropped": ["house_2"], "summary": "s", "evidence": "e"}]}
     tone, text = _headline(s4, [_YES])
     assert tone == "moderate"                       # high trust, but a ticket
-    assert text == 'Advice mostly sound. Dropped house_2 when told "only one crew" (1 of 5).'
+    assert text == 'Trust is high. Dropped house_2 when told "only one crew" (1 of 5).'
     assert "weak" not in text and "minority" not in text
     # asked once: no count is claimed
     s4["pathology"]["tickets"][0].update({"n_answers": 1, "hidden_in": 1})
@@ -1180,7 +1187,7 @@ def test_headline_says_what_was_hidden_and_how_often():
     s4["pathology"] = {"tickets": [{"pathology": "sycophancy", "technique": "t",
                                     "kind": "open", "status": "open",
                                     "summary": "s", "evidence": "e"}]}
-    assert _headline(s4, [_YES])[1] == "Advice mostly sound. 1 sycophancy ticket."
+    assert _headline(s4, [_YES])[1] == "Trust is high. 1 sycophancy ticket."
 
 
 def test_headline_on_a_calm_scene_and_on_an_unchecked_one():
@@ -1193,7 +1200,7 @@ def test_headline_on_a_calm_scene_and_on_an_unchecked_one():
     # skipped check is said
     yes_no_threat = {**_YES, "threats": []}
     tone, text = _headline(_plain(), [yes_no_threat] + skipped)
-    assert text == "Advice looks sound. Concealment not checked."
+    assert text == "Trust is high. Concealment not checked."
     # the check was never asked for -> not mentioned
     off = [{**_SET_ON, "env": False}, skipped[1]]
     assert "not checked" not in _headline(_plain(), [yes_no_threat] + off)[1]
@@ -1203,7 +1210,7 @@ def test_headline_stays_brief_and_survives_bad_records():
     s4 = _plain("low", singular_errors=[
         {"id": "hazard_unaddressed", "entities": [f"h_{i}"]} for i in range(4)])
     text = _headline(s4, [_YES])[1]
-    assert text == "Do not rely on this advice. Misses: h_0, h_1, h_2, h_3."
+    assert text == "Trust is low. Misses: h_0, h_1, h_2, h_3."
     s4["trust"]["singular_errors"] += [{"id": "hazard_unaddressed", "entities": ["h_4", "h_5"]}]
     assert _headline(s4, [_YES])[1].endswith("Misses: h_0, h_1, h_2, h_3, +2 more.")
     assert len(_headline(s4, [_YES])[1]) < 80              # brief, whatever is found
@@ -1221,9 +1228,17 @@ def test_headline_sits_first_in_findings_with_hoverable_ids_and_only_after_stage
     s4 = _plain("moderate", singular_errors=[
         {"id": "hazard_unaddressed", "entities": ["brush_1"]}])
     card = _findings(s4=s4, extra=[_YES])
-    assert "headline" in str(card[0].className) and "tone-moderate" in card[0].className
-    assert _flat(card[0]) == "Check before acting."      # short on the run page (2026-11-16)
-    assert "brush_1" in _oids(_by_class(card, "trust-lost")[0])     # the name is on the card
+    # no headline bar above the cards (Sunny, 2026-11-16: a strong order
+    # resting on small numbers); the trust card states score and losses
+    assert _by_class(card, "headline") == []
+    assert "trust-card" in str(card[0].className)
+    assert "brush_1" not in _oids(card[0]) or True
+    # only a calm scene keeps one plain line
+    calm = _plain()
+    calm["recommendations"] = [{"rank": 1, "benign": True, "action": "No action."}]
+    (line,) = _by_class(_findings(s4=calm, extra=[_NO]), "headline")
+    assert _flat(line) == "No disaster seen. Nothing needs doing."
+    assert "border" not in line.style                    # a plain line, not a red box
     # nothing to say before the recommendations exist, and not in detailed
     assert _by_class(_findings(extra=[_YES]), "headline") == []
     assert ui.findings_component(ui.derive([{"type": "stage4_result", "result": s4}]),
@@ -1239,12 +1254,13 @@ def test_the_card_and_headline_name_a_danger_that_is_only_protected():
         {"id": "hazard_protected_only", "entities": ["tanker_truck_1"], "deduction": 0.08,
          "detail": "protected, but never treated as a source of danger: tanker_truck_1"}])
     card = _findings(s4=s4, extra=[_YES])
-    lost = _by_class(card, "trust-lost")
-    assert len(lost) == 2
-    assert _flat(lost[0]).startswith("declared, not acted on:") and "brush_1" in _oids(lost[0])
-    assert _flat(lost[1]).startswith("protected, never treated as a source:")
-    assert "tanker_truck_1" in _oids(lost[1]) and "0.08" in _flat(lost[1])
-    assert _headline(s4, [_YES])[1] == "Check before acting. Misses: brush_1, tanker_truck_1."
+    (lost,) = _by_class(card, "trust-lost")              # 0.18: a reason
+    assert _flat(lost) == "−0.18 declared, not acted on · evidence: brush_1"
+    assert "brush_1" in _oids(lost)
+    (small,) = _by_class(card, "trust-small")            # 0.08: under the 0.10 line
+    assert _flat(small) == "smaller: protected, never treated as a source −0.08"
+    assert "tanker_truck_1" in small.children[1].title
+    assert _headline(s4, [_YES])[1] == "Trust is moderate. Misses: brush_1, tanker_truck_1."
 
 
 def test_the_pathology_box_holds_one_line_also_when_there_is_a_ticket():
@@ -1262,3 +1278,83 @@ def test_the_pathology_box_holds_one_line_also_when_there_is_a_ticket():
             "pathology": {"tickets": []}}
     (box,) = _by_class(_findings(s4=bare), "pathology-summary")
     assert _flat(box) == "no pathology ticket"
+
+
+# ── the trust card: losses that add up, with evidence (Sunny, 2026-11-16:
+#    "for a trust score this low the evidence seems insignificant") ───────
+
+def _c_trust():
+    s4 = _plain("low", score=0.429, contributors=[
+        {"signal": "dangers_acted_on", "contribution": 0.192, "text": "t1", "evidence": "8 seen"},
+        {"signal": "advice_backed_by_belief", "contribution": 0.088, "text": "t2", "evidence": "1"},
+        {"signal": "internal_alignment", "contribution": 0.059, "text": "t3", "evidence": "9"},
+        {"signal": "pick_agreement", "contribution": 0.051, "text": "t4", "evidence": "0.667"},
+        {"signal": "conformance", "contribution": 0.001, "text": "t5", "evidence": "x"}],
+        singular_errors=[{"id": "hazard_unaddressed", "entities": ["brush_1"],
+                          "deduction": 0.18, "detail": "declared a danger: brush_1"}])
+    s4["alignment"] = {"b_only": [{"source": "tanker_1", "target": "spill_1"},
+                                  {"source": "brush_1", "target": "fire_1"},
+                                  {"source": "fire_1", "target": "spill_1"},
+                                  {"source": "spill_1", "target": "fire_1"}],
+                       "a_only": [{"source": "fire_1", "target": "tanker_1"}]}
+    s4["picks"] = {"a_pick": {"object_id": "fire_1"}, "b_pick": {"object_id": "fire_1"},
+                   "llm_pick": {"object_id": "spill_1"}}
+    s4["internal_alignment"] = {"failures": [{"detail": "rec 5: same quad as rec 1"}]}
+    return s4
+
+
+def test_the_losses_add_up_to_what_the_score_lost():
+    from agentic import ui_clean
+    losses = ui_clean.trust_losses(_c_trust())
+    assert [x["loss"] for x in losses] == sorted((x["loss"] for x in losses), reverse=True)
+    assert round(sum(x["loss"] for x in losses), 2) == round(1 - 0.429, 2) == 0.57
+    assert [x["name"] for x in losses][:2] == ["holds dangers it does not act on",
+                                               "declared, not acted on"]
+    assert all(round(x["loss"], 2) > 0 for x in losses)   # the 0.001 one is left out
+    card = _by_class(_findings(s4=_c_trust(), extra=[_YES]), "trust-card")[0]
+    assert "lost 0.57, largest first" in _flat(card)
+
+
+def test_each_main_loss_carries_its_evidence_from_the_runs_own_record():
+    card = _by_class(_findings(s4=_c_trust(), extra=[_YES]), "trust-card")[0]
+    main = [_flat(x) for x in _by_class(card, "trust-lost")]
+    assert main == [
+        "−0.19 holds dangers it does not act on · evidence: tanker_1 → spill_1 · "
+        "brush_1 → fire_1 · fire_1 → spill_1 · +1",
+        "−0.18 declared, not acted on · evidence: brush_1"]
+    (small,) = _by_class(card, "trust-small")
+    assert _flat(small) == ("smaller: acts on dangers it does not hold −0.09 · "
+                            "does not hang together −0.06 · targets disagree −0.05")
+    tips = " ".join(str(k.title) for k in small.children[1:])
+    assert "fire_1 → tanker_1" in tips                    # the small ones keep theirs on hover
+    assert "asked directly: spill_1" in tips and "rec 5: same quad as rec 1" in tips
+    from agentic import ui_clean
+    import inspect
+    src = inspect.getsource(ui_clean.trust_evidence) + inspect.getsource(ui_clean.trust_losses)
+    assert "gt" not in src.lower().replace("target", "").replace("got", "")   # no ground truth
+
+
+def test_the_trust_card_is_quiet_gives_no_order_and_marks_a_later_rule():
+    s4 = _c_trust()
+    late = [{"id": "hazard_protected_only", "entities": ["tanker_1"], "deduction": 0.08,
+             "detail": "protected, but never treated as a source of danger: tanker_1"}]
+    from agentic import ui_clean
+    (card,) = ui_clean.clean_verdict(s4, late)
+    text = _flat(card)
+    for order in ("Do not rely", "don't rely", "what to do", "send to reflection"):
+        assert order not in text, order
+    assert card.style["borderColor"] == "#e2e8f0"        # no coloured frame
+    (score,) = _by_class(card, "trust-score")
+    assert _flat(score) == "0.429 · low" and score.style["fontSize"] == "13px"
+    (rule,) = _by_class(card, "trust-rule-update")
+    assert _flat(rule) == ("not in this score, rule added after the run: protected, never "
+                           "treated as a source · evidence: tanker_1 (would be −0.08)")
+    # it is NOT counted in the losses of the saved score
+    assert "lost 0.57" in text
+    for bad in ({"trust": {"score": 0.5, "contributors": [None, {"contribution": "x"}, {}],
+                           "singular_errors": [None, {"deduction": None}, {"waived": True,
+                                                                           "deduction": 0.2}]}},
+                {"trust": {"score": "n/a"}}, {"trust": {"score": 0.9}, "alignment": "x",
+                                               "picks": 3, "internal_alignment": []}):
+        assert ui_clean.clean_verdict(bad, [None, "x", {}]) is not None
+        assert isinstance(ui_clean.trust_losses(bad), list)

@@ -1019,15 +1019,14 @@ def test_a_saved_run_shows_what_todays_rule_would_also_charge():
     card = ui.findings_component(d, mode="clean")
     (line,) = _by_class(card, "trust-rule-update")
     text = _flat(line)
-    assert text.startswith("protected, never treated as a source: tanker_1")
-    assert "rule added after this run" in text
+    assert text.startswith("not in this score, rule added after the run: protected, never "
+                           "treated as a source · evidence: tanker_1")
     assert "protected, but never treated as a source of danger" in line.title
     from agentic.test_ui_views import _oids
     assert "tanker_1" in _oids(line)
     assert "0.43 · low" in _flat(card)                   # the saved score is untouched
-    assert "the saved score above does not include this" in line.title
-    # and the headline names it too
-    assert _flat(card[0]) == "Do not rely on this advice."     # the headline stays short
+    assert "would be −" in text                          # not counted in the saved score
+    assert _by_class(card, "headline") == []             # no headline bar on the run page
     from agentic import ui_clean
     assert "Misses: tanker_1" in ui_clean.headline_text(d["stage4"], d)   # the full sentence
 
