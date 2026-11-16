@@ -111,8 +111,8 @@ _ERROR_SHORT = {
 }
 
 
-GROUP_NO_ADVICE = "the hazard is never the cause in any advice"
-GROUP_LINK = "the hazard has advice, this link of it does not"
+GROUP_NO_ADVICE = "hazard not addressed by any advice"
+GROUP_LINK = "hazard addressed, this effect on this target is not"
 
 
 def _arrow_items(edges: Any, s4: dict) -> list[dict]:
@@ -265,7 +265,7 @@ def _evidence_fold(x: dict) -> Any | None:
     elif grouped:
         n_gap = sum(1 for i in items if i.get("group") == GROUP_NO_ADVICE)
         gist = (f"{len(items)} arrow{'s' if len(items) != 1 else ''} · {n_gap} from a "
-                "hazard with no advice · "
+                "hazard not addressed · "
                 + (f"{people} reach a person" if people else "none reaches a person"))
     else:
         n = len(items)

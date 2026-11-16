@@ -1339,7 +1339,7 @@ def test_each_main_loss_carries_its_evidence_folded_and_ordered_by_consequence()
     assert len(folds) == 2 and not any(getattr(f, "open", False) for f in folds)
     # closed, the fold still says how heavy the evidence is
     assert _flat(folds[0].children[0]) == (
-        "evidence · 3 arrows · 2 from a hazard with no advice · 2 reach a person")
+        "evidence · 3 arrows · 2 from a hazard not addressed · 2 reach a person")
     assert _flat(folds[1].children[0]).startswith("evidence · 1 entity")
     # opened: two kinds, kept apart (Sunny: "we need to separate them"). The
     # advice in this record names fire_1 and tanker_1 as causes, so the
@@ -1369,7 +1369,7 @@ def test_each_main_loss_carries_its_evidence_folded_and_ordered_by_consequence()
                                   "target": "grass_1"}]
     card = _by_class(_findings(s4=s4, extra=[_YES]), "trust-card")[0]
     assert _flat(_by_class(card, "trust-evidence")[0].children[0]) == (
-        "evidence · 1 arrow · 1 from a hazard with no advice · none reaches a person")
+        "evidence · 1 arrow · 1 from a hazard not addressed · none reaches a person")
     # consequence orders the evidence; it never changes the saved score
     assert "0.429 · low" in _flat(card) and "lost 0.57" in _flat(card)
     for bad in (None, "x", [None, {"source": "a"}, {"source": "a", "target": "b"}]):
