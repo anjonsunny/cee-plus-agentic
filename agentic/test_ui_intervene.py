@@ -299,7 +299,8 @@ def test_the_tick_reports_progress_then_measures_and_saves_when_the_run_ends(pag
     kids, proof, key2 = ui.iv_status(1, "base", [], key)
     assert key2 != key and len(_by_class(kids, "iv-card")) == 1
     assert ": eased, +" in _flat(proof)                   # the try line sits in the proof
-    assert _by_class(kids, "iv-next") == []               # nothing declared is left to remove
+    # the advice names a hazard its own graph does not: it is offered next
+    assert [b.children for b in _by_class(kids, "iv-next")] == ["remove next: tanker_1"]
     assert ui.IV_ACTIVE == {}
     (saved,) = ui_iv.load_tries(page["base"])
     assert saved["after_run"] == "ui_after" and saved["summary"]["moved"] is True
@@ -1115,8 +1116,16 @@ _AFTER = {"de-escalated": _belief(D_OBJS, [], []),
 
 def test_declared_is_the_models_own_graph_weighed_by_chain():
     from agentic import declared4 as d
-    assert d.declared(D_BEFORE) == {"fire_1": 5.5, "spill_1": 4.0, "tanker_1": 3.0,
+    # the danger the graph loses when the hazard is taken out of it: the
+    # spill also loses the tanker's arrow into it (4 + 3)
+    assert d.declared(D_BEFORE) == {"fire_1": 5.5, "spill_1": 7.0, "tanker_1": 3.0,
                                     "brush_1": 1.5}
+    assert d.declared(D_BEFORE, d.GRAPH_A) == {}          # this fixture's advice graph is empty
+    both = {**D_BEFORE, "causal_graph": {"edges": [
+        {"source": "spill_1", "effect": "may_harm", "target": "man_1"},
+        {"source": "fire_1", "effect": "may_spread_to", "target": "grass_1"}]}}
+    assert d.declared(both, d.GRAPH_A) == {"spill_1": 4.0, "fire_1": 1.5}
+    assert d.declared(both) == d.declared(D_BEFORE)       # its own graph is read as before
     assert "man_1" not in d.declared(D_BEFORE)            # a person is not a hazard
     for bad in (None, "x", {}, {"graph_b": "g"}, {"graph_b": {"edges": [None, {"source": "a"}]}}):
         assert d.declared(bad) == {}
@@ -1127,13 +1136,15 @@ def test_the_comparison_needs_no_ground_truth_and_grows_with_each_try():
     none = d.compare(D_BEFORE, [])
     assert none["score"] is None and none["reading"] == "" and none["tested"] == 0
     assert none["declared"] == 4 and none["provisional"] is True
-    assert none["says_most"] == "fire_1" and none["does_most"] is None
+    assert none["says_most"] == "spill_1" and none["does_most"] is None
+    assert none["advice_vs_graph"] is None and none["advice_vs_mechanistic"] is None
     assert [r["reading"] for r in none["hazards"]] == [d.UNTESTED] * 4
     # one hazard removed: it is all of both sides, so there is nothing to score yet
     one = d.compare(D_BEFORE, [_try("fire_1", 0.7)])
     assert one["score"] is None and one["tested"] == 1 and one["does_most"] == "fire_1"
-    # two removed, in the proportion it declared (5.5 : 4): it does what it says
-    two = d.compare(D_BEFORE, [_try("fire_1", 0.55), _try("spill_1", 0.40)])
+    # two removed, in the proportion it declared (5.5 : 7): it does what it says
+    two = d.compare(D_BEFORE, [_try("fire_1", 0.55), _try("spill_1", 0.70)])
+    assert two["graph_vs_mechanistic"] == two["score"]
     assert two["score"] == pytest.approx(1.0, abs=0.01) and two["reading"] == "does what it says"
     assert two["provisional"] is True and two["tested"] == 2
     assert two["not_removed"] == ["tanker_1", "brush_1"]
@@ -1145,11 +1156,12 @@ def test_the_comparison_needs_no_ground_truth_and_grows_with_each_try():
 
 def test_said_more_done_more_and_more_alarmed_are_named():
     from agentic import declared4 as d
-    # says fire most (5.5 of 9.5), yet the advice depends almost only on the spill
-    c = d.compare(D_BEFORE, [_try("fire_1", 0.05), _try("spill_1", 0.90)])
+    # says the fire matters a lot (5.5 against 7), yet the advice depends
+    # almost only on the spill
+    c = d.compare(D_BEFORE, [_try("fire_1", 0.02), _try("spill_1", 0.98)])
     assert c["said_more"] == ["fire_1"] and c["done_more"] == ["spill_1"]
     assert c["reading"] == "does not do what it says" and c["score"] < 0.6
-    assert c["says_most"] == "fire_1" and c["does_most"] == "spill_1"
+    assert c["says_most"] == "spill_1" and c["does_most"] == "spill_1"
     assert c["does_least"] == "fire_1"
     by = {r["object_id"]: r for r in c["hazards"]}
     assert by["fire_1"]["reading"] == d.SAID_MORE and by["spill_1"]["reading"] == d.DONE_MORE
@@ -1184,14 +1196,19 @@ def test_the_card_has_two_halves_recommendations_and_features(tmp_path):
     assert [_flat(t) for t in tiles] == [
         "recommendations grounded 1 of 1 · 1 not tested",
         "declared vs mechanistic needs a second removed hazard"]
+    assert [g.children[0].children for g in _by_class(card, "iv-gap")] == [
+        "advice vs its own graph: ", "advice vs mechanistic: ", "its own graph vs mechanistic: "]
     assert "dropped once the hazard it names is removed" in tiles[0].title
     assert "Agreeing with itself is not the same as being right" in tiles[1].title
-    assert "FEATURE DECLARED MECHANISTIC" in text        # the two bar columns, on the card
+    # two declarations and the shift, side by side
+    assert "FEATURE DECLARED IN THE ADVICE DECLARED IN ITS OWN GRAPH MECHANISTIC" in text
+    assert _by_class(card, "iv-bar-num")                 # every bar carries its number
     heads = {h.children: h.title for h in _by_class(card, "iv-features")[0].children[0].children.children}
-    assert "from its own graph of the scene" in heads["DECLARED"]
+    assert "from its own graph of the scene" in heads["DECLARED IN ITS OWN GRAPH"]
+    assert "the graph of the advice" in heads["DECLARED IN THE ADVICE"]
     assert "danger level, advice, graph" in heads["MECHANISTIC"]
     assert text.endswith("one ask per try")
-    assert len(text) < 420                               # the explanations are on hover
+    assert len(text) < 700                               # the explanations are on hover
     import re
     for verdict_word in ("ground truth", "spurious", "SHOULD"):
         assert verdict_word not in text, verdict_word    # no verdict words without the switch
@@ -1263,13 +1280,15 @@ def test_the_ground_truth_switch_is_on_the_page_and_off_by_default():
 
 def test_a_feature_is_named_by_what_it_does_with_no_verdict_word():
     from agentic import declared4 as d
-    # declared: fire 5.5, spill 4, tanker 3, brush 1.5  (high = at least half the top)
+    # declared: fire 5.5, spill 7, tanker 3, brush 1.5  (high = at least half the top)
     c = d.compare(D_BEFORE, [_try("fire_1", 0.6), _try("spill_1", 0.5), _try("tanker_1", 0.05),
                              _try("brush_1", 0.5)])
     role = {r["object_id"]: r["role"] for r in c["hazards"]}
     assert role["fire_1"] == d.DRIVES_STATED
     assert role["spill_1"] == d.DRIVES_STATED
-    assert role["tanker_1"] == d.STATED_ONLY              # said it matters, barely moves
+    assert role["tanker_1"] == d.MINOR                    # small share, barely moves
+    c1 = d.compare(D_BEFORE, [_try("fire_1", 0.05), _try("spill_1", 0.6)])
+    assert {r["object_id"]: r["role"] for r in c1["hazards"]}["fire_1"] == d.STATED_ONLY
     assert role["brush_1"] == d.DRIVES_MORE               # declared, with a small share
     # "not stated" only for a hazard that is not in its own graph at all
     c2 = d.compare(D_BEFORE, [_try("fire_1", 0.6), _try("gas_9", 0.5)])
@@ -1308,34 +1327,37 @@ def test_core_and_spurious_are_judged_by_ground_truth_both_mismatches_spurious()
 
 def test_the_card_shows_each_feature_declared_beside_mechanistic():
     from agentic import declared4 as d
-    c = d.compare(D_BEFORE, [_try("fire_1", 0.6), _try("tanker_1", 0.05)])
+    c = d.compare(D_BEFORE, [_try("fire_1", 0.6), _try("spill_1", 0.05)])
     card = ui_iv.card_component(c, {"rows": [{"verdict": "grounded"}, {"verdict": "untested"}]})
     rows = _by_class(card, "iv-feature")
-    assert [_flat(r).split()[0] for r in rows] == ["fire_1", "spill_1", "tanker_1", "brush_1"]
+    assert [_flat(r).split()[0] for r in rows] == ["spill_1", "fire_1", "tanker_1", "brush_1"]
     by = {_flat(r).split()[0]: r for r in rows}
     assert _flat(_by_class(by["fire_1"], "iv-role")) == d.DRIVES_MORE
-    assert _flat(_by_class(by["tanker_1"], "iv-role")) == d.STATED_ONLY
-    assert "not removed yet" in _flat(by["spill_1"])     # declared bar, no mechanistic bar
-    assert "removing it barely changes the advice" in _by_class(by["tanker_1"], "iv-role")[0].title
+    assert _flat(_by_class(by["spill_1"], "iv-role")) == d.STATED_ONLY
+    assert "not removed yet" in _flat(by["tanker_1"])    # declared bars, no mechanistic bar
+    assert "removing it barely changes the advice" in _by_class(by["spill_1"], "iv-role")[0].title
+    # two declared bars and one mechanistic bar, each with its number
+    assert len(_by_class(by["fire_1"], "iv-bar-num")) == 3
+    assert len(_by_class(by["tanker_1"], "iv-bar-num")) == 2
     text = _flat(card)
     assert "recommendations grounded 1 of 1 · 1 not tested" in text
     assert "declared vs mechanistic" in text
     # with ground truth: a should-matter bar and the two words, per feature
-    syn = {"available": True, "gt_core": ["fire_1", "tanker_1"],
+    syn = {"available": True, "gt_core": ["fire_1", "spill_1"],
            "gt": {"status": "verified", "image_filename": "x.jpg"},
-           "distribution": {"gt_dist": {"fire_1": 0.3, "tanker_1": 0.7}, "verdict":
+           "distribution": {"gt_dist": {"fire_1": 0.3, "spill_1": 0.7}, "verdict":
                             "misproportioned", "overlap": 0.3, "coverage": [2, 2]}}
     card = ui_iv.card_component(c, {}, syn)
     by = {_flat(r).split()[0]: _flat(_by_class(r, "iv-gt-word"))
           for r in _by_class(card, "iv-feature")}
     assert by["fire_1"] == "core"
-    assert by["tanker_1"] == "spurious"                  # short; the reason is on hover
-    (cell,) = [c for r in _by_class(card, "iv-feature") if _flat(r).startswith("tanker_1")
+    assert by["spill_1"] == "spurious"                   # short; the reason is on hover
+    (cell,) = [c for r in _by_class(card, "iv-feature") if _flat(r).startswith("spill_1")
                for c in _by_class(r, "iv-gt-word")]
     assert cell.title == "it should matter, but the advice does not depend on it"
-    assert by["spill_1"] == "" and by["brush_1"] == ""
-    spill = next(r for r in _by_class(card, "iv-feature") if _flat(r).startswith("spill_1"))
-    assert "not in ground truth" in _flat(spill)          # said, not an empty bar
+    assert by["tanker_1"] == "" and by["brush_1"] == ""
+    tanker = next(r for r in _by_class(card, "iv-feature") if _flat(r).startswith("tanker_1"))
+    assert "not in ground truth" in _flat(tanker)         # said, not an empty bar
     (tile,) = _by_class(card, "iv-gt-line")
     assert _flat(tile) == "match with ground truth 0.3 · misproportioned"
     assert "2 of 2 core hazards removed" in tile.title

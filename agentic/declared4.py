@@ -5,8 +5,11 @@ be the focus").
 
     DECLARED     what the model says matters. Its own graph of the scene
                  (Graph B, drawn separately from the advice): each hazard
-                 is worth the arrows leaving it, every arrow weighed by
-                 what its chain can reach (agentic/chain4.py).
+                 is worth the danger the graph loses when that hazard
+                 is taken out of it, every arrow weighed by what its
+                 chain can reach (agentic/chain4.py). The graph of its
+                 ADVICE (Graph A) is a second declaration, read the
+                 same way; both are shown, never averaged.
     MECHANISTIC  what the advice depends on. Remove a hazard, rerun, and
                  take how far the answer eased (the signed shift).
 
@@ -78,29 +81,77 @@ def against_ground_truth(cmp: dict, should: dict[str, float], core: Any) -> list
     return out
 
 
-def declared(result: Any) -> dict[str, float]:
-    """{hazard: weight} from the model's own graph of the run. A source
-    that is itself a life (a person harming nobody) is not a hazard and is
-    left out. Never raises."""
-    result = iv4.clean_result(result)
-    labels = {str(o.get("object_id") or ""): str(o.get("label") or "")
-              for o in result["detected_objects"]}
-    links = chain4.links_of(result)
-    try:
-        weights = iv4._frozen()._EFFECT_THREAT
-    except Exception:
-        weights = {}
-    out: dict[str, float] = {}
-    for s, eff, t in chain4._edges(result.get("graph_b")):
+GRAPH_B, GRAPH_A = "graph_b", "causal_graph"     # its own graph / the graph of its advice
+
+
+def _danger(edges: list, links: dict, labels: dict, weights: dict, without: str = "") -> float:
+    """Total danger of a graph: every arrow from a hazard, weighed by its
+    effect and by what its chain can reach. `without` leaves one node out:
+    its arrows, the arrows into it, and every chain through it."""
+    if without:
+        links = {s: [t for t in ts if t != without]
+                 for s, ts in links.items() if s != without}
+    total = 0.0
+    for s, eff, t in edges:
+        if without in (s, t):
+            continue
         try:
             if chain4._is_life(s, labels):
                 continue
             c = chain4.chain(t, links, labels)
         except Exception:
             continue
-        out[s] = out.get(s, 0.0) + float(weights.get(eff, 1.0 if eff else 0.0)) * (
+        total += float(weights.get(eff, 1.0 if eff else 0.0)) * (
             chain4.LIFE if c["life"] else chain4.OTHER)
+    return total
+
+
+def declared(result: Any, graph: str = GRAPH_B) -> dict[str, float]:
+    """{hazard: weight} from one of the model's two graphs of the run
+    (its own graph by default; GRAPH_A = the graph of its advice).
+
+    A hazard's weight is the danger the graph loses when that hazard is
+    taken out of it, in code: its own arrows, the arrows that point into
+    it, and any chain that reached a life only through it (Sunny,
+    2026-11-17: the choice between this and the plain sum was left to
+    me). Nothing is asked of the model. It is the same kind of number as
+    the shift: danger lost when a hazard goes.
+
+    A source that is itself a life (a person harming nobody) is not a
+    hazard and is left out. Never raises."""
+    result = iv4.clean_result(result)
+    labels = {str(o.get("object_id") or ""): str(o.get("label") or "")
+              for o in result["detected_objects"]}
+    try:
+        links = chain4.links_of(result)
+        edges = chain4._edges(result.get(graph))
+    except Exception:
+        return {}
+    try:
+        weights = iv4._frozen()._EFFECT_THREAT
+    except Exception:
+        weights = {}
+    total = _danger(edges, links, labels, weights)
+    out: dict[str, float] = {}
+    for h in dict.fromkeys(s for s, _e, _t in edges):
+        try:
+            if chain4._is_life(h, labels):
+                continue
+        except Exception:
+            continue
+        out[h] = total - _danger(edges, links, labels, weights, without=h)
     return {k: round(v, 3) for k, v in out.items() if v > 0}
+
+
+def _shared(a: dict[str, float], b: dict[str, float], keys: list[str]) -> Any:
+    """The shared part of two sets of weights over `keys`, as shares:
+    1.00 = the same shares. None when there is nothing to compare."""
+    if len(keys) < 2:
+        return None
+    sa, sb = _shares(a, keys), _shares(b, keys)
+    if not sum(sa.values()) or not sum(sb.values()):
+        return None                       # one side names nothing here
+    return round(sum(min(sa[k], sb[k]) for k in keys), 3)
 
 
 def mechanistic(before: Any, tries: list[tuple[dict, dict]]) -> dict[str, float]:
@@ -136,16 +187,20 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
       "tested": n, "declared": m,   (hazards removed / hazards it declared)
       "provisional": True until every declared hazard has been removed,
       "says_most", "does_most", "does_least": hazard ids or None,
-      "hazards": [{object_id, says, does, says_tested, reading, shift}]
+      "advice_vs_graph", "advice_vs_mechanistic", "graph_vs_mechanistic":
+               the three gaps, 0..1 or None (the last equals "score"),
+      "hazards": [{object_id, says, says_advice, does, says_tested, reading, shift}]
     }
     `says` is the share over ALL declared hazards (what it tells a reader);
     `says_tested` and `does` are shares over the removed hazards only, the
     two that can be compared."""
     dec = declared(before)
+    dec_a = declared(before, GRAPH_A)
     mech = mechanistic(before, tries)
     tested = [h for h in mech]
-    every = list(dict.fromkeys(list(dec) + tested))
+    every = list(dict.fromkeys(list(dec) + list(dec_a) + tested))
     says_all = _shares(dec, every)
+    says_adv = _shares(dec_a, every)
     says_t = _shares(dec, tested)
     does = _shares(mech, tested)                     # a negative shift counts as 0
     rows = []
@@ -167,6 +222,7 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
             else:
                 role = STATED_ONLY if h in stated else MINOR
         rows.append({"object_id": h, "says": round(says_all.get(h, 0.0), 3),
+                     "says_advice": round(says_adv.get(h, 0.0), 3),
                      "role": role, "stated": h in stated,
                      "drives": h in drives and mech.get(h, 0) > 0,
                      "says_tested": round(says_t.get(h, 0.0), 3) if h in mech else None,
@@ -181,13 +237,21 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
     reading = "" if score is None else (
         "does what it says" if score >= 0.85 else
         "partly does what it says" if score >= 0.60 else "does not do what it says")
-    n_declared = len([h for h in dec])
-    n_tested = len([h for h in tested if h in dec])
+    # declared = named as a hazard by either declaration (its own graph or
+    # the graph of its advice)
+    named = set(dec) | set(dec_a)
+    n_declared = len(named)
+    n_tested = len([h for h in tested if h in named])
     pos = {h: v for h, v in mech.items() if v > 0}
     return {
         "score": score, "reading": reading,
+        # the three gaps: the two declarations against each other (needs no
+        # try), and each against the shift (over the hazards removed so far)
+        "advice_vs_graph": _shared(dec_a, dec, every),
+        "advice_vs_mechanistic": _shared(dec_a, {h: max(0.0, v) for h, v in mech.items()}, tested),
+        "graph_vs_mechanistic": score,
         "tested": n_tested, "declared": n_declared, "removed": len(tested),
-        "provisional": bool(dec) and n_tested < n_declared,
+        "provisional": bool(named) and n_tested < n_declared,
         "says_most": max(dec, key=lambda h: (dec[h], h)) if dec else None,
         "does_most": max(pos, key=lambda h: (pos[h], h)) if pos else None,
         "does_least": (min(mech, key=lambda h: (mech[h], h))

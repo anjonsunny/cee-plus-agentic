@@ -483,12 +483,16 @@ _SCORE_COL = {"does what it says": "#16a34a", "partly does what it says": "#b453
 
 def _bar(v: Any, col: str) -> Any:
     v = float(v) if isinstance(v, (int, float)) else 0.0
-    return html.Div([
+    return html.Span([html.Div([
         html.Div(style={"width": f"{max(0.0, min(1.0, v)) * 100:.0f}%", "height": "7px",
                         "background": col, "borderRadius": "3px"}),
     ], title=f"{v:.2f}", style={"background": "#e2e8f0", "borderRadius": "3px",
                                 "width": "70px", "display": "inline-block",
-                                "verticalAlign": "middle"})
+                                "verticalAlign": "middle"}),
+        html.Span(f"{v:.2f}", className="iv-bar-num",
+                  style={"marginLeft": "6px", "fontSize": "10.5px", "color": "#475569",
+                         "fontVariantNumeric": "tabular-nums"})],
+        style={"whiteSpace": "nowrap"})
 
 
 _ROLE = {"drives the advice, as declared": "#16a34a",
@@ -521,8 +525,12 @@ _GT_SHORT = {
     "should matter, not removed yet": ("not removed yet", "it should matter; no try has "
                                                          "removed it"),
 }
+A_COL, B_COL = "DECLARED IN THE ADVICE", "DECLARED IN ITS OWN GRAPH"
 _HEAD_TIP = {
-    "DECLARED": "how much the model says this hazard matters, from its own graph of the scene",
+    A_COL: "how much the advice says this hazard matters: the danger the graph of "
+           "the advice loses when this hazard is taken out of it",
+    B_COL: "how much the model says this hazard matters, from its own graph of the scene: "
+           "the danger that graph loses when this hazard is taken out of it",
     "MECHANISTIC": "how far the answer eased when this hazard was removed "
                    "(danger level, advice, graph)",
     "SHOULD MATTER": "the weight of this hazard in the ground truth",
@@ -587,9 +595,9 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
               f"{score:.2f} · {reading}" if isinstance(score, (int, float))
               else "needs a second removed hazard",
               col,
-              "how far what the model says matters and what its advice depends on agree, "
-              "over the hazards removed so far (1.00 = the same shares). Agreeing with "
-              "itself is not the same as being right.", "iv-score")]
+              "how far what the model says matters (its own graph) and what its advice "
+              "depends on agree, over the hazards removed so far (1.00 = the same shares). "
+              "Agreeing with itself is not the same as being right.", "iv-score")]
     if gt_on:
         v = str(dist.get("verdict"))
         c = dist.get("coverage") if isinstance(dist.get("coverage"), (list, tuple)) else []
@@ -601,6 +609,25 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
             "iv-gt-line"))
     rows: list = [html.Div(tiles, className="iv-tiles",
                            style={"display": "flex", "gap": "8px", "flexWrap": "wrap"})]
+
+    # ── the three gaps: two declarations and the shift (1.00 = the same shares)
+    def _gap(v: Any) -> str:
+        return f"{v:.2f}" if isinstance(v, (int, float)) else "needs a second removed hazard"
+    gaps = [("advice vs its own graph", cmp.get("advice_vs_graph"),
+             "the two declarations against each other, over every hazard either names"),
+            ("advice vs mechanistic", cmp.get("advice_vs_mechanistic"),
+             "what the advice says matters against how far the answer eased, "
+             "over the hazards removed so far"),
+            ("its own graph vs mechanistic", cmp.get("graph_vs_mechanistic"),
+             "what its own graph says matters against how far the answer eased, "
+             "over the hazards removed so far")]
+    if any(k in cmp for k in ("advice_vs_graph", "advice_vs_mechanistic")):
+        rows.append(html.Div(
+            [html.Span([html.Span(name + ": ", style={"color": "#64748b"}),
+                        html.Span(_gap(v), style={"fontWeight": "700", "color": "#334155"})],
+                       className="iv-gap", title=tip + " (1.00 = the same shares)",
+                       style={"marginRight": "16px"}) for name, v, tip in gaps],
+            className="iv-gaps", style={"fontSize": "11px", "margin": "6px 0 0"}))
 
     # ── what is still open, and the way to close it
     left = [str(x) for x in (cmp.get("not_removed") or []) if x]
@@ -631,13 +658,14 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
     feats += [{"object_id": h, "says": 0.0, "does": None, "role": "not declared by the model"}
               for h in gt_rows if h not in known]
     if feats:
-        head = ["FEATURE", "DECLARED", "MECHANISTIC"] + (["SHOULD MATTER"] if gt_on else []) \
+        head = ["FEATURE", A_COL, B_COL, "MECHANISTIC"] + (["SHOULD MATTER"] if gt_on else []) \
             + [""] + (["BY GROUND TRUTH"] if gt_on else [])
         quiet = {"color": "#94a3b8", "fontSize": "10.5px"}
         body = []
         for r in feats:
             oid, role = str(r.get("object_id")), str(r.get("role") or "")
             tds = [html.Td(ent_chip(oid, "#ef4444"), style=_TD),
+                   html.Td(_bar(r.get("says_advice"), "#64748b"), style=_TD),
                    html.Td(_bar(r.get("says"), "#334155"), style=_TD),
                    html.Td(_bar(r.get("does"), "#16a34a") if r.get("does") is not None
                            else html.Span("not removed yet", style=quiet), style=_TD)]
