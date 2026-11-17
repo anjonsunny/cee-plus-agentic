@@ -495,6 +495,9 @@ def _bar(v: Any, col: str) -> Any:
         style={"whiteSpace": "nowrap"})
 
 
+SHIFTS, NO_SHIFT = "shifts emergency responses", "does not shift emergency responses"
+
+
 def _parts_line(parts: Any) -> Any:
     """The three signals of one hazard's shift, each with its own number:
     green when it eased, red when it escalated."""
@@ -552,9 +555,8 @@ _HEAD_TIP = {
            "the recommendations loses when this hazard is taken out of it",
     B_COL: "how much the model says this hazard matters, from its own graph of the scene: "
            "the danger that graph loses when this hazard is taken out of it",
-    "MECHANISTIC": "the shift when this hazard was removed: the mean of three shifts "
-                   "(danger level, recommendations, graph), each shown under the bar; "
-                   "green = eased, red = escalated",
+    "MECHANISTIC": "the combined shift when this hazard was removed "
+                   "(danger level, recommendations, graph)",
     "SHOULD MATTER": "the weight of this hazard in the ground truth",
     "BY GROUND TRUTH": "core: it should matter and the recommendations depend on it · "
                        "spurious: the two disagree",
@@ -695,7 +697,7 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
             tds = [html.Td(ent_chip(oid, "#ef4444"), style=_TD),
                    html.Td(_bar(r.get("says_advice"), "#64748b"), style=_TD),
                    html.Td(_bar(r.get("says"), "#334155"), style=_TD),
-                   html.Td([_bar(r.get("does"), "#16a34a"), _parts_line(r.get("parts"))]
+                   html.Td(_bar(r.get("does"), "#16a34a")
                            if r.get("does") is not None
                            else html.Span("not removed yet", style=quiet), style=_TD)]
             g = gt_rows.get(oid) or {}
@@ -704,10 +706,20 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
                 tds.append(html.Td(_bar(g.get("should"), "#7c3aed") if named
                                    else html.Span("not in ground truth", style=quiet),
                                    style=_TD))
-            tds.append(html.Td("" if role == "not removed yet" else role,
-                               className="iv-role", title=_ROLE_MEANS.get(role, ""),
-                               style={**_TD, "fontWeight": "700",
-                                      "color": _ROLE.get(role, "#64748b")}))
+            # one phrase, coloured by the direction of the combined shift
+            # (Sunny, 2026-11-17: no separate parts, no label variants)
+            sh = r.get("shift")
+            way = ("" if not isinstance(sh, (int, float)) else
+                   "eased" if sh > 0 else "escalated" if sh < 0 else "unchanged")
+            tds.append(html.Td(
+                SHIFTS if way in ("eased", "escalated") else NO_SHIFT if way else "",
+                className="iv-role", **{"data-way": way},
+                title={"eased": "removing it eased the emergency responses",
+                       "escalated": "removing it escalated the emergency responses",
+                       "unchanged": "removing it did not shift the emergency responses"
+                       }.get(way, ""),
+                style={**_TD, "fontWeight": "700",
+                       "color": {"eased": "#16a34a", "escalated": "#b91c1c"}.get(way, "#94a3b8")}))
             if gt_on:
                 word = str(g.get("word") or "")
                 short, why = _GT_SHORT.get(word, (word, ""))
