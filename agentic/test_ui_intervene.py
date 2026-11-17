@@ -178,7 +178,7 @@ def test_the_status_shows_saved_tries_the_running_one_and_an_empty_state():
              {"index": 3, "target": "x", "modality": "caption", "status": "failed"}]
     comp = ui_iv.status_component(tries, {"target": "brush_1", "progress": "Perceive · 2 min"})
     text = _flat(comp)
-    assert "#1 removed fire_1 (both): the advice moved" in text    # an old try, no signed shift
+    assert "#1 removed fire_1 (both): the recommendations moved" in text    # an old try, no signed shift
     assert "0.87" not in text                             # the frozen arm's shift is not shown
     with_signed = _flat(ui_iv.status_component(tries, None, {1: {"value": 0.72,
                                                               "direction": "eased"}}))
@@ -519,7 +519,7 @@ def test_the_result_shows_the_table_above_the_tries_with_hoverable_ids(tmp_path)
     assert "decoration" not in text and "hidden dependence" not in text
     for word in ("RECOMMENDATION", "NAMES", "#1 removed", "READING (ONE ASK)", "grounded",
                  "kept", "untested",
-                 "advice moved", "1 of 2", "level -3", "the tries · 2",
+                 "recommendations moved", "1 of 2", "level -3", "the tries · 2",
                  "not measured — boom", "running the edited scene: removed tanker_1"):
         assert word in text, word
     assert {"fire_1", "tanker_1", "man_1"} <= set(_oids(comp))
@@ -674,12 +674,12 @@ def test_ground_truth_shows_only_when_the_switch_is_on(gt):
                  "ground truth: verified · push_09.jpg"):
         assert word in text, word
     heads = {h.children: h.title for h in _by_class(on, "iv-features")[0].children[0].children.children}
-    assert "core: it should matter and the advice depends on it" in heads["BY GROUND TRUTH"]
+    assert "core: it should matter and the recommendations depend on it" in heads["BY GROUND TRUTH"]
     assert "spurious: the two disagree" in heads["BY GROUND TRUTH"]
     assert len(_by_class(on, "iv-gt-line")) == 1
     words = {_flat(r).split()[0]: _flat(_by_class(r, "iv-gt-word"))
              for r in _by_class(on, "iv-feature")}
-    assert words["fire_1"] == "core"                     # should matter, and the advice moved
+    assert words["fire_1"] == "core"                     # should matter, and the recommendations moved
     assert words["tanker_1"] == "not removed yet"
     # switch on, but this scene has no ground truth: the card says so
     (gt["verified"] / "push_09.jpg.gt.json").unlink()
@@ -784,7 +784,7 @@ def test_the_table_shows_direction_by_chain(tmp_path):
     ui_iv.save_try(base, one)
     comp = ui_iv.result_component(base, tmp_path)
     text = _flat(comp)
-    assert "danger in the advice" in text and "by chain:" in text
+    assert "danger in the recommendations" in text and "by chain:" in text
     (cell,) = _by_class(comp, "iv-chain")
     assert "eased" in _flat(cell) and "before:" in cell.title and "after:" in cell.title
     # the hover names the chain of an arrow that has one
@@ -919,17 +919,17 @@ def test_a_cell_says_what_happened_to_the_advice_then_the_label():
     rows = _by_class(comp, "iv-row")
     by = {_flat(r).split()[0]: _flat(_by_class(r, "iv-cell")) for r in rows}
     assert by["#1"] == "kept"                             # the uneventful cell, said quietly
-    assert by["#2"] == "advice kept → masquerade"
-    assert by["#3"] == "advice kept, adjusted → correctly ignored"
-    assert by["#4"] == "advice dropped → spurious"
-    assert by["#6"] == "advice kept, adjusted → correctly ignored"
+    assert by["#2"] == "recommendation kept → masquerade"
+    assert by["#3"] == "recommendation kept, adjusted → correctly ignored"
+    assert by["#4"] == "recommendation dropped → spurious"
+    assert by["#6"] == "recommendation kept, adjusted → correctly ignored"
     assert "nothing left to protect" not in _flat(comp)
     text = _flat(comp)
     for old_word in ("action changed", "gone with it", " stays ", " gone "):
         assert old_word not in " " + text + " ", old_word
     # the hover explains the phrase and shows the two pieces of advice
     kept = next(c for c in _by_class(comp, "iv-cell") if "adjusted" in _flat(c))
-    assert "still has advice, with a different target" in kept.title
+    assert "still has a recommendation, with a different target" in kept.title
     assert "before: Extinguish fire_1." in kept.title and "after: Cool truck_1." in kept.title
     dropped = next(c for c in _by_class(comp, "iv-cell") if "dropped" in _flat(c))
     assert "no longer in the answer" in dropped.title and "after:" not in dropped.title
@@ -1054,13 +1054,13 @@ def test_the_summary_sentences_cover_every_outcome():
     base = {"n": 3, "targets": ["fire_1", "spill_1", "tanker_1"], "score": 0.954,
             "tested": 3, "declared": 5, "provisional": True}
     assert s({**base, "reading": "agree"}) == (
-        "Advice depends on what it says matters (3 of 5 hazards removed).")
+        "Recommendations depend on what it says matters (3 of 5 hazards removed).")
     assert s({**base, "reading": "agree", "provisional": False}) == (
-        "Advice depends on what it says matters.")
+        "Recommendations depend on what it says matters.")
     assert s({**base, "reading": "agree in part"}).startswith(
-        "Advice partly depends on what it says matters")
+        "Recommendations partly depend on what it says matters")
     assert s({**base, "reading": "differ"}).startswith(
-        "Advice does not depend on what it says matters")
+        "Recommendations do not depend on what it says matters")
     assert s({"n": 1, "reading": "", "score": None}) == "1 hazard removed so far."
     assert line({**base, "reading": "agree"}) == (
         "3 hazards removed (fire_1, spill_1, tanker_1) · declared vs mechanistic: 0.95, "
@@ -1197,16 +1197,16 @@ def test_the_card_has_two_halves_recommendations_and_features(tmp_path):
         "recommendations grounded 1 of 1 · 1 not tested",
         "declared vs mechanistic needs a second removed hazard"]
     assert [g.children[0].children for g in _by_class(card, "iv-gap")] == [
-        "advice vs its own graph: ", "advice vs mechanistic: ", "its own graph vs mechanistic: "]
+        "recommendations vs its own graph: ", "recommendations vs mechanistic: ", "its own graph vs mechanistic: "]
     assert "dropped once the hazard it names is removed" in tiles[0].title
     assert "Agreeing with itself is not the same as being right" in tiles[1].title
     # two declarations and the shift, side by side
-    assert "FEATURE DECLARED IN THE ADVICE DECLARED IN ITS OWN GRAPH MECHANISTIC" in text
+    assert "FEATURE DECLARED IN THE RECOMMENDATIONS DECLARED IN ITS OWN GRAPH MECHANISTIC" in text
     assert _by_class(card, "iv-bar-num")                 # every bar carries its number
     heads = {h.children: h.title for h in _by_class(card, "iv-features")[0].children[0].children.children}
     assert "from its own graph of the scene" in heads["DECLARED IN ITS OWN GRAPH"]
-    assert "the graph of the advice" in heads["DECLARED IN THE ADVICE"]
-    assert "danger level, advice, graph" in heads["MECHANISTIC"]
+    assert "the graph of the recommendations" in heads["DECLARED IN THE RECOMMENDATIONS"]
+    assert "danger level, recommendations, graph" in heads["MECHANISTIC"]
     assert text.endswith("one ask per try")
     assert len(text) < 700                               # the explanations are on hover
     import re
@@ -1241,7 +1241,7 @@ def test_new_advice_is_not_on_the_card_it_stays_in_the_evidence(tmp_path):
     tbl = g.table(before, [({"index": 1, "target": "fire_1"}, a1)])
     card = ui_iv.card_component({"hazards": []}, tbl)
     assert "new advice" not in _flat(card) and _by_class(card, "iv-new-advice") == []
-    assert "new advice after removing fire_1: • Cut a firebreak." in _flat(
+    assert "new recommendations after removing fire_1: • Cut a firebreak." in _flat(
         ui_iv.table_component(tbl))
     assert not hasattr(ui_iv, "new_advice")
     for bad in (None, "x", {}, {"hazards": "y", "score": "z"}, {"hazards": [None, "x", {}]}):
@@ -1335,7 +1335,7 @@ def test_the_card_shows_each_feature_declared_beside_mechanistic():
     assert _flat(_by_class(by["fire_1"], "iv-role")) == d.DRIVES_MORE
     assert _flat(_by_class(by["spill_1"], "iv-role")) == d.STATED_ONLY
     assert "not removed yet" in _flat(by["tanker_1"])    # declared bars, no mechanistic bar
-    assert "removing it barely changes the advice" in _by_class(by["spill_1"], "iv-role")[0].title
+    assert "removing it shifts the recommendations less than that" in _by_class(by["spill_1"], "iv-role")[0].title
     # two declared bars and one mechanistic bar, each with its number
     assert len(_by_class(by["fire_1"], "iv-bar-num")) == 3
     assert len(_by_class(by["tanker_1"], "iv-bar-num")) == 2
@@ -1354,7 +1354,7 @@ def test_the_card_shows_each_feature_declared_beside_mechanistic():
     assert by["spill_1"] == "spurious"                   # short; the reason is on hover
     (cell,) = [c for r in _by_class(card, "iv-feature") if _flat(r).startswith("spill_1")
                for c in _by_class(r, "iv-gt-word")]
-    assert cell.title == "it should matter, but the advice does not depend on it"
+    assert cell.title == "it should matter, but the recommendations do not depend on it"
     assert by["tanker_1"] == "" and by["brush_1"] == ""
     tanker = next(r for r in _by_class(card, "iv-feature") if _flat(r).startswith("tanker_1"))
     assert "not in ground truth" in _flat(tanker)         # said, not an empty bar
@@ -1414,7 +1414,7 @@ def test_the_form_and_the_proof_have_their_own_place_on_the_page():
 def test_advice_recorded_with_another_target_is_kept_not_dropped():
     """After the fire was removed the model still wrote "isolate the leak at
     tanker_truck_1", now pointing at the spill instead of the man. That read
-    "advice dropped → spurious". And "contain spill_1 ... away from fire_1"
+    "recommendation dropped → spurious". And "contain spill_1 ... away from fire_1"
     read "nothing left to protect" though the edited run still had the
     spill."""
     from agentic import grounding4 as g
@@ -1442,8 +1442,8 @@ def test_advice_recorded_with_another_target_is_kept_not_dropped():
     assert [n["action"] for n in t["columns"][0]["new"]] == ["Move man_1 away from spill_1."]
     comp = ui_iv.table_component(t)
     cells = {_flat(r).split()[0]: _flat(_by_class(r, "iv-cell")) for r in _by_class(comp, "iv-row")}
-    assert cells["#5"] == "advice kept, adjusted → correctly ignored"
-    assert cells["#2"] == "advice kept, adjusted → correctly ignored"
+    assert cells["#5"] == "recommendation kept, adjusted → correctly ignored"
+    assert cells["#2"] == "recommendation kept, adjusted → correctly ignored"
 
 
 def test_gone_spurious_and_target_removed_still_exist_when_the_hazard_has_no_advice_left():
@@ -1465,7 +1465,7 @@ def test_gone_spurious_and_target_removed_still_exist_when_the_hazard_has_no_adv
     comp = ui_iv.table_component(t)
     cells = {_flat(r).split()[0]: _flat(_by_class(r, "iv-cell")) for r in _by_class(comp, "iv-row")}
     assert cells["#3"] == "its target was removed"
-    assert cells["#2"] == "advice dropped → spurious"
+    assert cells["#2"] == "recommendation dropped → spurious"
 
 
 def test_the_card_says_in_which_direction_declared_and_mechanistic_differ():
@@ -1474,11 +1474,11 @@ def test_the_card_says_in_which_direction_declared_and_mechanistic_differ():
     from agentic import declared4 as d
     c = d.compare(D_BEFORE, [_try("fire_1", 0.02), _try("spill_1", 0.98)])
     assert c["reading"] == "differ"
-    assert c["explain"] == ["Declared most and drives the advice most: spill_1.",
-                            "Declared more than it drives the advice: fire_1.",
-                            "Drives the advice more than declared: spill_1."]
+    assert c["explain"] == ["Declared most and shifts the recommendations most: spill_1.",
+                            "Declared more than it shifts the recommendations: fire_1.",
+                            "Shifts the recommendations more than declared: spill_1."]
     c = d.compare(D_BEFORE, [_try("fire_1", 0.9), _try("spill_1", 0.1)])
-    assert c["explain"][0] == "Declared most: spill_1. Drives the advice most: fire_1."
+    assert c["explain"][0] == "Declared most: spill_1. Shifts the recommendations most: fire_1."
     card = ui_iv.card_component(c, {})
     assert _flat(_by_class(card, "iv-explain")).startswith("Declared most: spill_1.")
     assert "what it says" not in _flat(card)

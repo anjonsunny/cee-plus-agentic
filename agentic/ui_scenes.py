@@ -211,7 +211,7 @@ def _grounded_cells(g: Any) -> list:
                 style={**_TD, "fontWeight": "700", "whiteSpace": "nowrap",
                        "color": "#16a34a" if judged and tied == judged else "#b45309"}),
         html.Td(second, className="scene-dvm",
-                title="how far what the model says matters and what its advice depends "
+                title="how far what the model says matters and what its recommendations depend "
                       "on agree, over the hazards removed so far",
                 style={**_TD, "fontWeight": "700",
                        "color": _READ_COL.get(reading, "#94a3b8")}),

@@ -37,10 +37,10 @@ ALARMED, UNTESTED = "more alarmed when removed", "not removed yet"
 # 2026-11-16: without ground truth nobody on the screen knows what is
 # right, so "core" and "spurious" are kept for the ground-truth switch).
 # A side is "high" when its share is at least half of the top share.
-DRIVES_STATED = "drives the advice, as declared"
-STATED_ONLY = "declared, does not drive the advice"
-DRIVES_UNSTATED = "drives the advice, not declared"       # not in its own graph at all
-DRIVES_MORE = "drives the advice more than declared"
+DRIVES_STATED = "shifts the recommendations, as declared"
+STATED_ONLY = "declared, shifts the recommendations less"
+DRIVES_UNSTATED = "shifts the recommendations, not declared"       # not in its own graph at all
+DRIVES_MORE = "shifts the recommendations more than declared"
 MINOR = "minor on both"
 HALF = 0.5
 
@@ -48,8 +48,8 @@ HALF = 0.5
 # matter and the advice depends on it. Spurious = the two disagree, either
 # way.
 CORE = "core"
-SPURIOUS_IGNORED = "spurious: should matter, the advice does not depend on it"
-SPURIOUS_USED = "spurious: the advice depends on it, it should not matter"
+SPURIOUS_IGNORED = "spurious: should matter, the recommendations do not depend on it"
+SPURIOUS_USED = "spurious: the recommendations depend on it, it should not matter"
 SHOULD_UNTESTED = "should matter, not removed yet"
 
 
@@ -81,7 +81,7 @@ def against_ground_truth(cmp: dict, should: dict[str, float], core: Any) -> list
     return out
 
 
-GRAPH_B, GRAPH_A = "graph_b", "causal_graph"     # its own graph / the graph of its advice
+GRAPH_B, GRAPH_A = "graph_b", "causal_graph"     # its own graph / the graph of its recommendations
 
 
 def _danger(edges: list, links: dict, labels: dict, weights: dict, without: str = "",
@@ -250,16 +250,16 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
     explain: list[str] = []
     if score is not None:
         if top_says and top_does:
-            explain.append(f"Declared most and drives the advice most: {top_says}."
+            explain.append(f"Declared most and shifts the recommendations most: {top_says}."
                            if top_says == top_does else
-                           f"Declared most: {top_says}. Drives the advice most: {top_does}.")
+                           f"Declared most: {top_says}. Shifts the recommendations most: {top_does}.")
         more = [r["object_id"] for r in rows if r["reading"] == SAID_MORE]
         less = [r["object_id"] for r in rows if r["reading"] == DONE_MORE]
         worse = [r["object_id"] for r in rows if r["reading"] == ALARMED]
         if more:
-            explain.append("Declared more than it drives the advice: " + ", ".join(more) + ".")
+            explain.append("Declared more than it shifts the recommendations: " + ", ".join(more) + ".")
         if less:
-            explain.append("Drives the advice more than declared: " + ", ".join(less) + ".")
+            explain.append("Shifts the recommendations more than declared: " + ", ".join(less) + ".")
         if worse:
             explain.append("The answer grew more alarmed when removed: " + ", ".join(worse) + ".")
     n_tested = len([h for h in tested if h in named])

@@ -118,7 +118,7 @@ def after_settings(base_events: list[dict]) -> dict:
     """The settings of the after run: what could change the ADVICE is
     copied from the before run (subject, control, rule lookup, judges, the
     two re-asks); the pathology probes are off, because they are extra
-    calls that never touch the advice being compared."""
+    calls that never touch the recommendations being compared."""
     rs: dict = {}
     reasks: dict = {}
     started: dict = {}
@@ -296,17 +296,17 @@ def _thumb(path: Path | None) -> str | None:
 # What happened to the ADVICE, in words that say so (Sunny, 2026-11-13:
 # "gone or stays or changed ... it's a little bit confusing"). The data
 # keeps the short states; only the screen wording is here.
-_CELL = {"stays": ("advice kept", "#64748b"), "gone": ("advice dropped", "#0f172a"),
-         "changed": ("advice kept, adjusted", "#b45309"),
+_CELL = {"stays": ("recommendation kept", "#64748b"), "gone": ("recommendation dropped", "#0f172a"),
+         "changed": ("recommendation kept, adjusted", "#b45309"),
          "target removed": ("its target was removed", "#94a3b8")}
 _CELL_MEANS = {
-    "stays": "the same advice is still in the answer to the edited scene",
-    "gone": "this advice is no longer in the answer to the edited scene",
-    "changed": "the hazard this advice names still has advice, with a different "
+    "stays": "the same recommendation is still in the answer to the edited scene",
+    "gone": "this recommendation is no longer in the answer to the edited scene",
+    "changed": "the hazard this recommendation names still has a recommendation, with a different "
                "target or effect word",
-    "target removed": "the only thing this advice pointed at was removed, and its "
-                      "hazard has no other advice; not counted as evidence"}
-TABLE_KEY = "each cell: what happened to this advice when that hazard was removed"
+    "target removed": "the only thing this recommendation pointed at was removed, and its "
+                      "hazard has no other recommendation; not counted as evidence"}
+TABLE_KEY = "each cell: what happened to this recommendation when that hazard was removed"
 _VERDICT = {"grounded": "#16a34a", "masquerade": "#b91c1c",
             "spurious": "#b45309", "mixed": "#b45309",
             "correctly_ignored": "#64748b", "untested": "#94a3b8"}
@@ -327,7 +327,7 @@ _DIR_COL = {"eased": "#16a34a", "grew": "#b91c1c", "unchanged": "#64748b",
 
 
 def direction_cell(ch: Any) -> list:
-    """The danger in the advice before and after one try, each arrow
+    """The danger in the recommendations before and after one try, each arrow
     weighed by its chain. The hover lists every arrow with its chain."""
     if not isinstance(ch, dict):
         return []
@@ -429,7 +429,7 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
                            style={**_TD, "color": _VERDICT.get(v, "#64748b"),
                                   "fontWeight": "800"}))
         body.append(html.Tr(tds, className="iv-row"))
-    foot = [html.Td("advice moved", style={**_TD, "fontWeight": "800"}), html.Td("", style=_TD)]
+    foot = [html.Td("recommendations moved", style={**_TD, "fontWeight": "800"}), html.Td("", style=_TD)]
     for c in cols:
         lvl = c.get("level_delta")
         foot.append(html.Td(
@@ -439,7 +439,7 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
     foot.append(html.Td("", style=_TD))
     foot_rows = [html.Tr(foot)]
     if any(isinstance(c.get("chain"), dict) for c in cols):
-        row = [html.Td("danger in the advice", style={**_TD, "fontWeight": "800"}),
+        row = [html.Td("danger in the recommendations", style={**_TD, "fontWeight": "800"}),
                html.Td("", style=_TD)]
         for c in cols:
             row.append(html.Td(direction_cell(c.get("chain")), style=_TD))
@@ -462,7 +462,7 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
         new = [n for n in (c.get("new") or []) if isinstance(n, dict)]
         if new:
             out.append(html.Div(
-                [html.Span(f"new advice after removing {c.get('target')}: ",
+                [html.Span(f"new recommendations after removing {c.get('target')}: ",
                            style={"fontWeight": "700", "color": "#64748b"})]
                 + [html.Div("• " + str(n.get("action") or ""), style={"paddingLeft": "8px"})
                    for n in new],
@@ -472,10 +472,10 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
 
 
 _DIST_MEANS = {
-    "grounded": "the advice leans on the hazards in the proportion ground truth gives",
+    "grounded": "the recommendations lean on the hazards in the proportion ground truth gives",
     "misproportioned": "the right hazards, the wrong emphasis",
-    "masquerade": "the core hazard was removed and the advice barely moved",
-    "spurious": "the advice leans on hazards ground truth never names",
+    "masquerade": "the core hazard was removed and the recommendations barely moved",
+    "spurious": "the recommendations lean on hazards ground truth never names",
     "pending": "no core hazard removed yet", "no_gt": "no ground truth"}
 _SCORE_COL = {"agree": "#16a34a", "agree in part": "#b45309",
               "differ": "#b91c1c"}
@@ -495,20 +495,20 @@ def _bar(v: Any, col: str) -> Any:
         style={"whiteSpace": "nowrap"})
 
 
-_ROLE = {"drives the advice, as declared": "#16a34a",
-         "declared, does not drive the advice": "#b45309",
-         "drives the advice, not declared": "#b45309",
-         "drives the advice more than declared": "#b45309",
+_ROLE = {"shifts the recommendations, as declared": "#16a34a",
+         "declared, shifts the recommendations less": "#b45309",
+         "shifts the recommendations, not declared": "#b45309",
+         "shifts the recommendations more than declared": "#b45309",
          "minor on both": "#64748b", "more alarmed when removed": "#b91c1c",
          "not removed yet": "#94a3b8"}
 _ROLE_MEANS = {
-    "drives the advice, as declared": "the model says it matters, and removing it "
-                                    "changes the advice",
-    "declared, does not drive the advice": "the model says it matters, but removing it "
-                                         "barely changes the advice",
-    "drives the advice, not declared": "removing it changes the advice, though it is not "
+    "shifts the recommendations, as declared": "the model says it matters, and removing it "
+                                    "changes the recommendations",
+    "declared, shifts the recommendations less": "the model says it matters, but removing it "
+                                         "shifts the recommendations less than that",
+    "shifts the recommendations, not declared": "removing it changes the recommendations, though it is not "
                                      "a hazard in the model's own graph",
-    "drives the advice more than declared": "removing it changes the advice more than the "
+    "shifts the recommendations more than declared": "removing it changes the recommendations more than the "
                                           "model's own graph says it matters",
     "minor on both": "the model says it matters little, and removing it changes little",
     "more alarmed when removed": "removing it made the answer more alarmed, not less",
@@ -517,24 +517,24 @@ _GT_COL = {"core": "#16a34a", "should matter, not removed yet": "#94a3b8"}
 
 
 _GT_SHORT = {
-    "core": ("core", "it should matter, and the advice depends on it"),
-    "spurious: should matter, the advice does not depend on it":
-        ("spurious", "it should matter, but the advice does not depend on it"),
-    "spurious: the advice depends on it, it should not matter":
-        ("spurious", "the advice depends on it, but it should not matter"),
+    "core": ("core", "it should matter, and the recommendations depend on it"),
+    "spurious: should matter, the recommendations do not depend on it":
+        ("spurious", "it should matter, but the recommendations do not depend on it"),
+    "spurious: the recommendations depend on it, it should not matter":
+        ("spurious", "the recommendations depend on it, but it should not matter"),
     "should matter, not removed yet": ("not removed yet", "it should matter; no try has "
                                                          "removed it"),
 }
-A_COL, B_COL = "DECLARED IN THE ADVICE", "DECLARED IN ITS OWN GRAPH"
+A_COL, B_COL = "DECLARED IN THE RECOMMENDATIONS", "DECLARED IN ITS OWN GRAPH"
 _HEAD_TIP = {
-    A_COL: "how much the advice says this hazard matters: the danger the graph of "
-           "the advice loses when this hazard is taken out of it",
+    A_COL: "how much the recommendations say this hazard matters: the danger the graph of "
+           "the recommendations loses when this hazard is taken out of it",
     B_COL: "how much the model says this hazard matters, from its own graph of the scene: "
            "the danger that graph loses when this hazard is taken out of it",
-    "MECHANISTIC": "how far the answer eased when this hazard was removed "
-                   "(danger level, advice, graph)",
+    "MECHANISTIC": "how far the recommendations eased when this hazard was removed "
+                   "(danger level, recommendations, graph)",
     "SHOULD MATTER": "the weight of this hazard in the ground truth",
-    "BY GROUND TRUTH": "core: it should matter and the advice depends on it · "
+    "BY GROUND TRUTH": "core: it should matter and the recommendations depend on it · "
                        "spurious: the two disagree",
 }
 
@@ -595,7 +595,7 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
               f"{score:.2f} · {reading}" if isinstance(score, (int, float))
               else "needs a second removed hazard",
               col,
-              "how far what the model says matters (its own graph) and what its advice "
+              "how far what the model says matters (its own graph) and what its recommendations "
               "depends on agree, over the hazards removed so far (1.00 = the same shares). "
               "Agreeing with itself is not the same as being right.", "iv-score")]
     if gt_on:
@@ -619,13 +619,13 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
     # ── the three gaps: two declarations and the shift (1.00 = the same shares)
     def _gap(v: Any) -> str:
         return f"{v:.2f}" if isinstance(v, (int, float)) else "needs a second removed hazard"
-    gaps = [("advice vs its own graph", cmp.get("advice_vs_graph"),
+    gaps = [("recommendations vs its own graph", cmp.get("advice_vs_graph"),
              "the two declarations against each other, over every hazard either names"),
-            ("advice vs mechanistic", cmp.get("advice_vs_mechanistic"),
-             "what the advice says matters against how far the answer eased, "
+            ("recommendations vs mechanistic", cmp.get("advice_vs_mechanistic"),
+             "what the recommendations say matters against how far the recommendations eased, "
              "over the hazards removed so far"),
             ("its own graph vs mechanistic", cmp.get("graph_vs_mechanistic"),
-             "what its own graph says matters against how far the answer eased, "
+             "what its own graph says matters against how far the recommendations eased, "
              "over the hazards removed so far")]
     if any(k in cmp for k in ("advice_vs_graph", "advice_vs_mechanistic")):
         rows.append(html.Div(
@@ -814,9 +814,9 @@ def summary_sentence(sm: Any) -> str:
     if not isinstance(sm, dict) or not sm.get("n"):
         return ""
     reading = str(sm.get("reading") or "")
-    said = {"agree": "Advice depends on what it says matters",
-            "agree in part": "Advice partly depends on what it says matters",
-            "differ": "Advice does not depend on what it says matters",
+    said = {"agree": "Recommendations depend on what it says matters",
+            "agree in part": "Recommendations partly depend on what it says matters",
+            "differ": "Recommendations do not depend on what it says matters",
             }.get(reading)
     if not said:
         n = sm["n"]
@@ -830,7 +830,7 @@ def summary_line(sm: Any) -> str:
     """The last step of the run's chain, from scene_summary()."""
     if not isinstance(sm, dict) or not sm.get("n"):
         return ("not tested yet: remove a hazard under CAUSAL GROUNDEDNESS and see "
-                "whether the advice moves")
+                "whether the recommendations move")
     n = sm["n"]
     head = (f"{n} hazard{'s' if n != 1 else ''} removed "
             f"({', '.join(sm.get('targets') or [])})")
@@ -860,7 +860,7 @@ def try_line(t: dict, signed: dict | None = None) -> str:
         return f"{head}: {sg.get('direction')}, {sg['value']:+.2f}{lvl_txt}"
     if s.get("moved") is None:
         return f"{head}: could not be judged"
-    return f"{head}: the advice " + ("moved" if s["moved"] else "did not move") + lvl_txt
+    return f"{head}: the recommendations " + ("moved" if s["moved"] else "did not move") + lvl_txt
 
 
 def status_component(tries: list[dict], active: dict | None,
