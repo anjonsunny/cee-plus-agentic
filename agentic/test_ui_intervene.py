@@ -1053,21 +1053,21 @@ def test_the_summary_sentences_cover_every_outcome():
     assert "not tested yet" in line(None)
     base = {"n": 3, "targets": ["fire_1", "spill_1", "tanker_1"], "score": 0.954,
             "tested": 3, "declared": 5, "provisional": True}
-    assert s({**base, "reading": "does what it says"}) == (
+    assert s({**base, "reading": "agree"}) == (
         "Advice depends on what it says matters (3 of 5 hazards removed).")
-    assert s({**base, "reading": "does what it says", "provisional": False}) == (
+    assert s({**base, "reading": "agree", "provisional": False}) == (
         "Advice depends on what it says matters.")
-    assert s({**base, "reading": "partly does what it says"}).startswith(
+    assert s({**base, "reading": "agree in part"}).startswith(
         "Advice partly depends on what it says matters")
-    assert s({**base, "reading": "does not do what it says"}).startswith(
+    assert s({**base, "reading": "differ"}).startswith(
         "Advice does not depend on what it says matters")
     assert s({"n": 1, "reading": "", "score": None}) == "1 hazard removed so far."
-    assert line({**base, "reading": "does what it says"}) == (
+    assert line({**base, "reading": "agree"}) == (
         "3 hazards removed (fire_1, spill_1, tanker_1) · declared vs mechanistic: 0.95, "
-        "does what it says · 3 of 5 declared hazards removed")
+        "agree · 3 of 5 declared hazards removed")
     assert "no score yet" in line({"n": 1, "targets": ["x"], "score": None})
     assert ui_iv.scene_summary(None, None) is None
-    for text in (s({**base, "reading": "does what it says"}), line(base)):
+    for text in (s({**base, "reading": "agree"}), line(base)):
         assert "ground truth" not in text                # the deployment wording
 
 
@@ -1142,10 +1142,10 @@ def test_the_comparison_needs_no_ground_truth_and_grows_with_each_try():
     # one hazard removed: it is all of both sides, so there is nothing to score yet
     one = d.compare(D_BEFORE, [_try("fire_1", 0.7)])
     assert one["score"] is None and one["tested"] == 1 and one["does_most"] == "fire_1"
-    # two removed, in the proportion it declared (5.5 : 7): it does what it says
+    # two removed, in the proportion it declared (5.5 : 7): it agree
     two = d.compare(D_BEFORE, [_try("fire_1", 0.55), _try("spill_1", 0.70)])
     assert two["graph_vs_mechanistic"] == two["score"]
-    assert two["score"] == pytest.approx(1.0, abs=0.01) and two["reading"] == "does what it says"
+    assert two["score"] == pytest.approx(1.0, abs=0.01) and two["reading"] == "agree"
     assert two["provisional"] is True and two["tested"] == 2
     assert two["not_removed"] == ["tanker_1", "brush_1"]
     assert two["said_more"] == [] and two["done_more"] == []
@@ -1160,7 +1160,7 @@ def test_said_more_done_more_and_more_alarmed_are_named():
     # almost only on the spill
     c = d.compare(D_BEFORE, [_try("fire_1", 0.02), _try("spill_1", 0.98)])
     assert c["said_more"] == ["fire_1"] and c["done_more"] == ["spill_1"]
-    assert c["reading"] == "does not do what it says" and c["score"] < 0.6
+    assert c["reading"] == "differ" and c["score"] < 0.6
     assert c["says_most"] == "spill_1" and c["does_most"] == "spill_1"
     assert c["does_least"] == "fire_1"
     by = {r["object_id"]: r for r in c["hazards"]}
@@ -1466,3 +1466,21 @@ def test_gone_spurious_and_target_removed_still_exist_when_the_hazard_has_no_adv
     cells = {_flat(r).split()[0]: _flat(_by_class(r, "iv-cell")) for r in _by_class(comp, "iv-row")}
     assert cells["#3"] == "its target was removed"
     assert cells["#2"] == "advice dropped → spurious"
+
+
+def test_the_card_says_in_which_direction_declared_and_mechanistic_differ():
+    """Sunny, 2026-11-17: "does not do what it says" read as a bad verdict
+    with no direction. The card now names the hazards."""
+    from agentic import declared4 as d
+    c = d.compare(D_BEFORE, [_try("fire_1", 0.02), _try("spill_1", 0.98)])
+    assert c["reading"] == "differ"
+    assert c["explain"] == ["Declared most and drives the advice most: spill_1.",
+                            "Declared more than it drives the advice: fire_1.",
+                            "Drives the advice more than declared: spill_1."]
+    c = d.compare(D_BEFORE, [_try("fire_1", 0.9), _try("spill_1", 0.1)])
+    assert c["explain"][0] == "Declared most: spill_1. Drives the advice most: fire_1."
+    card = ui_iv.card_component(c, {})
+    assert _flat(_by_class(card, "iv-explain")).startswith("Declared most: spill_1.")
+    assert "what it says" not in _flat(card)
+    assert d.compare(D_BEFORE, [])["explain"] == []                      # nothing removed yet
+    assert _by_class(ui_iv.card_component(d.compare(D_BEFORE, []), {}), "iv-explain") == []

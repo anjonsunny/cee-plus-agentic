@@ -245,9 +245,9 @@ def test_the_groundedness_cells_cover_every_state():
                                      "tested": 1, "declared": 4, "targets": ["fire_1"]})
     assert _flat(one) == "2 of 2 needs a second removed hazard 1 of 4"
     full = ui_scenes._grounded_cells({"n": 3, "grounded": 5, "judged": 5, "score": 0.954,
-                                      "reading": "does what it says", "tested": 3,
+                                      "reading": "agree", "tested": 3,
                                       "declared": 5, "targets": ["a", "b", "c"]})
-    assert _flat(full) == "5 of 5 0.95 · does what it says 3 of 5"
+    assert _flat(full) == "5 of 5 0.95 · agree 3 of 5"
     assert "a, b, c" in full[2].title
     for bad in ("x", {}, {"n": 2}, {"n": 1, "judged": "z", "score": "q"}):
         assert len(ui_scenes._grounded_cells(bad)) == 3

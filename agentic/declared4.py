@@ -84,7 +84,8 @@ def against_ground_truth(cmp: dict, should: dict[str, float], core: Any) -> list
 GRAPH_B, GRAPH_A = "graph_b", "causal_graph"     # its own graph / the graph of its advice
 
 
-def _danger(edges: list, links: dict, labels: dict, weights: dict, without: str = "") -> float:
+def _danger(edges: list, links: dict, labels: dict, weights: dict, without: str = "",
+            fields: Any = None) -> float:
     """Total danger of a graph: every arrow from a hazard, weighed by its
     effect and by what its chain can reach. `without` leaves one node out:
     its arrows, the arrows into it, and every chain through it."""
@@ -102,7 +103,7 @@ def _danger(edges: list, links: dict, labels: dict, weights: dict, without: str 
         except Exception:
             continue
         total += float(weights.get(eff, 1.0 if eff else 0.0)) * (
-            chain4.LIFE if c["life"] else chain4.OTHER)
+            chain4.LIFE if c["life"] else chain4.OTHER) * chain4.field_factor(s, eff, t, fields)
     return total
 
 
@@ -131,7 +132,8 @@ def declared(result: Any, graph: str = GRAPH_B) -> dict[str, float]:
         weights = iv4._frozen()._EFFECT_THREAT
     except Exception:
         weights = {}
-    total = _danger(edges, links, labels, weights)
+    fields = chain4.fields_of(result.get(graph))      # size / how soon, x1 when absent
+    total = _danger(edges, links, labels, weights, fields=fields)
     out: dict[str, float] = {}
     for h in dict.fromkeys(s for s, _e, _t in edges):
         try:
@@ -139,7 +141,7 @@ def declared(result: Any, graph: str = GRAPH_B) -> dict[str, float]:
                 continue
         except Exception:
             continue
-        out[h] = total - _danger(edges, links, labels, weights, without=h)
+        out[h] = total - _danger(edges, links, labels, weights, without=h, fields=fields)
     return {k: round(v, 3) for k, v in out.items() if v > 0}
 
 
@@ -182,8 +184,9 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
     Returns {
       "score": 0..1, how far the two agree over the hazards removed so far
                (the shared part of the two shares); None before any try,
-      "reading": "does what it says" | "partly does what it says" |
-                 "does not do what it says" | "",
+      "reading": "agree" | "agree in part" | "differ" | "",
+      "explain": plain sentences saying in which direction the two differ
+                 (which hazard is declared most, which drives the advice most),
       "tested": n, "declared": m,   (hazards removed / hazards it declared)
       "provisional": True until every declared hazard has been removed,
       "says_most", "does_most", "does_least": hazard ids or None,
@@ -235,16 +238,34 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
             # one hazard is 100% of both sides by construction: no score yet
             score = None if len(tested) == 1 else 0.0
     reading = "" if score is None else (
-        "does what it says" if score >= 0.85 else
-        "partly does what it says" if score >= 0.60 else "does not do what it says")
+        "agree" if score >= 0.85 else
+        "agree in part" if score >= 0.60 else "differ")
     # declared = named as a hazard by either declaration (its own graph or
     # the graph of its advice)
     named = set(dec) | set(dec_a)
     n_declared = len(named)
+    top_says = max(dec, key=lambda h: (dec[h], h)) if dec else None
+    pos_ = {h: v for h, v in mech.items() if v > 0}
+    top_does = max(pos_, key=lambda h: (pos_[h], h)) if pos_ else None
+    explain: list[str] = []
+    if score is not None:
+        if top_says and top_does:
+            explain.append(f"Declared most and drives the advice most: {top_says}."
+                           if top_says == top_does else
+                           f"Declared most: {top_says}. Drives the advice most: {top_does}.")
+        more = [r["object_id"] for r in rows if r["reading"] == SAID_MORE]
+        less = [r["object_id"] for r in rows if r["reading"] == DONE_MORE]
+        worse = [r["object_id"] for r in rows if r["reading"] == ALARMED]
+        if more:
+            explain.append("Declared more than it drives the advice: " + ", ".join(more) + ".")
+        if less:
+            explain.append("Drives the advice more than declared: " + ", ".join(less) + ".")
+        if worse:
+            explain.append("The answer grew more alarmed when removed: " + ", ".join(worse) + ".")
     n_tested = len([h for h in tested if h in named])
     pos = {h: v for h, v in mech.items() if v > 0}
     return {
-        "score": score, "reading": reading,
+        "score": score, "reading": reading, "explain": explain,
         # the three gaps: the two declarations against each other (needs no
         # try), and each against the shift (over the hazards removed so far)
         "advice_vs_graph": _shared(dec_a, dec, every),

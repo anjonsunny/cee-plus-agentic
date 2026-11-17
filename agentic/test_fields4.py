@@ -202,3 +202,45 @@ def test_word_only_accepts_the_closed_words():
     assert fields4.word(" NOW ", fields4.HOW_SOON) == "now"
     assert fields4.word("soon", fields4.HOW_SOON) == ""
     assert fields4.word(None, fields4.SIZES) == ""
+
+
+# ── the weights read the two fields; a graph without them weighs as before ──
+
+def _result(edges, nodes=None, key="graph_b"):
+    objs = [{"object_id": "fire_1", "label": "fire"}, {"object_id": "spill_1", "label": "spill"},
+            {"object_id": "man_1", "label": "man"}, {"object_id": "tree_1", "label": "tree"}]
+    return {"detected_objects": objs,
+            key: {"nodes": nodes or [], "edges": [
+                {"source": s, "effect": e, "target": t, **({"how_soon": w} if w else {})}
+                for s, e, t, w in edges]}}
+
+
+def test_missing_fields_weigh_exactly_as_before():
+    from agentic import chain4, declared4
+    plain = _result([("fire_1", "may_harm", "man_1", ""), ("spill_1", "may_spread_to", "tree_1", "")])
+    assert declared4.declared(plain) == {"fire_1": 4.0, "spill_1": 1.5}
+    a = chain4.weigh(_result([("fire_1", "may_harm", "man_1", "")], key="causal_graph"))
+    assert a["total"] == 4.0 and a["arrows"][0]["fields"] == 1.0
+
+
+def test_how_soon_and_size_scale_the_arrow():
+    from agentic import chain4, declared4
+    r = _result([("fire_1", "may_harm", "man_1", "now"), ("spill_1", "may_harm", "man_1", "later")],
+                nodes=[{"id": "fire_1", "size": "large"}, {"id": "spill_1", "size": "small"}])
+    d = declared4.declared(r)
+    assert d["fire_1"] == pytest.approx(4.0 * 1.5 * 1.5) and d["spill_1"] == 4.0
+    w = chain4.weigh({**r, "causal_graph": r["graph_b"]})
+    top = max(w["arrows"], key=lambda x: x["weight"])
+    assert (top["how_soon"], top["size"], top["weight"]) == ("now", "large", 9.0)
+    # gentle on purpose: the strongest arrow is 2.25x a plain one, not 9x
+    assert max(chain4.SOON_X.values()) * max(chain4.SIZE_X.values()) == 2.25
+
+
+@pytest.mark.parametrize("g", [None, "x", {"nodes": "x", "edges": 3},
+                               {"nodes": [None, {"id": 1, "size": 7}, {"size": "vast"}],
+                                "edges": [None, {"how_soon": ["now"]}, {"how_soon": "soonish"}]}])
+def test_fields_of_never_raises_and_ignores_other_words(g):
+    from agentic import chain4
+    assert chain4.fields_of(g) == ({}, {})
+    assert chain4.field_factor("a", "may_harm", "b", chain4.fields_of(g)) == 1.0
+    assert chain4.field_factor("a", "may_harm", "b", None) == 1.0

@@ -187,8 +187,8 @@ _TD = {"fontSize": "11.5px", "padding": "5px 8px", "borderBottom": "1px solid #e
        "verticalAlign": "top"}
 
 
-_READ_COL = {"does what it says": "#16a34a", "partly does what it says": "#b45309",
-             "does not do what it says": "#b91c1c"}
+_READ_COL = {"agree": "#16a34a", "agree in part": "#b45309",
+             "differ": "#b91c1c"}
 
 
 def _grounded_cells(g: Any) -> list:

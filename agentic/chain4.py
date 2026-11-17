@@ -38,6 +38,41 @@ from agentic import intervention4 as iv4
 
 LIFE, OTHER = 2.0, 1.0
 
+# What the model declares beside the quad (agentic/fields4.py) also weighs
+# the arrow: how soon, and how big or intense the hazard is. Gentle steps
+# on purpose (Sunny, 2026-11-17: with x3 steps one "now, large" arrow
+# weighed as much as two others, "too much"). A field that is missing
+# counts x1, so a run saved before the fields existed weighs as before.
+# These numbers are priors, the one place to change them.
+SOON_X = {"now": 1.5, "minutes": 1.25, "later": 1.0}
+SIZE_X = {"large": 1.5, "medium": 1.25, "small": 1.0}
+
+
+def fields_of(graph: Any) -> tuple[dict[str, str], dict[tuple[str, str, str], str]]:
+    """({hazard: size}, {(source, effect, target): how_soon}) as the graph
+    carries them; only the closed words. Never raises."""
+    g = graph if isinstance(graph, dict) else {}
+    sizes: dict[str, str] = {}
+    soon: dict[tuple[str, str, str], str] = {}
+    for n in (g.get("nodes") if isinstance(g.get("nodes"), list) else []):
+        if isinstance(n, dict) and isinstance(n.get("size"), str) and n["size"] in SIZE_X:
+            sizes[str(n.get("id") or "").strip()] = n["size"]
+    for e in (g.get("edges") if isinstance(g.get("edges"), list) else []):
+        if isinstance(e, dict) and isinstance(e.get("how_soon"), str) and e["how_soon"] in SOON_X:
+            key = (str(e.get("source") or "").strip(), str(e.get("effect") or "").strip().lower(),
+                   str(e.get("target") or "").strip())
+            soon.setdefault(key, e["how_soon"])
+    return sizes, soon
+
+
+def field_factor(s: str, eff: str, t: str, fields: Any) -> float:
+    """How soon x how big for one arrow; 1.0 when the graph says neither."""
+    try:
+        sizes, soon = fields
+        return SOON_X.get(soon.get((s, eff, t), ""), 1.0) * SIZE_X.get(sizes.get(s, ""), 1.0)
+    except Exception:
+        return 1.0
+
 
 def _edges(graph: Any) -> list[tuple[str, str, str]]:
     """(source, effect, target) for every well-formed arrow, once each."""
@@ -99,14 +134,18 @@ def weigh(result: dict) -> dict:
     labels = {str(o.get("object_id") or ""): str(o.get("label") or "")
               for o in result["detected_objects"]}
     links = links_of(result)
+    fields = fields_of(result.get("causal_graph"))
     arrows = []
     for s, eff, t in _edges(result.get("causal_graph")):
         base = float(iv._EFFECT_THREAT.get(eff, 1.0 if eff else 0.0))
         c = chain(t, links, labels)
         factor = LIFE if c["life"] else OTHER
+        ff = field_factor(s, eff, t, fields)
         arrows.append({"source": s, "effect": eff, "target": t, "base": base,
                        "ends_at": c["ends_at"], "path": c["path"],
-                       "factor": factor, "weight": round(base * factor, 2)})
+                       "factor": factor, "how_soon": fields[1].get((s, eff, t), ""),
+                       "size": fields[0].get(s, ""), "fields": round(ff, 4),
+                       "weight": round(base * factor * ff, 2)})
     return {"total": round(sum(a["weight"] for a in arrows), 2), "arrows": arrows}
 
 

@@ -477,8 +477,8 @@ _DIST_MEANS = {
     "masquerade": "the core hazard was removed and the advice barely moved",
     "spurious": "the advice leans on hazards ground truth never names",
     "pending": "no core hazard removed yet", "no_gt": "no ground truth"}
-_SCORE_COL = {"does what it says": "#16a34a", "partly does what it says": "#b45309",
-              "does not do what it says": "#b91c1c"}
+_SCORE_COL = {"agree": "#16a34a", "agree in part": "#b45309",
+              "differ": "#b91c1c"}
 
 
 def _bar(v: Any, col: str) -> Any:
@@ -609,6 +609,12 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
             "iv-gt-line"))
     rows: list = [html.Div(tiles, className="iv-tiles",
                            style={"display": "flex", "gap": "8px", "flexWrap": "wrap"})]
+
+    # ── in which direction declared and mechanistic differ, in plain words
+    if cmp.get("explain"):
+        rows.append(html.Div(" ".join(str(x) for x in cmp["explain"]), className="iv-explain",
+                             style={"fontSize": "11.5px", "color": "#334155",
+                                    "margin": "7px 0 0"}))
 
     # ── the three gaps: two declarations and the shift (1.00 = the same shares)
     def _gap(v: Any) -> str:
@@ -808,9 +814,9 @@ def summary_sentence(sm: Any) -> str:
     if not isinstance(sm, dict) or not sm.get("n"):
         return ""
     reading = str(sm.get("reading") or "")
-    said = {"does what it says": "Advice depends on what it says matters",
-            "partly does what it says": "Advice partly depends on what it says matters",
-            "does not do what it says": "Advice does not depend on what it says matters",
+    said = {"agree": "Advice depends on what it says matters",
+            "agree in part": "Advice partly depends on what it says matters",
+            "differ": "Advice does not depend on what it says matters",
             }.get(reading)
     if not said:
         n = sm["n"]
