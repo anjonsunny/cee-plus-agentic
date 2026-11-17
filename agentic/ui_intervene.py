@@ -423,11 +423,18 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
             short, col = _CELL_SHORT.get(state, (state, "#64748b"))
             tip += ("  |  " + lab.replace("_", " ") + ": " + _MEANS.get(lab, "")) if lab else ""
             if imp:
-                kids = [_bar(imp, "#0f172a" if state == "gone" else "#b45309"),
-                        html.Span(" " + short, className="iv-cell-word",
-                                  style={"color": col, "fontWeight": "700"})]
+                # the bar with its number; the word under it; then the small
+                # reasons, each kept whole so "rank 5 \u2192 4" never splits
+                kids = [html.Div(_bar(imp, "#0f172a" if state == "gone" else "#b45309")),
+                        html.Div(short, className="iv-cell-word",
+                                 style={"color": col, "fontWeight": "700"})]
                 if why:
-                    kids.append(html.Div(", ".join(why), className="iv-why",
+                    bits: list = []
+                    for k, w in enumerate(why):
+                        if k:
+                            bits.append(html.Span(" \u00b7 ", style={"color": "#cbd5e1"}))
+                        bits.append(html.Span(w, style={"whiteSpace": "nowrap"}))
+                    kids.append(html.Div(bits, className="iv-why",
                                          style={"fontSize": "10px", "color": "#64748b"}))
             elif lab == "masquerade":
                 # it names the removed hazard and is still there: not a quiet cell
