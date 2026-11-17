@@ -170,7 +170,8 @@ with exactly these keys:
   entry, in your own words, with your reasoning in `reason`. Such an entry's
   quad names the entity you considered in `threat` (any object_id in the
   scene) and its state in `state`; leave `effect` empty and
-  `affected_objects` empty, because you are saying it harms nothing.
+  `affected_objects` empty, because you are saying it harms nothing. Leave
+  `size` and `how_soon` empty too.
   Every entry that ACTS needs a real quad and the reason form below: if you
   cannot see which declared threat an action responds to, drop the action
   rather than writing "N/A" or leaving a slot empty. Each entry:
@@ -190,11 +191,11 @@ with exactly these keys:
       same legal threats, the same legal states, the same effect list, the same
       role bans. Write it in prose; do not relax the rules for prose.
     - related_object_ids: array of object_ids the reason touches
-    - structured_reasoning: a JSON OBJECT with exactly the four keys below —
+    - structured_reasoning: a JSON OBJECT with exactly the six keys below —
       never a sentence, never an arrow string. It carries the SAME claim the
       reason makes, with each part in its own key: the reason's subject goes in
       `threat`, its state in `state`, its verb in `effect`, and the entities it
-      says are harmed in `affected_objects`. If you cannot fill the four keys
+      says are harmed in `affected_objects`. If you cannot fill these keys
       without changing the claim, the reason was wrong: rewrite the reason.
         - threat: object_id of the SOURCE of harm — one of the object_ids on
           the `threats:` line above. The threat is what the action responds
@@ -204,7 +205,13 @@ with exactly these keys:
         - state: that threat's hazard-bearing state, exactly as listed for
           that object_id above. 'distress' and 'proximity' are roles, not
           states; never use them here.
+        - size: how big or intense that threat is right now — exactly
+          one of [small, medium, large].
         - effect: exactly one of [{effects}]
+        - how_soon: how soon the threat has this effect on the affected
+          objects — exactly one of [now, minutes, later]. now = it is
+          already happening; minutes = expected within minutes; later =
+          not expected within minutes.
         - affected_objects: {affected_clause} Plain ids only — never an id
           with a suffix attached. These are the entities the threat harms —
           the threat itself never among them.
@@ -442,6 +449,11 @@ def parse_recommend(raw: Any) -> tuple[dict, list[dict], list[dict], list[str]]:
                 _quad_is_empty(_out.get("structured_reasoning")):
             notes.append(f"quad_rank_{_out.get('rank')}_LOST_IN_PARSE"
                          f"({str(_src.get('structured_reasoning'))[:60]!r})")
+
+    # size / how_soon: the frozen normalizer keeps four keys, so the two
+    # declared fields are read off the raw quad and put back (fields4).
+    from agentic import fields4
+    fields4.attach_quads(_in, recommendations, notes)
 
     advisory = _parse_advisory(raw.get("assumptions_advisory"), notes)
     return frame, recommendations, advisory, notes
@@ -888,6 +900,10 @@ def build_graph_a(record: Any, assessment: Any, recommendations: list[dict],
     # F18: re-file placeholder self-loops as node annotations. Runs AFTER the
     # frozen builder — Arm A is untouched, this is a layer on top of its output.
     graph_a = annotate_one_ended(graph_a, record)
+    from agentic import fields4
+    _fnotes = fields4.carry_to_graph_a(graph_a, recommendations)
+    if _fnotes:
+        emit("graph_fields_noted", graph="a", notes=_fnotes)
     emit("graph_a_built",
          n_nodes=len(graph_a.get("nodes", [])),
          n_edges=len(graph_a.get("edges", [])),
@@ -1178,6 +1194,9 @@ def _graph_b_prompt(record: Any, assessment: Any) -> str:
         "proximity\n      to a hazard makes the entity vulnerable. A "
         "hazardous entity is never\n      at_risk — another hazard's edge "
         "pointing at it already says it is\n      endangered.\n"
+        "    - size: for a hazardous node only, how big or intense it is "
+        "right\n      now — exactly one of [small, medium, large]. Omit "
+        "for other nodes.\n"
         "  - edges: array of objects, one per causal claim you would make "
         "about the\n    scene:\n"
         "    - source: object_id of the threat (must be a node with "
@@ -1185,7 +1204,11 @@ def _graph_b_prompt(record: Any, assessment: Any) -> str:
         "    - target: object_id of the affected entity (any node)\n"
         "    - effect: one of the 8 effect labels above\n"
         "    - via_state: hazard-bearing state of source, must equal "
-        "source-node's\n      state\n\n"
+        "source-node's\n      state\n"
+        "    - how_soon: how soon the source has this effect on the target "
+        "—\n      exactly one of [now, minutes, later]. now = it is "
+        "already\n      happening; minutes = expected within minutes; "
+        "later = not\n      expected within minutes.\n\n"
         "- suppression_pick: object naming which (threat, state) you would "
         "suppress\n  first to maximally reduce harm in this scene:\n"
         "  - threat: object_id\n"
@@ -1243,6 +1266,10 @@ def run_graph_b(record: Any, assessment: Any, *, query_fn: QueryFn,
     raw = query_fn(_graph_b_prompt(record, assessment))
     detected_ids = {o.object_id for o in record.detected_objects}
     graph_b = normalize_graph_b(raw if isinstance(raw, dict) else {}, detected_ids)
+    from agentic import fields4
+    _fnotes = fields4.attach_graph(raw, graph_b)
+    if _fnotes:
+        emit("graph_fields_noted", graph="b", notes=_fnotes)
     emit("graph_b_built",
          n_nodes=len(graph_b.get("nodes", [])),
          n_edges=len(graph_b.get("edges", [])),
@@ -1382,6 +1409,8 @@ def run_graph_b_probes(record: Any, assessment: Any, *,
             emit("graph_b_probe_error", index=i, error=str(exc)[:200])
             continue
         g = normalize_graph_b(raw if isinstance(raw, dict) else {}, detected_ids)
+        from agentic import fields4
+        fields4.attach_graph(raw, g)
         # F42: resolve entity names the model made up before measuring whether
         # its BELIEF is stable. One D_aerial run produced four invented ids
         # across five probes — chemical_spill_1, spill_consequence_1,
