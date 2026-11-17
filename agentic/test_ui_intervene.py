@@ -359,7 +359,10 @@ def test_the_panel_sits_in_the_findings_card_under_causal_groundedness():
     from dash import dcc, html
     assert isinstance(controls, html.Details) and not controls.open
     kids = [getattr(k, "id", None) for k in panel.children]
-    assert kids.index("iv-status") < kids.index("iv-controls")
+    # the card sits in the features fold, above the folded form
+    assert kids.index("iv-features-fold") < kids.index("iv-controls")
+    fold, _ = _find(panel, "iv-features-fold")
+    assert isinstance(fold, html.Details) and fold.open and _find(fold, "iv-status")
     target, _ = _find(panel, "iv-target")
     assert isinstance(target, dcc.Dropdown)
     _instr, anc = _find(panel, "iv-instructions")
@@ -1227,7 +1230,10 @@ def test_the_card_has_two_halves_recommendations_and_features(tmp_path):
     # the proof is in folds, said once; the first is open while there is one try
     folds = _by_class(comp, "iv-evidence")
     assert [_flat(f.children[0]) for f in folds] == [
-        "evidence · 2 recommendations by 1 removed hazard", "the tries · 1"]
+        "CAUSAL GROUNDEDNESS: RECOMMENDATIONS · 2 recommendations by 1 removed hazard",
+        "the tries · 1"]
+    (big,) = _by_class(folds[0].children[0], "iv-title")
+    assert big.style["fontSize"] == "17px" and big.style["fontWeight"] == "800"
     assert folds[0].open is True and not folds[1].open
     assert len(_by_class(folds[0], "iv-table")) == 1 and len(_by_class(card, "iv-table")) == 0
     assert len(_by_class(comp, "iv-features")) == 1      # features are on the card only
@@ -1235,7 +1241,7 @@ def test_the_card_has_two_halves_recommendations_and_features(tmp_path):
     # a second try folds the table away
     ui_iv.save_try(base, ui_iv.finish_try(base, base, {**PENDING, "target": "tanker_1"}))
     comp = ui_iv.result_component(base, tmp_path)
-    assert not _by_class(comp, "by-recommendation")[0].open
+    assert _by_class(comp, "by-recommendation")[0].open       # a main panel: open, one click folds it
 
 
 def test_new_advice_is_not_on_the_card_it_stays_in_the_evidence(tmp_path):
@@ -1281,9 +1287,11 @@ def test_the_ground_truth_switch_is_on_the_page_and_off_by_default():
     assert sw.value == [] and [o["value"] for o in sw.options] == ["gt"]
     assert "calibration" in sw.options[0]["label"]
     kids = [getattr(k, "id", None) for k in panel.children]
-    # the switch on top, the card, the action, then the proof
-    assert kids.index("iv-gt") < kids.index("iv-status") < kids.index("iv-controls") \
-        < kids.index("iv-evidence")
+    # the features fold (the switch, then the card), the action, then the proof
+    assert kids.index("iv-features-fold") < kids.index("iv-controls") < kids.index("iv-evidence")
+    fold, _ = _find(panel, "iv-features-fold")
+    inner = [getattr(k, "id", None) for k in fold.children]
+    assert inner.index("iv-gt") < inner.index("iv-status")
 
 
 # ── features on the card: declared beside mechanistic, in plain words; core

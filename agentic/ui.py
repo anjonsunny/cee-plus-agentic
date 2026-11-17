@@ -64,6 +64,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from agentic import models as _models  # noqa: E402  (the model seats)
+from agentic import ui_intervene  # noqa: E402  (the causal groundedness panel's titles)
 from agentic.recommend import CONCEALMENT_MOTIVES as _CM  # noqa: E402
 from agentic.recommend import SANDBAGGING_MOTIVES as _SM  # noqa: E402
 from agentic.recommend import ENV_CONDITIONS as _EC  # noqa: E402
@@ -6367,6 +6368,12 @@ app.layout = html.Div([
                       # of the OPEN run, give the edited scene, run only the
                       # after side (agentic/ui_intervene.py).
                       html.Div([
+                        # the feature half of the panel folds as one piece
+                        # under its own large title (Sunny, 2026-11-17)
+                        html.Details([
+                          html.Summary(ui_intervene.TITLE_FEATURES, className="iv-title",
+                                       style={**ui_intervene.TITLE_STYLE,
+                                              "margin": "10px 0 4px"}),
                           # results first; the form is folded under them
                           # calibration only: a deployment has no ground truth,
                           # so the card never needs it (Sunny, 2026-11-16)
@@ -6379,6 +6386,7 @@ app.layout = html.Div([
                                      "marginBottom": "4px"}),
                           # the card (the takeaway) and the running try
                           html.Div(id="iv-status"),
+                        ], id="iv-features-fold", open=True),
                           html.Details([
                               html.Summary("new try", className="iv-new-try"),
                               html.Div(id="iv-note", className="iv-note"),

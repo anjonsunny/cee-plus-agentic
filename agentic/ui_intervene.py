@@ -780,7 +780,15 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
                             "boxShadow": "0 1px 6px rgba(15, 23, 42, .08)"})]
 
 
-def _fold(title: str, kids: list, open_: bool = False, cls: str = "") -> Any:
+# The two titles of the causal groundedness panel: large, bold, coloured
+# (Sunny, 2026-11-17). One per fold: by feature, and by recommendation.
+TITLE_FEATURES = "CAUSAL GROUNDEDNESS (FEATURES)"
+TITLE_RECS = "CAUSAL GROUNDEDNESS: RECOMMENDATIONS"
+TITLE_STYLE = {"fontSize": "17px", "fontWeight": "800", "letterSpacing": ".05em",
+               "color": "#1d4ed8", "cursor": "pointer"}
+
+
+def _fold(title: Any, kids: list, open_: bool = False, cls: str = "") -> Any:
     return html.Details([
         html.Summary(title, className="iv-fold-head"),
         html.Div(kids, style={"padding": "4px 0 2px 4px"})],
@@ -822,9 +830,12 @@ def result_parts(base_dir: Path | None, runs_dir: Path | None,
             top += card_component(cmp, tbl, syn, next_id=next_id)
             n_r, n_c = len(tbl["rows"]), len(tbl["columns"])
             bottom.append(_fold(
-                f"evidence · {n_r} recommendation{'s' if n_r != 1 else ''} by "
-                f"{n_c} removed hazard{'s' if n_c != 1 else ''}",
-                table_component(tbl, runs_dir), open_=n_c < 2, cls="by-recommendation"))
+                [html.Span(TITLE_RECS, className="iv-title", style=TITLE_STYLE),
+                 html.Span(f" · {n_r} recommendation{'s' if n_r != 1 else ''} by "
+                           f"{n_c} removed hazard{'s' if n_c != 1 else ''}",
+                           style={"fontWeight": "400", "color": "#64748b"})],
+                # one of the two main panels: open to start, one click to fold
+                table_component(tbl, runs_dir), open_=True, cls="by-recommendation"))
         except Exception as exc:                # never lose the try lines to a bad card
             top.append(html.Div(f"the card could not be built: {exc}",
                                 className="ticket-empty"))

@@ -1393,7 +1393,27 @@ def test_the_trust_card_is_quiet_and_gives_no_order():
 
 
 def test_the_causal_groundedness_title_is_the_large_coloured_one():
+    """The two titles sit on the panel's two folds: by feature, by
+    recommendation (Sunny, 2026-11-17). Both large, bold, coloured."""
+    from agentic import ui_intervene as iv
     card = _findings(s4=_s4_full())
-    (title,) = _by_class(card, "iv-title")
-    assert _flat(title) == "CAUSAL GROUNDEDNESS"
-    assert title.style["fontSize"] == "17px" and title.style["color"] == "#1d4ed8"
+    assert _by_class(card, "iv-title") == []              # no longer a loose line in the findings
+    assert iv.TITLE_FEATURES == "CAUSAL GROUNDEDNESS (FEATURES)"
+    assert iv.TITLE_RECS == "CAUSAL GROUNDEDNESS: RECOMMENDATIONS"
+    assert iv.TITLE_STYLE["fontSize"] == "17px" and iv.TITLE_STYLE["color"] == "#1d4ed8"
+    assert iv.TITLE_STYLE["fontWeight"] == "800"
+    import agentic.ui as ui
+
+    def walk(n):
+        yield n
+        kids = getattr(n, "children", None)
+        for k in (kids if isinstance(kids, (list, tuple)) else [kids] if kids is not None else []):
+            if not isinstance(k, str):
+                yield from walk(k)
+    layout = ui.app.layout() if callable(ui.app.layout) else ui.app.layout
+    (fold,) = [n for n in walk(layout) if getattr(n, "id", None) == "iv-features-fold"]
+    assert fold.open is True                              # collapsible, open to start
+    assert fold.children[0].children == iv.TITLE_FEATURES
+    assert fold.children[0].style["fontSize"] == "17px"
+    inside = {getattr(n, "id", None) for n in walk(fold)}
+    assert {"iv-gt", "iv-status"} <= inside and "iv-evidence" not in inside

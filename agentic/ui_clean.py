@@ -634,11 +634,10 @@ def findings(s4: dict, d: dict, *, chain: Callable[[dict], Any],
                                                 "color": "#b45309" if not_checked
                                                 else "#94a3b8"})] if line else []),
             className="ticket-empty pathology-summary", title=tip))
-    # the main result of the page: its title is the large, coloured one
-    out.append(html.Div("CAUSAL GROUNDEDNESS", className="iv-title",
-                        style={"fontSize": "17px", "fontWeight": "800",
-                               "letterSpacing": ".05em", "color": "#1d4ed8",
-                               "margin": "14px 0 2px"}))
+    # the main result of the page. Its two titles are the large, coloured
+    # ones and sit on the panel itself, each on a fold (agentic/ui.py:
+    # CAUSAL GROUNDEDNESS (FEATURES); agentic/ui_intervene.py: CAUSAL
+    # GROUNDEDNESS: RECOMMENDATIONS). Here only the one line of what it is.
     out.append(html.Div(
         "remove one hazard from the scene, run the edited scene, and see "
         "whether the advice moves",
