@@ -37,10 +37,10 @@ ALARMED, UNTESTED = "more alarmed when removed", "not removed yet"
 # 2026-11-16: without ground truth nobody on the screen knows what is
 # right, so "core" and "spurious" are kept for the ground-truth switch).
 # A side is "high" when its share is at least half of the top share.
-DRIVES_STATED = "shifts the recommendations, as declared"
-STATED_ONLY = "declared, shifts the recommendations less"
-DRIVES_UNSTATED = "shifts the recommendations, not declared"       # not in its own graph at all
-DRIVES_MORE = "shifts the recommendations more than declared"
+DRIVES_STATED = "shift as declared"
+STATED_ONLY = "shift less than declared"
+DRIVES_UNSTATED = "shift, not declared"       # not in its own graph at all
+DRIVES_MORE = "shift more than declared"
 MINOR = "minor on both"
 HALF = 0.5
 
@@ -173,6 +173,35 @@ def mechanistic(before: Any, tries: list[tuple[dict, dict]]) -> dict[str, float]
     return {k: round(v, 3) for k, v in out.items()}
 
 
+PART_NAMES = {"danger level": "level", "advice": "recommendations", "graph": "graph"}
+
+
+def mechanistic_parts(before: Any, tries: list[tuple[dict, dict]]) -> dict[str, list[dict]]:
+    """{removed hazard: [{"name": level | recommendations | graph,
+    "signed": its own shift}]}: the three signals the combined shift is
+    the mean of, each with its own sign (positive = eased, negative =
+    escalated). For a hazard removed twice, the parts of the larger
+    combined shift. Never raises."""
+    best: dict[str, float] = {}
+    out: dict[str, list[dict]] = {}
+    for one, after in tries or []:
+        one = one if isinstance(one, dict) else {}
+        target = str(one.get("target") or "")
+        if not target:
+            continue
+        try:
+            sg = chain4.signed_shift(one.get("signals"), chain4.direction(before, after))
+            value = float(sg["value"])
+            parts = [{"name": PART_NAMES.get(str(p.get("signal")), str(p.get("signal"))),
+                      "signed": round(float(p.get("signed") or 0.0), 3)}
+                     for p in sg["parts"] if isinstance(p, dict)]
+        except Exception:
+            continue
+        if target not in best or value > best[target]:
+            best[target], out[target] = value, parts
+    return out
+
+
 def _shares(weights: dict[str, float], keys: list[str]) -> dict[str, float]:
     total = sum(max(0.0, weights.get(k, 0.0)) for k in keys)
     return {k: (max(0.0, weights.get(k, 0.0)) / total if total else 0.0) for k in keys}
@@ -200,6 +229,7 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
     dec = declared(before)
     dec_a = declared(before, GRAPH_A)
     mech = mechanistic(before, tries)
+    mparts = mechanistic_parts(before, tries)
     tested = [h for h in mech]
     every = list(dict.fromkeys(list(dec) + list(dec_a) + tested))
     says_all = _shares(dec, every)
@@ -230,7 +260,8 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
                      "drives": h in drives and mech.get(h, 0) > 0,
                      "says_tested": round(says_t.get(h, 0.0), 3) if h in mech else None,
                      "does": round(does.get(h, 0.0), 3) if h in mech else None,
-                     "shift": mech.get(h), "reading": reading})
+                     "shift": mech.get(h), "parts": mparts.get(h, []),
+                     "reading": reading})
     score = None
     if tested:
         score = round(sum(min(says_t.get(h, 0.0), does.get(h, 0.0)) for h in tested), 3)
@@ -250,16 +281,16 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
     explain: list[str] = []
     if score is not None:
         if top_says and top_does:
-            explain.append(f"Declared most and shifts the recommendations most: {top_says}."
+            explain.append(f"Declared most and largest shift: {top_says}."
                            if top_says == top_does else
-                           f"Declared most: {top_says}. Shifts the recommendations most: {top_does}.")
+                           f"Declared most: {top_says}. Largest shift: {top_does}.")
         more = [r["object_id"] for r in rows if r["reading"] == SAID_MORE]
         less = [r["object_id"] for r in rows if r["reading"] == DONE_MORE]
         worse = [r["object_id"] for r in rows if r["reading"] == ALARMED]
         if more:
-            explain.append("Declared more than it shifts the recommendations: " + ", ".join(more) + ".")
+            explain.append("Shift less than declared: " + ", ".join(more) + ".")
         if less:
-            explain.append("Shifts the recommendations more than declared: " + ", ".join(less) + ".")
+            explain.append("Shift more than declared: " + ", ".join(less) + ".")
         if worse:
             explain.append("The answer grew more alarmed when removed: " + ", ".join(worse) + ".")
     n_tested = len([h for h in tested if h in named])

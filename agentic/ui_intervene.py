@@ -495,20 +495,41 @@ def _bar(v: Any, col: str) -> Any:
         style={"whiteSpace": "nowrap"})
 
 
-_ROLE = {"shifts the recommendations, as declared": "#16a34a",
-         "declared, shifts the recommendations less": "#b45309",
-         "shifts the recommendations, not declared": "#b45309",
-         "shifts the recommendations more than declared": "#b45309",
+def _parts_line(parts: Any) -> Any:
+    """The three signals of one hazard's shift, each with its own number:
+    green when it eased, red when it escalated."""
+    items: list = []
+    for p in (parts if isinstance(parts, list) else []):
+        if not isinstance(p, dict) or not isinstance(p.get("signed"), (int, float)):
+            continue
+        v = float(p["signed"])
+        col = "#16a34a" if v > 0 else "#b91c1c" if v < 0 else "#94a3b8"
+        items.append(html.Span(
+            [html.Span(f"{p.get('name')} ", style={"color": "#64748b"}),
+             html.Span(f"{v:+.2f}", style={"color": col, "fontWeight": "700"})],
+            className="iv-part", **{"data-way": "eased" if v > 0 else "escalated" if v < 0
+                                    else "unchanged"},
+            title="eased" if v > 0 else "escalated" if v < 0 else "unchanged",
+            style={"marginRight": "9px"}))
+    return html.Div(items, className="iv-parts",
+                    style={"fontSize": "10.5px", "marginTop": "2px", "whiteSpace": "nowrap"}) \
+        if items else None
+
+
+_ROLE = {"shift as declared": "#16a34a",
+         "shift less than declared": "#b45309",
+         "shift, not declared": "#b45309",
+         "shift more than declared": "#b45309",
          "minor on both": "#64748b", "more alarmed when removed": "#b91c1c",
          "not removed yet": "#94a3b8"}
 _ROLE_MEANS = {
-    "shifts the recommendations, as declared": "the model says it matters, and removing it "
-                                    "changes the recommendations",
-    "declared, shifts the recommendations less": "the model says it matters, but removing it "
-                                         "shifts the recommendations less than that",
-    "shifts the recommendations, not declared": "removing it changes the recommendations, though it is not "
+    "shift as declared": "the model says it matters, and removing it "
+                                    "shifts level, recommendations and graph about as much",
+    "shift less than declared": "the model says it matters, but removing it "
+                                         "shifts level, recommendations and graph less than that",
+    "shift, not declared": "removing it shifts level, recommendations and graph, though it is not "
                                      "a hazard in the model's own graph",
-    "shifts the recommendations more than declared": "removing it changes the recommendations more than the "
+    "shift more than declared": "removing it shifts level, recommendations and graph more than the "
                                           "model's own graph says it matters",
     "minor on both": "the model says it matters little, and removing it changes little",
     "more alarmed when removed": "removing it made the answer more alarmed, not less",
@@ -531,8 +552,9 @@ _HEAD_TIP = {
            "the recommendations loses when this hazard is taken out of it",
     B_COL: "how much the model says this hazard matters, from its own graph of the scene: "
            "the danger that graph loses when this hazard is taken out of it",
-    "MECHANISTIC": "how far the recommendations eased when this hazard was removed "
-                   "(danger level, recommendations, graph)",
+    "MECHANISTIC": "the shift when this hazard was removed: the mean of three shifts "
+                   "(danger level, recommendations, graph), each shown under the bar; "
+                   "green = eased, red = escalated",
     "SHOULD MATTER": "the weight of this hazard in the ground truth",
     "BY GROUND TRUTH": "core: it should matter and the recommendations depend on it · "
                        "spurious: the two disagree",
@@ -673,7 +695,8 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
             tds = [html.Td(ent_chip(oid, "#ef4444"), style=_TD),
                    html.Td(_bar(r.get("says_advice"), "#64748b"), style=_TD),
                    html.Td(_bar(r.get("says"), "#334155"), style=_TD),
-                   html.Td(_bar(r.get("does"), "#16a34a") if r.get("does") is not None
+                   html.Td([_bar(r.get("does"), "#16a34a"), _parts_line(r.get("parts"))]
+                           if r.get("does") is not None
                            else html.Span("not removed yet", style=quiet), style=_TD)]
             g = gt_rows.get(oid) or {}
             if gt_on:

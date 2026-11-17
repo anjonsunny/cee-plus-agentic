@@ -1335,7 +1335,7 @@ def test_the_card_shows_each_feature_declared_beside_mechanistic():
     assert _flat(_by_class(by["fire_1"], "iv-role")) == d.DRIVES_MORE
     assert _flat(_by_class(by["spill_1"], "iv-role")) == d.STATED_ONLY
     assert "not removed yet" in _flat(by["tanker_1"])    # declared bars, no mechanistic bar
-    assert "removing it shifts the recommendations less than that" in _by_class(by["spill_1"], "iv-role")[0].title
+    assert "removing it shifts level, recommendations and graph less than that" in _by_class(by["spill_1"], "iv-role")[0].title
     # two declared bars and one mechanistic bar, each with its number
     assert len(_by_class(by["fire_1"], "iv-bar-num")) == 3
     assert len(_by_class(by["tanker_1"], "iv-bar-num")) == 2
@@ -1474,13 +1474,39 @@ def test_the_card_says_in_which_direction_declared_and_mechanistic_differ():
     from agentic import declared4 as d
     c = d.compare(D_BEFORE, [_try("fire_1", 0.02), _try("spill_1", 0.98)])
     assert c["reading"] == "differ"
-    assert c["explain"] == ["Declared most and shifts the recommendations most: spill_1.",
-                            "Declared more than it shifts the recommendations: fire_1.",
-                            "Shifts the recommendations more than declared: spill_1."]
+    assert c["explain"] == ["Declared most and largest shift: spill_1.",
+                            "Shift less than declared: fire_1.",
+                            "Shift more than declared: spill_1."]
     c = d.compare(D_BEFORE, [_try("fire_1", 0.9), _try("spill_1", 0.1)])
-    assert c["explain"][0] == "Declared most: spill_1. Shifts the recommendations most: fire_1."
+    assert c["explain"][0] == "Declared most: spill_1. Largest shift: fire_1."
     card = ui_iv.card_component(c, {})
     assert _flat(_by_class(card, "iv-explain")).startswith("Declared most: spill_1.")
     assert "what it says" not in _flat(card)
     assert d.compare(D_BEFORE, [])["explain"] == []                      # nothing removed yet
     assert _by_class(ui_iv.card_component(d.compare(D_BEFORE, []), {}), "iv-explain") == []
+
+
+def test_each_hazard_shows_its_three_shifts_green_when_eased_red_when_escalated():
+    """Sunny, 2026-11-17: the shift is a combined score, so the card names
+    the three parts, each with its own shift and colour."""
+    from agentic import declared4 as d
+    c = d.compare(D_BEFORE, [_try("fire_1", 0.6), _try("spill_1", -0.4)])
+    by = {r["object_id"]: r for r in c["hazards"]}
+    assert [p["name"] for p in by["fire_1"]["parts"]] == ["level", "recommendations", "graph"]
+    assert by["fire_1"]["parts"][0]["signed"] == 0.6 and by["spill_1"]["parts"][1]["signed"] == -0.4
+    assert by["tanker_1"]["parts"] == []                          # not removed: nothing to show
+    card = ui_iv.card_component(c, {})
+    rows = {_flat(r).split()[0]: r for r in _by_class(card, "iv-feature")}
+    fire = _by_class(rows["fire_1"], "iv-part")
+    assert [_flat(p) for p in fire][:2] == ["level +0.60", "recommendations +0.60"]
+    assert getattr(fire[0], "data-way") == "eased" and fire[0].children[1].style["color"] == "#16a34a"
+    spill = _by_class(rows["spill_1"], "iv-part")
+    assert getattr(spill[0], "data-way") == "escalated"
+    assert spill[0].children[1].style["color"] == "#b91c1c"
+    assert _by_class(rows["tanker_1"], "iv-part") == []
+    for word in (d.DRIVES_STATED, d.STATED_ONLY, d.DRIVES_UNSTATED, d.DRIVES_MORE):
+        assert "advice" not in word and "recommendations" not in word   # no single part named
+    # malformed parts never break the card
+    c["hazards"][0]["parts"] = [None, {"name": "x"}, {"signed": "a"}, 3]
+    ui_iv.card_component(c, {})
+    assert d.mechanistic_parts(None, [(None, None), ({"target": "a"}, "x")]) in ({}, {"a": d.mechanistic_parts(None, [({"target": "a"}, "x")]).get("a", [])})
