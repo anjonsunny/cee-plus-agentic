@@ -1332,10 +1332,12 @@ def test_the_card_shows_each_feature_declared_beside_mechanistic():
     rows = _by_class(card, "iv-feature")
     assert [_flat(r).split()[0] for r in rows] == ["spill_1", "fire_1", "tanker_1", "brush_1"]
     by = {_flat(r).split()[0]: r for r in rows}
-    assert _flat(_by_class(by["fire_1"], "iv-role")) == d.DRIVES_MORE
-    assert _flat(_by_class(by["spill_1"], "iv-role")) == d.STATED_ONLY
+    assert _flat(_by_class(by["fire_1"], "iv-role")) == "shifts emergency responses"
+    assert _flat(_by_class(by["spill_1"], "iv-role")) == "shifts emergency responses"
+    assert _by_class(by["fire_1"], "iv-role")[0].style["color"] == "#16a34a"      # eased: green
     assert "not removed yet" in _flat(by["tanker_1"])    # declared bars, no mechanistic bar
-    assert "removing it shifts level, recommendations and graph less than that" in _by_class(by["spill_1"], "iv-role")[0].title
+    assert _flat(_by_class(by["tanker_1"], "iv-role")) == ""
+    assert "eased the emergency responses" in _by_class(by["spill_1"], "iv-role")[0].title
     # two declared bars and one mechanistic bar, each with its number
     assert len(_by_class(by["fire_1"], "iv-bar-num")) == 3
     assert len(_by_class(by["tanker_1"], "iv-bar-num")) == 2
@@ -1486,27 +1488,26 @@ def test_the_card_says_in_which_direction_declared_and_mechanistic_differ():
     assert _by_class(ui_iv.card_component(d.compare(D_BEFORE, []), {}), "iv-explain") == []
 
 
-def test_each_hazard_shows_its_three_shifts_green_when_eased_red_when_escalated():
-    """Sunny, 2026-11-17: the shift is a combined score, so the card names
-    the three parts, each with its own shift and colour."""
+def test_the_feature_row_says_one_phrase_coloured_by_the_direction_of_the_shift():
+    """Sunny, 2026-11-17: no separate parts on the card. One phrase,
+    "shifts emergency responses", green when the combined shift eased and
+    red when it escalated; scores only for the two declared and the
+    combined shift."""
     from agentic import declared4 as d
-    c = d.compare(D_BEFORE, [_try("fire_1", 0.6), _try("spill_1", -0.4)])
-    by = {r["object_id"]: r for r in c["hazards"]}
-    assert [p["name"] for p in by["fire_1"]["parts"]] == ["level", "recommendations", "graph"]
-    assert by["fire_1"]["parts"][0]["signed"] == 0.6 and by["spill_1"]["parts"][1]["signed"] == -0.4
-    assert by["tanker_1"]["parts"] == []                          # not removed: nothing to show
+    c = d.compare(D_BEFORE, [_try("fire_1", 0.6), _try("spill_1", -0.4), _try("brush_1", 0.0)])
     card = ui_iv.card_component(c, {})
     rows = {_flat(r).split()[0]: r for r in _by_class(card, "iv-feature")}
-    fire = _by_class(rows["fire_1"], "iv-part")
-    assert [_flat(p) for p in fire][:2] == ["level +0.60", "recommendations +0.60"]
-    assert getattr(fire[0], "data-way") == "eased" and fire[0].children[1].style["color"] == "#16a34a"
-    spill = _by_class(rows["spill_1"], "iv-part")
-    assert getattr(spill[0], "data-way") == "escalated"
-    assert spill[0].children[1].style["color"] == "#b91c1c"
-    assert _by_class(rows["tanker_1"], "iv-part") == []
-    for word in (d.DRIVES_STATED, d.STATED_ONLY, d.DRIVES_UNSTATED, d.DRIVES_MORE):
-        assert "advice" not in word and "recommendations" not in word   # no single part named
-    # malformed parts never break the card
-    c["hazards"][0]["parts"] = [None, {"name": "x"}, {"signed": "a"}, 3]
-    ui_iv.card_component(c, {})
-    assert d.mechanistic_parts(None, [(None, None), ({"target": "a"}, "x")]) in ({}, {"a": d.mechanistic_parts(None, [({"target": "a"}, "x")]).get("a", [])})
+    (fire,), (spill,), (brush,) = (_by_class(rows[h], "iv-role")
+                                   for h in ("fire_1", "spill_1", "brush_1"))
+    assert _flat(fire) == _flat(spill) == "shifts emergency responses"
+    assert fire.style["color"] == "#16a34a" and getattr(fire, "data-way") == "eased"
+    assert spill.style["color"] == "#b91c1c" and getattr(spill, "data-way") == "escalated"
+    assert _flat(brush) == "does not shift emergency responses"
+    assert _flat(_by_class(rows["tanker_1"], "iv-role")) == ""            # not removed yet
+    assert _by_class(card, "iv-part") == []                             # no separate parts
+    assert len(_by_class(rows["fire_1"], "iv-bar-num")) == 3            # two declared + combined
+    # the parts stay in the data for later use
+    by = {r["object_id"]: r for r in c["hazards"]}
+    assert [p["name"] for p in by["fire_1"]["parts"]] == ["level", "recommendations", "graph"]
+    c["hazards"][0]["shift"] = "x"
+    ui_iv.card_component(c, {})                                         # malformed: no crash
