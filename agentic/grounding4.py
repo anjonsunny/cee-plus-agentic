@@ -189,31 +189,50 @@ def _rank(rec: Any) -> Any:
     return r if isinstance(r, int) and not isinstance(r, bool) else None
 
 
-def impact(rec: Any, cell: Any, n: int) -> tuple[Any, list[str]]:
-    """(0..1, the reasons in plain words) for one cell. None for a cell
-    that is not evidence (its target was removed). `n` = how many
-    recommendations there are, for the rank step. Never raises."""
+EASED, ESCALATED, MIXED_WAY = "eased", "escalated", "mixed"
+
+
+def impact_detail(rec: Any, cell: Any, n: int) -> dict:
+    """{"value": 0..1 or None, "reasons": [{"text", "way"}], "way"} for one
+    cell. `way` says which direction the change went: "eased" (later,
+    smaller), "escalated" (sooner, bigger), "mixed" when the reasons
+    disagree, "" when nothing with a direction changed. A rank change and
+    a changed target or effect carry no direction: a recommendation can
+    move up only because another one was dropped. None for a cell that is
+    not evidence (its target was removed). Never raises."""
     cell = cell if isinstance(cell, dict) else {}
     state = cell.get("state")
     if state == TARGET_REMOVED:
-        return None, []
+        return {"value": None, "reasons": [], "way": ""}
     if state == GONE:
-        return 1.0, ["dropped"]
+        return {"value": 1.0, "reasons": [{"text": "dropped", "way": ""}], "way": ""}
     after = cell.get("after") if isinstance(cell.get("after"), dict) else {}
-    total, why = 0.0, []
+    total, reasons = 0.0, []
     if state == CHANGED:
         total += IMPACT["target or effect"]
-        why.append("target or effect changed")
-    for key, allowed, name in (("how_soon", _SOON, "how soon"), ("size", _SIZE, "size")):
+        reasons.append({"text": "target or effect changed", "way": ""})
+    # how soon: later is eased. size: smaller is eased.
+    for key, allowed, name, eased_when_up in (("how_soon", _SOON, "how soon", True),
+                                              ("size", _SIZE, "size", False)):
         b, a = _field(rec, key, allowed), _field(after, key, allowed)
         if b and a and b != a:
-            total += IMPACT[name] * abs(allowed.index(b) - allowed.index(a)) / (len(allowed) - 1)
-            why.append(f"{b} \u2192 {a}")
+            step = allowed.index(a) - allowed.index(b)
+            total += IMPACT[name] * abs(step) / (len(allowed) - 1)
+            reasons.append({"text": f"{b} \u2192 {a}",
+                            "way": EASED if (step > 0) == eased_when_up else ESCALATED})
     rb, ra = _rank(rec), _rank(after)
     if rb is not None and ra is not None and rb != ra:
         total += IMPACT["rank"] * min(1.0, abs(rb - ra) / max(1, n - 1))
-        why.append(f"rank {rb} \u2192 {ra}")
-    return round(min(1.0, total), 3), why
+        reasons.append({"text": f"rank {rb} \u2192 {ra}", "way": ""})
+    ways = {r["way"] for r in reasons if r["way"]}
+    return {"value": round(min(1.0, total), 3), "reasons": reasons,
+            "way": MIXED_WAY if len(ways) > 1 else (ways.pop() if ways else "")}
+
+
+def impact(rec: Any, cell: Any, n: int) -> tuple[Any, list[str]]:
+    """(0..1, the reasons in plain words) for one cell; see impact_detail."""
+    d = impact_detail(rec, cell, n)
+    return d["value"], [r["text"] for r in d["reasons"]]
 
 
 def _verdict(cells: list[dict]) -> str:
@@ -249,7 +268,9 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
         n_recs = max(len(base), len(after_recs))
         for i, c in enumerate(col_cells):
             c["label"] = cell_label(c)
-            c["impact"], c["why"] = impact(base[i], c, n_recs)
+            det = impact_detail(base[i], c, n_recs)
+            c["impact"], c["why"] = det["value"], [r["text"] for r in det["reasons"]]
+            c["way"], c["reasons"] = det["way"], det["reasons"]
             cells_by_row[i].append(c)
         counted = [c for c in col_cells if c["state"] != TARGET_REMOVED]
         moved = sum(1 for c in counted if c["state"] in (GONE, CHANGED))

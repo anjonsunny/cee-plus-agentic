@@ -893,7 +893,10 @@ def test_the_frozen_arms_own_result_is_shown_nowhere(gt, monkeypatch):
     (one,) = syn["tries"]
     assert one["frozen_cell"] == "escalated" and one["cell"] == "grounded"   # kept as data
     for with_gt in (False, True):
-        text = _flat(ui_iv.result_component(base, gt["tmp"], with_gt=with_gt))
+        # (the table's own key explains its colours with the word "escalated";
+        #  that is ours, not the frozen arm's result for this try)
+        text = _flat(ui_iv.result_component(base, gt["tmp"], with_gt=with_gt)).replace(
+            ui_iv.TABLE_KEY, "")
         for word in ("frozen", "(differs)", "escalated"):
             assert word not in text, (word, with_gt)
     from agentic import ui_clean
@@ -1553,3 +1556,45 @@ def test_each_cell_carries_how_much_the_recommendation_changed():
     assert all("impact" in c and "why" in c for r in tbl["rows"] for c in r["cells"])
     comp = ui_iv.table_component(tbl)
     assert _by_class(comp, "iv-bar-num") and "dropped = 1.00" in _flat(comp)
+
+
+def test_an_adjusted_cell_says_which_way_it_went_and_the_bar_takes_that_colour():
+    """Sunny, 2026-11-17: green for a shift that eased, red for one that
+    escalated; one bar, one colour."""
+    from agentic import grounding4 as g
+
+    def rec(rank, soon="", size="", target="man_1"):
+        r = _rec(rank, "fire_1", [target])
+        r["structured_reasoning"] = {**r["structured_reasoning"],
+                                     **({"how_soon": soon} if soon else {}),
+                                     **({"size": size} if size else {})}
+        return r
+    d = g.impact_detail(rec(1, "now", "large"), {"state": "stays", "after": rec(1, "later", "small")}, 4)
+    assert d["way"] == "eased" and [r["way"] for r in d["reasons"]] == ["eased", "eased"]
+    d = g.impact_detail(rec(1, "later", "small"), {"state": "stays", "after": rec(1, "now", "large")}, 4)
+    assert d["way"] == "escalated"
+    d = g.impact_detail(rec(1, "now", "small"), {"state": "stays", "after": rec(1, "later", "large")}, 4)
+    assert d["way"] == "mixed"                                     # later, but bigger
+    # rank and a changed target carry no direction
+    d = g.impact_detail(rec(1), {"state": "changed", "after": rec(3)}, 4)
+    assert d["way"] == "" and [r["way"] for r in d["reasons"]] == ["", ""]
+    assert g.impact_detail(rec(1), {"state": "gone"}, 4)["way"] == ""
+    assert g.impact_detail(None, None, 0) == {"value": 0.0, "reasons": [], "way": ""}
+    assert g.impact_detail("x", {"state": "target removed"}, 0)["value"] is None
+
+    def cell(way, state="changed", reasons=None):
+        return {"state": state, "label": "correctly_ignored", "impact": 0.5, "way": way,
+                "why": [], "reasons": reasons or [{"text": "now \u2192 later", "way": way}],
+                "after": {"action": "x"}}
+    tbl = {"columns": [{"index": i, "target": "t"} for i in range(4)],
+           "rows": [{"rank": 1, "action": "a", "threat": "fire_1", "affected": [], "verdict":
+                     "untested", "cells": [cell("eased"), cell("escalated"), cell("mixed"),
+                                           cell("", reasons=[{"text": "rank 1 \u2192 2", "way": ""},
+                                                             None, "x"])]}]}
+    words = _by_class(ui_iv.table_component(tbl), "iv-cell-word")
+    assert [_flat(w) for w in words] == ["adjusted, eased", "adjusted, escalated",
+                                         "adjusted, mixed", "adjusted"]
+    assert [w.style["color"] for w in words] == ["#16a34a", "#b91c1c", "#b45309", "#b45309"]
+    reasons = _by_class(ui_iv.table_component(tbl), "iv-reason")
+    assert reasons[0].style["color"] == "#16a34a" and reasons[1].style["color"] == "#b91c1c"
+    assert reasons[-1].style["color"] == "#64748b"                  # rank: no direction, grey

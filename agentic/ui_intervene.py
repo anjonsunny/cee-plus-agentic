@@ -302,6 +302,7 @@ _CELL = {"stays": ("recommendation kept", "#64748b"), "gone": ("recommendation d
 _CELL_SHORT = {"stays": ("kept", "#64748b"), "gone": ("dropped", "#0f172a"),
                "changed": ("adjusted", "#b45309"),
                "target removed": ("its target was removed", "#94a3b8")}
+_WAY_COL = {"eased": "#16a34a", "escalated": "#b91c1c", "mixed": "#b45309"}
 _CELL_MEANS = {
     "stays": "the same recommendation is still in the answer to the edited scene",
     "gone": "this recommendation is no longer in the answer to the edited scene",
@@ -310,7 +311,8 @@ _CELL_MEANS = {
     "target removed": "the only thing this recommendation pointed at was removed, and its "
                       "hazard has no other recommendation; not counted as evidence"}
 TABLE_KEY = ("each cell: what happened to this recommendation when that hazard was removed; "
-             "the bar is how much it changed (dropped = 1.00)")
+             "the bar is how much it changed (dropped = 1.00); "
+             "green = eased, red = escalated")
 _VERDICT = {"grounded": "#16a34a", "masquerade": "#b91c1c",
             "spurious": "#b45309", "mixed": "#b45309",
             "correctly_ignored": "#64748b", "untested": "#94a3b8"}
@@ -414,8 +416,10 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
                 tip += (f"  |  before: {r.get('action')}  |  after: {after.get('action')}")
             imp = c.get("impact")
             imp = imp if isinstance(imp, (int, float)) and not isinstance(imp, bool) else None
-            why = [str(x) for x in (c.get("why") if isinstance(c.get("why"), list) else [])
-                   if x not in ("dropped", "target or effect changed")]
+            why = [x for x in (c.get("reasons") if isinstance(c.get("reasons"), list) else [])
+                   if isinstance(x, dict)
+                   and x.get("text") not in ("dropped", "target or effect changed")]
+            way = str(c.get("way") or "")
             # compact (Sunny, 2026-11-17: "very crowded"): a bar for how much
             # this recommendation changed, one short word, the small reasons.
             # The frozen word for the cell (grounded, correctly ignored ...)
@@ -424,18 +428,26 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
             tip += ("  |  " + lab.replace("_", " ") + ": " + _MEANS.get(lab, "")) if lab else ""
             if imp:
                 # the bar with its number; the word under it; then the small
-                # reasons, each kept whole so "rank 5 \u2192 4" never splits
-                kids = [html.Div(_bar(imp, "#0f172a" if state == "gone" else "#b45309")),
-                        html.Div(short, className="iv-cell-word",
-                                 style={"color": col, "fontWeight": "700"})]
+                # reasons, each kept whole so "rank 5 \u2192 4" never splits.
+                # One colour per bar: which way the change went.
+                tone = ("#0f172a" if state == "gone" else
+                        _WAY_COL.get(way, "#b45309"))
+                kids = [html.Div(_bar(imp, tone)),
+                        html.Div(short + (f", {way}" if way and state != "gone" else ""),
+                                 className="iv-cell-word", **{"data-way": way},
+                                 style={"color": tone if state != "gone" else col,
+                                        "fontWeight": "700"})]
                 if why:
                     bits: list = []
                     for k, w in enumerate(why):
                         if k:
                             bits.append(html.Span(" \u00b7 ", style={"color": "#cbd5e1"}))
-                        bits.append(html.Span(w, style={"whiteSpace": "nowrap"}))
-                    kids.append(html.Div(bits, className="iv-why",
-                                         style={"fontSize": "10px", "color": "#64748b"}))
+                        bits.append(html.Span(
+                            str(w.get("text")), className="iv-reason",
+                            **{"data-way": str(w.get("way") or "")},
+                            style={"whiteSpace": "nowrap",
+                                   "color": _WAY_COL.get(str(w.get("way") or ""), "#64748b")}))
+                    kids.append(html.Div(bits, className="iv-why", style={"fontSize": "10px"}))
             elif lab == "masquerade":
                 # it names the removed hazard and is still there: not a quiet cell
                 kids = [html.Span(short + ", though its hazard was removed",
