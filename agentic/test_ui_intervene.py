@@ -919,10 +919,18 @@ def test_a_cell_says_what_happened_to_the_advice_then_the_label():
     rows = _by_class(comp, "iv-row")
     by = {_flat(r).split()[0]: _flat(_by_class(r, "iv-cell")) for r in rows}
     assert by["#1"] == "kept"                             # the uneventful cell, said quietly
-    assert by["#2"] == "recommendation kept → masquerade"
-    assert by["#3"] == "recommendation kept, adjusted → correctly ignored"
-    assert by["#4"] == "recommendation dropped → spurious"
-    assert by["#6"] == "recommendation kept, adjusted → correctly ignored"
+    # compact: a bar with its number, one word, the small reasons
+    assert by["#2"] == "kept, though its hazard was removed"      # masquerade is not quiet
+    assert by["#3"] == "0.40 adjusted"
+    assert by["#4"] == "1.00 dropped"
+    assert by["#6"] == "0.60 adjusted rank 6 \u2192 1"
+    labels = {_flat(r).split()[0]: getattr(_by_class(r, "iv-cell")[0], "data-label") for r in rows}
+    assert labels == {"#1": "correctly_ignored", "#2": "masquerade", "#3": "correctly_ignored",
+                      "#4": "spurious", "#6": "correctly_ignored"}
+    # the frozen word for the cell is on hover
+    four = _by_class(next(r for r in rows if _flat(r).startswith("#4")), "iv-cell")[0]
+    assert "spurious: went when a hazard it does not name was removed" in four.title
+    assert "recommendation dropped" not in _flat(comp)            # no long phrases in the cells
     assert "nothing left to protect" not in _flat(comp)
     text = _flat(comp)
     for old_word in ("action changed", "gone with it", " stays ", " gone "):
@@ -1444,8 +1452,8 @@ def test_advice_recorded_with_another_target_is_kept_not_dropped():
     assert [n["action"] for n in t["columns"][0]["new"]] == ["Move man_1 away from spill_1."]
     comp = ui_iv.table_component(t)
     cells = {_flat(r).split()[0]: _flat(_by_class(r, "iv-cell")) for r in _by_class(comp, "iv-row")}
-    assert cells["#5"] == "recommendation kept, adjusted → correctly ignored"
-    assert cells["#2"] == "recommendation kept, adjusted → correctly ignored"
+    assert cells["#5"] == "0.60 adjusted rank 5 \u2192 3"
+    assert cells["#2"] == "0.40 adjusted"
 
 
 def test_gone_spurious_and_target_removed_still_exist_when_the_hazard_has_no_advice_left():
@@ -1467,7 +1475,7 @@ def test_gone_spurious_and_target_removed_still_exist_when_the_hazard_has_no_adv
     comp = ui_iv.table_component(t)
     cells = {_flat(r).split()[0]: _flat(_by_class(r, "iv-cell")) for r in _by_class(comp, "iv-row")}
     assert cells["#3"] == "its target was removed"
-    assert cells["#2"] == "recommendation dropped → spurious"
+    assert cells["#2"] == "1.00 dropped"
 
 
 def test_the_card_says_in_which_direction_declared_and_mechanistic_differ():
@@ -1511,3 +1519,37 @@ def test_the_feature_row_says_one_phrase_coloured_by_the_direction_of_the_shift(
     assert [p["name"] for p in by["fire_1"]["parts"]] == ["level", "recommendations", "graph"]
     c["hazards"][0]["shift"] = "x"
     ui_iv.card_component(c, {})                                         # malformed: no crash
+
+
+def test_each_cell_carries_how_much_the_recommendation_changed():
+    """Sunny, 2026-11-17: a bar per removed hazard, so a row shows which
+    hazard that recommendation depends on most."""
+    from agentic import grounding4 as g
+
+    def rec(rank, soon="", size=""):
+        r = _rec(rank, "fire_1", ["man_1"])
+        r["structured_reasoning"] = {**r["structured_reasoning"],
+                                     **({"how_soon": soon} if soon else {}),
+                                     **({"size": size} if size else {})}
+        return r
+    assert g.impact(rec(1), {"state": "gone"}, 5) == (1.0, ["dropped"])
+    assert g.impact(rec(1), {"state": "target removed"}, 5) == (None, [])
+    assert g.impact(rec(1), {"state": "stays", "after": rec(1)}, 5) == (0.0, [])
+    # kept, but later, smaller and lower down: each part adds its share
+    v, why = g.impact(rec(1, "now", "large"), {"state": "stays", "after": rec(5, "later", "small")}, 5)
+    assert v == pytest.approx(0.25 + 0.15 + 0.2) and why == ["now \u2192 later", "large \u2192 small",
+                                                           "rank 1 \u2192 5"]
+    v, why = g.impact(rec(2, "now"), {"state": "changed", "after": rec(2, "minutes")}, 5)
+    assert v == pytest.approx(0.4 + 0.125) and why == ["target or effect changed", "now \u2192 minutes"]
+    assert sum(g.IMPACT.values()) == pytest.approx(1.0)            # a kept one never beats dropped
+    # a run saved before the fields existed: only state and rank can speak
+    assert g.impact(rec(1), {"state": "stays", "after": rec(1, "later", "small")}, 5) == (0.0, [])
+    for bad in (None, "x", {}, {"state": "stays", "after": "x"}, {"state": "changed", "after": {"rank": "a"}}):
+        assert isinstance(g.impact(None, bad, 0)[1], list)
+        assert isinstance(g.impact({"structured_reasoning": "x", "rank": True}, bad, 1)[1], list)
+    # on the table: every evidence cell has the number
+    after = _res(["fire_1", "smoke_1", "man_1", "truck_1"], [_rec(1, "fire_1", ["man_1"])])
+    tbl = g.table(BEFORE, [({"index": 1, "target": "spill_1", "after_run": "x"}, after)])
+    assert all("impact" in c and "why" in c for r in tbl["rows"] for c in r["cells"])
+    comp = ui_iv.table_component(tbl)
+    assert _by_class(comp, "iv-bar-num") and "dropped = 1.00" in _flat(comp)

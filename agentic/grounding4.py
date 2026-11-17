@@ -168,6 +168,54 @@ def _match_column(base: list[dict], after_recs: list[dict], removed: set[str]) -
     return [c for c in cells if c is not None], used   # type: ignore[return-value]
 
 
+# How much ONE recommendation changed when a hazard was removed, 0..1
+# (Sunny, 2026-11-17: a bar per removed hazard, so a row shows which hazard
+# that recommendation depends on most). Dropped = 1. A recommendation that
+# is kept can still change: its target or effect, how soon, how big the
+# hazard it names is, its rank. The four shares add up to 1 and are
+# priors, the one place to change them.
+IMPACT = {"target or effect": 0.4, "how soon": 0.25, "size": 0.15, "rank": 0.2}
+_SOON, _SIZE = ("now", "minutes", "later"), ("small", "medium", "large")
+
+
+def _field(rec: Any, key: str, allowed: tuple) -> str:
+    q = rec.get("structured_reasoning") if isinstance(rec, dict) else None
+    v = q.get(key) if isinstance(q, dict) else None
+    return v if isinstance(v, str) and v in allowed else ""
+
+
+def _rank(rec: Any) -> Any:
+    r = rec.get("rank") if isinstance(rec, dict) else None
+    return r if isinstance(r, int) and not isinstance(r, bool) else None
+
+
+def impact(rec: Any, cell: Any, n: int) -> tuple[Any, list[str]]:
+    """(0..1, the reasons in plain words) for one cell. None for a cell
+    that is not evidence (its target was removed). `n` = how many
+    recommendations there are, for the rank step. Never raises."""
+    cell = cell if isinstance(cell, dict) else {}
+    state = cell.get("state")
+    if state == TARGET_REMOVED:
+        return None, []
+    if state == GONE:
+        return 1.0, ["dropped"]
+    after = cell.get("after") if isinstance(cell.get("after"), dict) else {}
+    total, why = 0.0, []
+    if state == CHANGED:
+        total += IMPACT["target or effect"]
+        why.append("target or effect changed")
+    for key, allowed, name in (("how_soon", _SOON, "how soon"), ("size", _SIZE, "size")):
+        b, a = _field(rec, key, allowed), _field(after, key, allowed)
+        if b and a and b != a:
+            total += IMPACT[name] * abs(allowed.index(b) - allowed.index(a)) / (len(allowed) - 1)
+            why.append(f"{b} \u2192 {a}")
+    rb, ra = _rank(rec), _rank(after)
+    if rb is not None and ra is not None and rb != ra:
+        total += IMPACT["rank"] * min(1.0, abs(rb - ra) / max(1, n - 1))
+        why.append(f"rank {rb} \u2192 {ra}")
+    return round(min(1.0, total), 3), why
+
+
 def _verdict(cells: list[dict]) -> str:
     named = [cell_label(c) for c in cells if c.get("named_removed")]
     if named:
@@ -198,8 +246,10 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
         removed = removed_set(before, after, str(one.get("target") or ""), ren)
         rset = set(removed)
         col_cells, used = _match_column(base, after_recs, rset)
+        n_recs = max(len(base), len(after_recs))
         for i, c in enumerate(col_cells):
             c["label"] = cell_label(c)
+            c["impact"], c["why"] = impact(base[i], c, n_recs)
             cells_by_row[i].append(c)
         counted = [c for c in col_cells if c["state"] != TARGET_REMOVED]
         moved = sum(1 for c in counted if c["state"] in (GONE, CHANGED))

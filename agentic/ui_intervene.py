@@ -299,6 +299,9 @@ def _thumb(path: Path | None) -> str | None:
 _CELL = {"stays": ("recommendation kept", "#64748b"), "gone": ("recommendation dropped", "#0f172a"),
          "changed": ("recommendation kept, adjusted", "#b45309"),
          "target removed": ("its target was removed", "#94a3b8")}
+_CELL_SHORT = {"stays": ("kept", "#64748b"), "gone": ("dropped", "#0f172a"),
+               "changed": ("adjusted", "#b45309"),
+               "target removed": ("its target was removed", "#94a3b8")}
 _CELL_MEANS = {
     "stays": "the same recommendation is still in the answer to the edited scene",
     "gone": "this recommendation is no longer in the answer to the edited scene",
@@ -306,7 +309,8 @@ _CELL_MEANS = {
                "target or effect word",
     "target removed": "the only thing this recommendation pointed at was removed, and its "
                       "hazard has no other recommendation; not counted as evidence"}
-TABLE_KEY = "each cell: what happened to this recommendation when that hazard was removed"
+TABLE_KEY = ("each cell: what happened to this recommendation when that hazard was removed; "
+             "the bar is how much it changed (dropped = 1.00)")
 _VERDICT = {"grounded": "#16a34a", "masquerade": "#b91c1c",
             "spurious": "#b45309", "mixed": "#b45309",
             "correctly_ignored": "#64748b", "untested": "#94a3b8"}
@@ -408,21 +412,33 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
             tip = _CELL_MEANS.get(state, "")
             if after:
                 tip += (f"  |  before: {r.get('action')}  |  after: {after.get('action')}")
-            if state == "stays" and lab == "correctly_ignored":
-                # the expected, uneventful cell: said quietly, meaning on hover
-                tds.append(html.Td("kept", className="iv-cell stays quiet",
-                                   title=tip + "  |  " + _MEANS.get(lab, ""),
-                                   style={**_TD, "color": "#94a3b8"}))
-                continue
-            # one line: what happened to the advice -> the label that follows
-            tds.append(html.Td(
-                [html.Span(word)]
-                + ([html.Span(" → ", style={"color": "#94a3b8", "fontWeight": "400"}),
-                    html.Span(lab.replace("_", " "), className="iv-cell-label",
-                              title=_MEANS.get(lab, ""),
-                              style={"color": _VERDICT.get(lab, "#94a3b8")})] if lab else []),
-                className=f"iv-cell {state.split()[0]}", title=tip,
-                style={**_TD, "color": col, "fontWeight": "700"}))
+            imp = c.get("impact")
+            imp = imp if isinstance(imp, (int, float)) and not isinstance(imp, bool) else None
+            why = [str(x) for x in (c.get("why") if isinstance(c.get("why"), list) else [])
+                   if x not in ("dropped", "target or effect changed")]
+            # compact (Sunny, 2026-11-17: "very crowded"): a bar for how much
+            # this recommendation changed, one short word, the small reasons.
+            # The frozen word for the cell (grounded, correctly ignored ...)
+            # is on hover; the row's reading is in the last column.
+            short, col = _CELL_SHORT.get(state, (state, "#64748b"))
+            tip += ("  |  " + lab.replace("_", " ") + ": " + _MEANS.get(lab, "")) if lab else ""
+            if imp:
+                kids = [_bar(imp, "#0f172a" if state == "gone" else "#b45309"),
+                        html.Span(" " + short, className="iv-cell-word",
+                                  style={"color": col, "fontWeight": "700"})]
+                if why:
+                    kids.append(html.Div(", ".join(why), className="iv-why",
+                                         style={"fontSize": "10px", "color": "#64748b"}))
+            elif lab == "masquerade":
+                # it names the removed hazard and is still there: not a quiet cell
+                kids = [html.Span(short + ", though its hazard was removed",
+                                  className="iv-cell-word",
+                                  style={"color": _VERDICT["masquerade"], "fontWeight": "700"})]
+            else:
+                kids = [html.Span(short, className="iv-cell-word", style={"color": "#94a3b8"})]
+            tds.append(html.Td(kids, className=f"iv-cell {state.split()[0]}"
+                               + ("" if imp or lab == "masquerade" else " quiet"),
+                               title=tip, **{"data-label": lab}, style=_TD))
         v = str(r.get("verdict"))
         tds.append(html.Td(v.replace("_", " "), className="iv-verdict",
                            title=_MEANS.get(v, ""),
