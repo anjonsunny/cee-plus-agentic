@@ -474,16 +474,14 @@ def clean_recs(s4: dict) -> list:
                                 "cursor": "pointer"}),
             html.Div(benign, style={"padding": "2px 0 0 8px"})],
             style={"margin": "6px 0"}))
-    same = same_hazards_line(s4)
-    if same is not None:
-        cards.append(same)
     return cards
 
 
 def same_hazards_line(s4: Any) -> Any:
     """One line naming the hazards the model called one and the same, or
-    None. Shown as soon as the run is done, before any try (Sunny,
-    2026-11-19), so the pair is known before a hazard is picked."""
+    None. Not placed under the recommendations (Sunny, 2026-11-19: "it's
+    ruining the view"); the pair is shown where the intervention is: the
+    new-try form, the features card and the recommendations table."""
     from agentic import same4
     frame = s4.get("frame") if isinstance(s4, dict) else None
     grp = same4.groups(same4.pairs_of(frame if isinstance(frame, dict) else {}))

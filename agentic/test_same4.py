@@ -199,13 +199,14 @@ def test_ground_truth_reads_a_pair_as_core_when_either_is():
 
 # ── shown as soon as the run is done, before any try ──
 
-def test_the_pair_is_named_under_the_recommendations_and_in_the_try_form():
+def test_the_pair_is_named_in_the_try_form_not_under_the_recommendations():
     from agentic import ui_clean
     s4 = {"frame": {"same_hazards": [["brush_1", "fire_1"]]},
           "recommendations": [_rec(1, "fire_1", ["man_1"])]}
     line = ui_clean.same_hazards_line(s4)
     assert _flat(line) == "the model says: brush_1 and fire_1 are the same hazard"
-    assert "the model says: brush_1 and fire_1 are the same hazard" in _flat(ui_clean.clean_recs(s4))
+    # not under the recommendations: it is shown where the intervention is
+    assert "same hazard" not in _flat(ui_clean.clean_recs(s4))
     for none in ({}, None, {"frame": "x"}, {"frame": {"same_hazards": []}},
                  {"frame": {"same_hazards": "junk"}}):
         assert ui_clean.same_hazards_line(none) is None
