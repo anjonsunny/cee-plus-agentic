@@ -340,3 +340,78 @@ def test_removing_it_by_itself_later_is_its_own_test_and_wins():
     for bad in (None, "x", [None, (1,), ("a", "b", "c"), ({"target": "a"}, None)]):
         assert isinstance(declared4.mechanistic(b, bad), dict)
         assert isinstance(declared4.mechanistic_parts(b, bad), dict)
+
+
+# ── ground truth words for a pair and for a hazard that only went along ──
+
+def _pair_smoke_scene():
+    objs = ["fire_1", "brush_1", "smoke_1", "spill_1", "man_1"]
+    b = _belief(objs, [(h, "may_harm", "man_1") for h in objs[:4]])
+    return {**b, "threats": [{"object_id": h} for h in objs[:4]],
+            "same_hazards": [["brush_1", "fire_1"]]}, objs
+
+
+def test_a_pair_member_is_judged_as_the_hazard_ground_truth_names():
+    """C_tanker ui_2345d3fc: fire_1 read core while brush_1, which the
+    model calls the same fire, read spurious."""
+    b, objs = _pair_smoke_scene()
+    after = _after(objs, ("fire_1", "brush_1", "smoke_1"), ["spill_1"])
+    c = declared4.compare(b, [(_try("brush_1", 0.6)[0], after)])
+    gt = {g["object_id"]: g for g in declared4.against_ground_truth(
+        c, {"fire_1": 0.4, "spill_1": 0.6}, ["fire_1", "spill_1"])}
+    assert gt["fire_1"]["word"] == gt["brush_1"]["word"] == declared4.CORE
+    assert gt["brush_1"]["via"] == ["fire_1"] and gt["fire_1"]["via"] == []
+    assert gt["brush_1"]["should"] == 0.0                              # no weight invented
+    # smoke only went along: neither core nor spurious
+    assert gt["smoke_1"]["word"] == declared4.NOT_ALONE
+    assert gt["spill_1"]["word"] == declared4.SHOULD_UNTESTED
+    syn = {"available": True, "distribution": {"gt_dist": {"fire_1": 0.4, "spill_1": 0.6}},
+           "gt_core": ["fire_1", "spill_1"], "gt": {}}
+    rows = {_flat(r).split()[0]: r for r in
+            _by_class(ui_iv.card_component(c, {}, syn), "iv-feature")}
+    assert _flat(_by_class(rows["brush_1"], "iv-gt-word")) == "core, as fire_1"
+    assert _flat(_by_class(rows["brush_1"], "iv-gt-via")) == "with fire_1"
+    assert _flat(_by_class(rows["smoke_1"], "iv-gt-word")) == "not tested alone"
+    assert _flat(_by_class(rows["fire_1"], "iv-gt-word")) == "core"
+
+
+def test_a_pair_member_removed_alone_or_tested_by_itself_gets_its_own_word():
+    b, objs = _pair_smoke_scene()
+    # brush removed alone (the edit kept the fire): judged by itself
+    alone = (_try("brush_1", 0.6)[0], _after(objs, ("brush_1",), ["fire_1", "smoke_1", "spill_1"]))
+    c = declared4.compare(b, [alone])
+    gt = {g["object_id"]: g for g in declared4.against_ground_truth(c, {}, ["fire_1"])}
+    assert gt["brush_1"]["via"] == [] and gt["brush_1"]["word"] != declared4.CORE
+    # smoke removed by itself: no longer "not tested alone"
+    own = (_try("smoke_1", 0.6)[0], _after(objs, ("smoke_1",), ["fire_1", "brush_1", "spill_1"]))
+    c = declared4.compare(b, [own])
+    gt = {g["object_id"]: g for g in declared4.against_ground_truth(c, {}, ["fire_1"])}
+    assert gt["smoke_1"]["word"] != declared4.NOT_ALONE
+    # malformed rows never raise
+    for bad in ({"hazards": [{"object_id": "a", "same_as": None, "gone_with": "x", "does": 1}]},
+                {"hazards": [{"object_id": "a", "same_as": [None, 3], "alone_of": 5}]}):
+        assert isinstance(declared4.against_ground_truth(bad, {"a": "x"}, ["a", None]), list)
+
+
+def test_one_try_that_took_out_several_is_said_once_and_later_bars_are_faded():
+    b, objs = _pair_smoke_scene()
+    after = _after(objs, ("fire_1", "brush_1", "smoke_1"), ["spill_1"])
+    c = declared4.compare(b, [(_try("brush_1", 0.6)[0], after),
+                              (_try("spill_1", 0.6)[0],
+                               _after(objs, ("spill_1",), ["fire_1", "brush_1", "smoke_1"]))])
+    assert [sorted(u) for u in c["one_try"]] == [["brush_1", "fire_1", "smoke_1"]]
+    by = {r["object_id"]: r for r in c["hazards"]}
+    assert by["spill_1"]["try_with"] == [] and by["smoke_1"]["try_with"] == ["brush_1", "fire_1"]
+    card = ui_iv.card_component(c, {})
+    assert _flat(_by_class(card, "iv-one-try")) == (
+        "removed in one try, counted once: brush_1, fire_1, smoke_1")
+    feats = _by_class(card, "iv-feature")
+    faded = [_flat(r).split()[0] for r in feats if _by_class(r, "iv-again")]
+    full = [_flat(r).split()[0] for r in feats if _by_class(r, "iv-own")]
+    assert len(faded) == 2 and "spill_1" in full and len(full) == 2    # one full bar per try
+    # nothing shared, nothing said
+    c1 = declared4.compare(b, [(_try("spill_1", 0.6)[0],
+                                _after(objs, ("spill_1",), ["fire_1", "brush_1", "smoke_1"]))])
+    assert c1["one_try"] == [] and _by_class(ui_iv.card_component(c1, {}), "iv-one-try") == []
+    assert ui_iv.card_component({"one_try": [None, "x", ["a"]], "hazards": [
+        {"object_id": "a", "try_with": "zz", "does": 0.5}]}, {}) is not None

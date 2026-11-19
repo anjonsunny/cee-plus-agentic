@@ -51,6 +51,7 @@ CORE = "core"
 SPURIOUS_IGNORED = "spurious: should matter, the recommendations do not depend on it"
 SPURIOUS_USED = "spurious: the recommendations depend on it, it should not matter"
 SHOULD_UNTESTED = "should matter, not removed yet"
+NOT_ALONE = "not tested alone"
 
 
 def _high(shares: dict[str, float]) -> set[str]:
@@ -73,14 +74,29 @@ def against_ground_truth(cmp: dict, should: dict[str, float], core: Any) -> list
         drives, tested = bool(r.get("drives")), r.get("does") is not None
         mem = same4.members(h) or [h]
         is_core = any(m in core for m in mem)
-        if is_core:
+        # The model called it the same hazard as one ground truth names, and
+        # the try took them out together: it is judged as that hazard, not
+        # as a stranger to ground truth (C_tanker ui_2345d3fc: fire_1 read
+        # core and brush_1, the same fire, read spurious).
+        via = []
+        own = should.get(h) if isinstance(should, dict) else None
+        knows = isinstance(own, (int, float)) and not isinstance(own, bool) and own > 0
+        # ...unless ground truth names it itself: then it keeps its own word
+        if not is_core and not knows and not r.get("alone_of"):
+            via = sorted(str(m) for m in (r.get("same_as") or []) if str(m) in core)
+            is_core = bool(via)
+        if tested and r.get("gone_with"):
+            # it only went along with another hazard: that try's shift is
+            # not its own, so neither core nor spurious can be said
+            word = NOT_ALONE
+        elif is_core:
             word = CORE if drives else SPURIOUS_IGNORED if tested else SHOULD_UNTESTED
         else:
             word = SPURIOUS_USED if drives else ""
         ws = [should.get(m) for m in mem] if isinstance(should, dict) else []
         ws = [x for x in ws if isinstance(x, (int, float)) and not isinstance(x, bool)]
         w = sum(ws) if ws else None
-        out.append({"object_id": h, "is_core": is_core,
+        out.append({"object_id": h, "is_core": is_core, "via": via,
                     "should": round(float(w), 3) if isinstance(w, (int, float)) else 0.0,
                     "word": word})
     return out
@@ -347,6 +363,11 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
                                    else sorted(m for m in best if m != h
                                                and best[m]["try"] == best[h]["try"]
                                                and best[m]["direct"])),
+                     # every other hazard the same try took out: one try is
+                     # one unit, so these rows show one and the same share
+                     "try_with": ([] if h not in best else
+                                  sorted(m for m in best if m != h
+                                         and best[m]["try"] == best[h]["try"])),
                      "state": states.get(h, ""),
                      "reading": reading})
     # The score counts everything ONE try took out once: the declared
@@ -396,6 +417,10 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
     return {
         "score": score, "reading": reading, "explain": explain,
         "same_hazards": sorted({grp[h] for h in grp}),
+        # tries that took out more than one hazard, in row order: the rows
+        # show one share each, the score counts the try once
+        "one_try": list({tuple(sorted([r["object_id"]] + r["try_with"])): None
+                         for r in rows if r["try_with"]}),
         # the three gaps: the two declarations against each other (needs no
         # try), and each against the shift (over the hazards removed so far)
         "advice_vs_graph": _shared(dec_a, dec, every),

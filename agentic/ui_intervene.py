@@ -621,7 +621,13 @@ _GT_SHORT = {
         ("spurious", "the recommendations depend on it, but it should not matter"),
     "should matter, not removed yet": ("not removed yet", "it should matter; no try has "
                                                          "removed it"),
+    "not tested alone": ("not tested alone", "it only went when another hazard was removed, "
+                                             "so that try's shift is not its own; remove it "
+                                             "by itself to test it"),
 }
+ONE_TRY = "removed in one try, counted once: "
+ONE_TRY_TIP = ("one try took these out together, so each row shows that try's share; "
+               "the score counts the try once")
 A_COL, B_COL = "DECLARED IN THE RECOMMENDATIONS", "DECLARED IN ITS OWN GRAPH"
 _HEAD_TIP = {
     A_COL: "how much the recommendations say this hazard matters: the danger the graph of "
@@ -740,6 +746,13 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
                        style={"marginRight": "16px"}) for name, v, tip in gaps],
             className="iv-gaps", style={"fontSize": "11px", "margin": "6px 0 0"}))
 
+    for unit in (cmp.get("one_try") or []):
+        if isinstance(unit, (list, tuple)) and len(unit) > 1:
+            rows.append(html.Div(ONE_TRY + ", ".join(str(x) for x in unit),
+                                 className="iv-one-try", title=ONE_TRY_TIP,
+                                 style={"fontSize": "11px", "color": "#64748b",
+                                        "margin": "4px 0 0"}))
+
     # ── what is still open, and the way to close it
     left = [str(x) for x in (cmp.get("not_removed") or []) if x]
     cov: list = [html.Span(f"{cmp.get('tested', 0)} of {cmp.get('declared', 0)} declared "
@@ -775,8 +788,13 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
             + [""] + (["BY GROUND TRUTH"] if gt_on else [])
         quiet = {"color": "#94a3b8", "fontSize": "10.5px"}
         body = []
+        seen: set[str] = set()
         for r in feats:
             oid, role = str(r.get("object_id")), str(r.get("role") or "")
+            # a later row of a try already shown: the same share again, so
+            # its bar is faded (five rows must not read as five shares)
+            again = any(str(m) in seen for m in (r.get("try_with") or []))
+            seen.add(oid)
             alone = [str(x) for x in (r.get("alone_of") or [])]
             same = [str(x) for x in (r.get("same_as") or [])]
             state = str(r.get("state") or "")
@@ -799,13 +817,21 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
                               and r.get("does") is not None else []), style=_TD),
                    html.Td(_bar(r.get("says_advice"), "#64748b"), style=_TD),
                    html.Td(_bar(r.get("says"), "#334155"), style=_TD),
-                   html.Td(_bar(r.get("does"), "#16a34a")
+                   html.Td(html.Div(_bar(r.get("does"), "#16a34a"),
+                                    className="iv-again" if again else "iv-own",
+                                    title=ONE_TRY_TIP if again else "",
+                                    style={"opacity": ".45"} if again else {})
                            if r.get("does") is not None
                            else html.Span("not removed yet", style=quiet), style=_TD)]
             g = gt_rows.get(oid) or {}
             if gt_on:
                 named = bool(g.get("is_core")) or float(g.get("should") or 0) > 0
-                tds.append(html.Td(_bar(g.get("should"), "#7c3aed") if named
+                via = [str(x) for x in (g.get("via") or [])]
+                tds.append(html.Td(html.Span("with " + ", ".join(via), className="iv-gt-via",
+                                             title="ground truth names " + ", ".join(via)
+                                                   + ", which the model calls the same hazard",
+                                             style=quiet) if via
+                                   else _bar(g.get("should"), "#7c3aed") if named
                                    else html.Span("not in ground truth", style=quiet),
                                    style=_TD))
             # one phrase, coloured by the direction of the combined shift
@@ -825,11 +851,17 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
             if gt_on:
                 word = str(g.get("word") or "")
                 short, why = _GT_SHORT.get(word, (word, ""))
-                tds.append(html.Td(short, className="iv-gt-word", title=why,
+                if via and short:
+                    short_txt = f"{short}, as {', '.join(via)}"
+                else:
+                    short_txt = short
+                tds.append(html.Td(short_txt, className="iv-gt-word", title=why,
                                    **{"data-word": word},
                                    style={**_TD, "fontWeight": "800",
                                           "color": "#16a34a" if short == "core" else
-                                          "#94a3b8" if short == "not removed yet" else "#b91c1c"}))
+                                          "#94a3b8" if short in ("not removed yet",
+                                                                 "not tested alone")
+                                          else "#b91c1c"}))
             body.append(html.Tr(tds, className="iv-feature"))
         rows.append(html.Table(
             [html.Thead(html.Tr([html.Th(x, style=_TH, title=_HEAD_TIP.get(x, ""))
