@@ -168,9 +168,14 @@ def removed_name(before: Any, one: Any, after: Any) -> str:
         grp = same4.groups(same4.pairs_of(before))
         if target not in grp:
             return target
-        still = {str(o.get("object_id") or "")
-                 for o in iv4.clean_result(after)["detected_objects"]}
-        return same4.key(target, grp) if not any(m in still for m in grp[target]) else target
+        # a member is gone when it is out of the picture, or still there
+        # but no longer a hazard (burning brush edited to plain brush)
+        a = iv4.clean_result(after)
+        seen = {str(o.get("object_id") or "") for o in a["detected_objects"]}
+        hazard = {str(t.get("object_id") or "") for t in a["threats"]}
+        others = [m for m in grp[target] if m != target]
+        return same4.key(target, grp) if not any(m in seen and m in hazard
+                                                 for m in others) else target
     except Exception:
         return target
 

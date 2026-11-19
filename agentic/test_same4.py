@@ -99,7 +99,12 @@ def _scene(pairs):
 BRUSH_GONE = _res(["fire_1", "spill_1", "man_1"],
                   [_rec(1, "fire_1", ["man_1"], "Move man_1 away from fire_1."),
                    _rec(2, "fire_1", ["man_1"], "Attack fire_1 with a crew."),
-                   _rec(3, "spill_1", ["man_1"], "Contain spill_1.")])
+                   _rec(3, "spill_1", ["man_1"], "Contain spill_1.")],
+                  threats=["fire_1", "spill_1"])
+# the fire is out of the picture; the brush is still there, as plain brush
+FIRE_OUT_BRUSH_PLAIN = _res(["brush_1", "spill_1", "man_1"],
+                            [_rec(1, "spill_1", ["man_1"], "Contain spill_1.")],
+                            threats=["spill_1"])
 BOTH_GONE = _res(["spill_1", "man_1"], [_rec(1, "spill_1", ["man_1"], "Contain spill_1.")])
 
 
@@ -142,6 +147,23 @@ def test_the_pair_is_removed_when_both_are_gone_and_both_rows_are_affected():
     assert t["columns"][0]["left_behind"] == []
 
 
+def test_a_member_left_in_the_picture_as_a_plain_object_counts_as_removed():
+    """A burning house is edited to an intact house, not deleted. Same for
+    burning brush: it stays as plain brush, and the pair is still removed."""
+    b = _scene([["brush_1", "fire_1"]])
+    t = grounding4.table(b, [({"index": 1, "target": "fire_1"}, FIRE_OUT_BRUSH_PLAIN)])
+    by = {r["rank"]: r for r in t["rows"]}
+    assert by[1]["verdict"] == "grounded" and by[2]["verdict"] == "grounded"
+    assert t["columns"][0]["left_behind"] == []
+    assert "brush_1" in t["columns"][0]["also_removed"]
+    one = {"target": "fire_1"}
+    assert declared4.removed_name(b, one, FIRE_OUT_BRUSH_PLAIN) == "brush_1 + fire_1"
+    # picked the other way round, same reading
+    assert declared4.removed_name(b, {"target": "brush_1"}, FIRE_OUT_BRUSH_PLAIN) == "brush_1 + fire_1"
+    # the brush gone but the fire still a hazard: the edit separated them
+    assert declared4.removed_name(b, {"target": "brush_1"}, BRUSH_GONE) == "brush_1"
+
+
 # ── the feature table: a pair is one row ──
 
 def _features(pairs):
@@ -163,7 +185,8 @@ def test_the_shift_goes_to_the_pair_only_when_the_edit_removed_both():
     both_gone = {**after, "detected_objects": [o for o in after["detected_objects"]
                                                if o["object_id"] not in ("fire_1", "brush_1")]}
     assert declared4.removed_name(b, one, both_gone) == "brush_1 + fire_1"
-    assert declared4.removed_name(b, one, after) == "fire_1"          # the brush is still there
+    still = {**after, "threats": [{"object_id": "brush_1"}]}
+    assert declared4.removed_name(b, one, still) == "fire_1"          # the brush still burns
     assert declared4.removed_name(D_BEFORE, one, both_gone) == "fire_1"   # no pair declared
     assert declared4.removed_name(None, None, None) == ""
     c = declared4.compare(b, [(one, both_gone), _try("spill_1", 0.3)])
@@ -173,7 +196,7 @@ def test_the_shift_goes_to_the_pair_only_when_the_edit_removed_both():
     card = ui_iv.card_component(c, {})
     assert "the model says: brush_1 and fire_1 are the same hazard" in _flat(card)
     # removed alone: its own row, with the reason said
-    c = declared4.compare(b, [(one, after), _try("spill_1", 0.3)])
+    c = declared4.compare(b, [(one, still), _try("spill_1", 0.3)])
     by = {r["object_id"]: r for r in c["hazards"]}
     assert by["fire_1"]["alone_of"] == ["brush_1"] and by["brush_1 + fire_1"]["shift"] is None
     assert "removed alone; the model calls it the same hazard as brush_1" in _flat(

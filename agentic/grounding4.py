@@ -275,6 +275,13 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
         rset = set(removed)
         # a pair the model called one hazard is removed only when BOTH are
         # gone; when the edit took one and left the other, say so
+        # (gone = no longer in the picture, OR still there but no longer a
+        #  hazard: burning brush edited to plain brush stays as an object)
+        still_hazard = {ren.get(i, i) for i in
+                        (str(t.get("object_id") or "") for t in after.get("threats") or [])}
+        for h in list(rset):
+            rset.update(m for m in grp.get(h, ()) if m not in still_hazard)
+        removed = removed + [m for m in sorted(rset) if m not in removed]
         whole = {same4.key(h, grp) for h in rset
                  if h in grp and all(m in rset for m in grp[h])}
         left_behind = sorted({m for h in rset if h in grp for m in grp[h] if m not in rset})
