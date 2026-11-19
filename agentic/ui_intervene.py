@@ -84,14 +84,28 @@ def base_info(run_dir: Path | None) -> dict | None:
 def target_options(info: dict | None) -> list[dict]:
     """One radio option per candidate, in the frozen arm's order, saying
     what it is and which of the three picks chose it."""
-    out = []
-    for c in (info or {}).get("candidates") or []:
+    from agentic import same4
+    grp = same4.groups(same4.pairs_of((info or {}).get("result")))
+    cands = [c for c in (info or {}).get("candidates") or []
+             if isinstance(c, dict) and str(c.get("object_id") or "")]
+    listed = {str(c.get("object_id")) for c in cands}
+    out, done = [], set()
+    for c in cands:
         oid = str(c.get("object_id") or "")
-        if not oid:
+        if oid in done:
             continue
         role = "victim" if c.get("variable_role") == "victim" else "hazard"
         who = (info.get("picked_by") or {}).get(oid) or []
         label = f" {oid} · {c.get('state') or '?'} · {role}"
+        # hazards the model called one and the same are ONE option: they
+        # are removed together (agentic/same4.py)
+        mates = [m for m in grp.get(oid, ()) if m != oid and m in listed]
+        if mates:
+            done.update(mates)
+            who = list(dict.fromkeys(who + [w for m in mates for w in
+                                            (info.get("picked_by") or {}).get(m) or []]))
+            label = (f" {oid} + " + " + ".join(mates)
+                     + " · the model says: same hazard · remove both")
         if who:
             label += "  ← picked by " + ", ".join(who)
         out.append({"label": label, "value": oid})
@@ -101,17 +115,29 @@ def target_options(info: dict | None) -> list[dict]:
 def instructions(info: dict | None, target: str) -> tuple[str, str]:
     """(caption instruction, image instruction) for removing `target`, in
     the frozen arm's words. ("", "") when the target is not a candidate."""
-    c = next((c for c in (info or {}).get("candidates") or []
-              if str(c.get("object_id")) == str(target)), None)
-    if not c:
+    from agentic import same4
+    cands = {str(c.get("object_id")): c for c in (info or {}).get("candidates") or []
+             if isinstance(c, dict)}
+    if str(target) not in cands:
         return "", ""
     from main import build_intervention_edit_texts          # frozen, lazy
+    # a hazard the model called the same as another is removed with it:
+    # one instruction per member, and neither is told to stay
+    grp = same4.groups(same4.pairs_of(info.get("result")))
+    unit = [str(target)] + [m for m in grp.get(str(target), ())
+                            if m != str(target) and m in cands]
     others = [str(o.get("label") or "") for o in info["result"]["detected_objects"]
-              if str(o.get("object_id")) != str(target)]
-    return build_intervention_edit_texts(
-        str(c.get("label") or ""), str(c.get("state") or ""), MODE,
-        other_labels=others,
-        variable_role="victim" if c.get("variable_role") == "victim" else "hazard")
+              if str(o.get("object_id")) not in unit]
+    caps, imgs = [], []
+    for oid in unit:
+        c = cands[oid]
+        cap, img = build_intervention_edit_texts(
+            str(c.get("label") or ""), str(c.get("state") or ""), MODE,
+            other_labels=others,
+            variable_role="victim" if c.get("variable_role") == "victim" else "hazard")
+        caps.append(cap)
+        imgs.append(img)
+    return "\n\n".join(x for x in caps if x), "\n\n".join(x for x in imgs if x)
 
 
 def after_settings(base_events: list[dict]) -> dict:

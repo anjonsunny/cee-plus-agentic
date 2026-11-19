@@ -214,3 +214,30 @@ def test_the_pair_is_named_in_the_try_form_not_under_the_recommendations():
     note = ui_iv.same_note({"same_hazards": [["brush_1", "fire_1"]]})
     assert "brush_1 and fire_1 are the same hazard" in note and "remove them together" in note
     assert ui_iv.same_note({}) == "" and ui_iv.same_note(None) == ""
+
+
+def test_the_try_form_offers_a_declared_pair_as_one_option_with_joint_instructions():
+    def info(pairs):
+        return {"candidates": [{"object_id": "brush_1", "label": "brush", "state": "burning"},
+                               {"object_id": "fire_1", "label": "fire", "state": "spreading"},
+                               {"object_id": "spill_1", "label": "spill", "state": "leaking"}],
+                "picked_by": {"fire_1": ["code"], "brush_1": ["model, asked"]},
+                "result": {"same_hazards": pairs, "detected_objects": [
+                    {"object_id": o, "label": o.rsplit("_", 1)[0]}
+                    for o in ("brush_1", "fire_1", "spill_1", "man_1")]}}
+    plain = ui_iv.target_options(info([]))
+    assert [o["value"] for o in plain] == ["brush_1", "fire_1", "spill_1"]
+    opts = ui_iv.target_options(info([["brush_1", "fire_1"]]))
+    assert [o["value"] for o in opts] == ["brush_1", "spill_1"]         # the pair is one option
+    assert "brush_1 + fire_1 · the model says: same hazard · remove both" in opts[0]["label"]
+    assert "model, asked" in opts[0]["label"] and "code" in opts[0]["label"]
+    # the instructions cover both, and neither is told to stay as it is
+    cap, img = ui_iv.instructions(info([["brush_1", "fire_1"]]), "brush_1")
+    one_cap, one_img = ui_iv.instructions(info([]), "brush_1")
+    assert one_cap in cap and "fire" in cap and "fire" not in one_cap
+    assert len(img) > len(one_img)
+    assert ui_iv.instructions(info([["brush_1", "fire_1"]]), "nope") == ("", "")
+    # a pair naming something that is not a candidate changes nothing
+    assert ui_iv.target_options(info([["brush_1", "ghost_9"]])) == plain
+    for bad in (None, {}, {"candidates": [None, "x", {}]}):
+        assert ui_iv.target_options(bad) == []
