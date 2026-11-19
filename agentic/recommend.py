@@ -163,6 +163,9 @@ with exactly these keys:
   given object_ids.
 - assumptions: array of short strings you INFER beyond the visible evidence.
 - uncertainty_notes: array of short strings about what you are unsure of and why.
+- same_hazards: array of pairs of object_ids from the `threats:` line above
+  that are one and the same physical hazard, each pair written as
+  ["id", "id"]. Leave the array empty if there are none.
 - recommendations: array, one entry per ACTION you would take. Two actions may
   rest on the SAME (threat, state) — protecting two people from one hazard is
   two actions and one hazard. Do not pad to a fixed count.{empty_clause}
@@ -411,6 +414,9 @@ def parse_recommend(raw: Any) -> tuple[dict, list[dict], list[dict], list[str]]:
         "assumptions": _as_list_of_str(raw.get("assumptions")),
         "uncertainty_notes": _as_list_of_str(raw.get("uncertainty_notes")),
     }
+    # which hazards the model calls one and the same (agentic/same4.py)
+    from agentic import same4
+    frame["same_hazards"] = same4.parse_pairs(raw.get("same_hazards"), notes)
 
     # F25: recover prose quads BEFORE the frozen normalizer, which takes any
     # non-dict quad to the all-N/A placeholder.
@@ -561,6 +567,13 @@ def run_recommend(record: Any, assessment: Any, *, query_fn: QueryFn,
                          else AFFECTED_REQUIRED))
     raw, thinking = _ask(prompt, query_fn, think_fn)
     frame, recommendations, advisory, notes = parse_recommend(raw)
+    # a pair must be two hazards of THIS scene; anything else is dropped, noted
+    from agentic import same4
+    frame["same_hazards"] = same4.valid_pairs(
+        frame.get("same_hazards"),
+        [t.get("object_id") for t in _threat_dicts(record, assessment)], notes)
+    if frame["same_hazards"]:
+        emit("same_hazards_declared", pairs=frame["same_hazards"])
     for n in notes:
         emit("recommend_parse_note", note=n)
     emit("recommendations_ready",
@@ -660,6 +673,7 @@ def measure_recommend_uncertainty(prompt: str, n_probes: int, *,
     for i in range(n_probes):
         try:
             _frame, recs, _adv, _notes = parse_recommend(probe_fn(prompt))
+            _same = _frame.get("same_hazards") or []
         except Exception as exc:               # transport failure ≠ dispersion
             if emit:
                 emit("recommend_probe_error", index=i, error=str(exc))
@@ -676,7 +690,7 @@ def measure_recommend_uncertainty(prompt: str, n_probes: int, *,
             # before this change lost them permanently. Graph B probes never
             # had this bug; they are stored whole in graph_b_uncertainty.
             emit("recommend_probe", index=i, n_recs=reading["n_recs"],
-                 top_threat=reading["top_threat"], recs=recs)
+                 top_threat=reading["top_threat"], recs=recs, same_hazards=_same)
     mu = measure_recommendations(readings, canonical_threats=canonical_threats)
     if n_probes > 0 and not readings:
         mu.score = 1.0

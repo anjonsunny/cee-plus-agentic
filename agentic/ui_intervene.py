@@ -302,6 +302,8 @@ _CELL = {"stays": ("recommendation kept", "#64748b"), "gone": ("recommendation d
 _CELL_SHORT = {"stays": ("kept", "#64748b"), "gone": ("dropped", "#0f172a"),
                "changed": ("adjusted", "#b45309"),
                "target removed": ("its target was removed", "#94a3b8")}
+SAME_TIP = ("the model was asked which hazards are one and the same physical hazard; "
+            "its answer is followed here, so the two count as one hazard")
 _WAY_COL = {"eased": "#16a34a", "escalated": "#b91c1c", "mixed": "#b45309"}
 _CELL_MEANS = {
     "stays": "the same recommendation is still in the answer to the edited scene",
@@ -395,7 +397,13 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
              if img else [])
             + [html.Span(f"#{c.get('index')} removed "), ent_chip(str(c.get("target")), "#0f172a")]
             + ([html.Div("also missing from the edited picture: " + ", ".join(also),
-                         style={"fontWeight": "400", "color": "#94a3b8"})] if also else []),
+                         style={"fontWeight": "400", "color": "#94a3b8"})] if also else [])
+            # the model called these one hazard; the edit took one and left the other
+            + ([html.Div("the model calls it the same hazard as " + ", ".join(stay)
+                         + "; still in the edited picture",
+                         className="iv-left-behind",
+                         style={"fontWeight": "400", "color": "#b45309"})]
+               if (stay := [str(x) for x in (c.get("left_behind") or [])]) else []),
             style=_TH))
     head.append(html.Th("READING (ONE ASK)", style=_TH))
     body = []
@@ -405,7 +413,11 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
                html.Td([ent_chip(str(r.get("threat")), "#ef4444")]
                        + ([html.Span("→ ", style={"color": "#94a3b8"})]
                           + [ent_chip(x, "#f97316") for x in r.get("affected") or []]
-                          if r.get("affected") else []), style=_TD)]
+                          if r.get("affected") else [])
+                       + ([html.Div("same hazard as " + ", ".join(str(x) for x in r["same_as"]),
+                                    className="iv-same", title=SAME_TIP,
+                                    style={"fontSize": "10px", "color": "#64748b"})]
+                          if r.get("same_as") else []), style=_TD)]
         for c in r.get("cells") or []:
             state = str(c.get("state"))
             word, col = _CELL.get(state, (state, "#64748b"))
@@ -675,6 +687,14 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
                              style={"fontSize": "11.5px", "color": "#334155",
                                     "margin": "7px 0 0"}))
 
+    # ── which hazards the model called one and the same (agentic/same4.py)
+    for g in (cmp.get("same_hazards") if isinstance(cmp.get("same_hazards"), list) else []):
+        if isinstance(g, (list, tuple)) and len(g) > 1:
+            rows.append(html.Div(
+                "the model says: " + " and ".join(str(x) for x in g) + " are the same hazard",
+                className="iv-same", title=SAME_TIP,
+                style={"fontSize": "11px", "color": "#334155", "margin": "4px 0 0"}))
+
     # ── the three gaps: two declarations and the shift (1.00 = the same shares)
     def _gap(v: Any) -> str:
         return f"{v:.2f}" if isinstance(v, (int, float)) else "needs a second removed hazard"
@@ -699,7 +719,9 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
     cov: list = [html.Span(f"{cmp.get('tested', 0)} of {cmp.get('declared', 0)} declared "
                            "hazards removed", style={"color": "#64748b"})]
     if left and next_id is not None:
-        cov.append(html.Button(f"remove next: {left[0]}", id=next_id(left[0]), n_clicks=0,
+        # a pair goes by "a + b"; the form picks its first hazard
+        cov.append(html.Button(f"remove next: {left[0]}",
+                               id=next_id(left[0].split(" + ")[0]), n_clicks=0,
                                className="iv-next",
                                title="opens a new try with this hazard picked"))
     rows.append(html.Div(cov, className="iv-coverage",
@@ -729,7 +751,12 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
         body = []
         for r in feats:
             oid, role = str(r.get("object_id")), str(r.get("role") or "")
-            tds = [html.Td(ent_chip(oid, "#ef4444"), style=_TD),
+            alone = [str(x) for x in (r.get("alone_of") or [])]
+            tds = [html.Td([ent_chip(oid, "#ef4444")]
+                           + ([html.Div("removed alone; the model calls it the same hazard as "
+                                        + ", ".join(alone), className="iv-alone",
+                                        style={"fontSize": "10px", "color": "#b45309"})]
+                              if alone and r.get("does") is not None else []), style=_TD),
                    html.Td(_bar(r.get("says_advice"), "#64748b"), style=_TD),
                    html.Td(_bar(r.get("says"), "#334155"), style=_TD),
                    html.Td(_bar(r.get("does"), "#16a34a")

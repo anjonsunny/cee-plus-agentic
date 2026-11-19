@@ -159,6 +159,9 @@ def frozen_result(record: Any, assessment: Any, stage4: Any,
                             if isinstance(r, dict)],
         "causal_graph": _dict(s4.get("graph_a")) or None,
         "graph_b": _dict(s4.get("graph_b")) or None,
+        # which hazards the model called one and the same (agentic/same4.py)
+        "same_hazards": [p for p in _list(_dict(s4.get("frame")).get("same_hazards"))
+                         if isinstance(p, list)],
         "pre_intervention_trust": {"score": trust.get("score", 0.0),
                                    "level": trust.get("band", "unknown")},
     }

@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agentic import intervention4 as iv4
+from agentic import intervention4 as iv4, same4
 
 STAYS, GONE, CHANGED, TARGET_REMOVED = "stays", "gone", "changed", "target removed"
 # (the screen says: advice kept / advice dropped / advice kept, adjusted /
@@ -100,7 +100,8 @@ def removed_set(before: dict, after: dict, target: str, ren: dict[str, str]) -> 
     return out
 
 
-def _match_column(base: list[dict], after_recs: list[dict], removed: set[str]) -> list[dict]:
+def _match_column(base: list[dict], after_recs: list[dict], removed: set[str],
+                  name: Any = None) -> list[dict]:
     """One cell per before-recommendation for one try. HAZARD FIRST (Sunny,
     2026-11-16, on C_tanker ui_63f16495: after the fire was removed the
     model still wrote "isolate the leak at tanker_truck_1", recorded with
@@ -120,9 +121,13 @@ def _match_column(base: list[dict], after_recs: list[dict], removed: set[str]) -
     arrows. Each piece of after-advice is given to one row where it can be
     (the closest row first); a row whose hazard still has advice but no
     free piece left shares one, and reads as kept."""
+    # `name(hazard)`: the name a hazard goes by. Two hazards the model
+    # called one and the same share a name (agentic/same4.py), so advice
+    # that names either one is advice about the pair.
+    name = name or (lambda h: h)
     cells: list[dict | None] = [None] * len(base)
     used: set[int] = set()
-    quads = [_quad(r) for r in base]
+    quads = [(name(t), e, a) for t, e, a in (_quad(r) for r in base)]
 
     def take(i: int, j: int, state: str) -> None:
         used.add(j)
@@ -251,6 +256,10 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
     Returns {"rows": [...], "columns": [...]}; never raises on bad input."""
     before = iv4.clean_result(before)
     base = _acting(before["recommendations"])
+    grp = same4.groups(same4.pairs_of(before))
+
+    def name(h: str) -> str:
+        return same4.key(h, grp)
     columns: list[dict] = []
     cells_by_row: list[list[dict]] = [[] for _ in base]
     for one, after in tries or []:
@@ -260,11 +269,16 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
         after_recs = []
         for r in _acting(after["recommendations"]):
             t, e, aff = _quad(r)
-            after_recs.append({"rec": r, "quad": (ren.get(t, t), e,
+            after_recs.append({"rec": r, "quad": (name(ren.get(t, t)), e,
                                                   frozenset(ren.get(x, x) for x in aff))})
         removed = removed_set(before, after, str(one.get("target") or ""), ren)
         rset = set(removed)
-        col_cells, used = _match_column(base, after_recs, rset)
+        # a pair the model called one hazard is removed only when BOTH are
+        # gone; when the edit took one and left the other, say so
+        whole = {same4.key(h, grp) for h in rset
+                 if h in grp and all(m in rset for m in grp[h])}
+        left_behind = sorted({m for h in rset if h in grp for m in grp[h] if m not in rset})
+        col_cells, used = _match_column(base, after_recs, rset | whole, name)
         n_recs = max(len(base), len(after_recs))
         for i, c in enumerate(col_cells):
             c["label"] = cell_label(c)
@@ -278,6 +292,7 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
         columns.append({
             "index": one.get("index"), "target": one.get("target"),
             "also_removed": [x for x in removed if x != str(one.get("target") or "")],
+            "left_behind": left_behind,
             "after_run": one.get("after_run"),
             "moved": moved, "of": len(counted),
             "content_shift": summary.get("content_shift"),
@@ -289,5 +304,7 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
         threat, effect, affected = _quad(rec)
         rows.append({"rank": rec.get("rank"), "action": str(rec.get("action") or ""),
                      "threat": threat, "effect": effect, "affected": sorted(affected),
+                     "same_as": [m for m in grp.get(threat, ()) if m != threat],
                      "cells": cells, "verdict": _verdict(cells)})
-    return {"rows": rows, "columns": columns}
+    return {"rows": rows, "columns": columns,
+            "same_hazards": sorted({grp[h] for h in grp})}

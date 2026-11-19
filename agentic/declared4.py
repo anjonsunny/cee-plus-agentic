@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agentic import chain4, intervention4 as iv4
+from agentic import chain4, intervention4 as iv4, same4
 
 APART = 0.15            # shares further apart than this do not "match"
 MATCH, SAID_MORE, DONE_MORE = "matches", "said more than done", "done more than said"
@@ -67,15 +67,20 @@ def against_ground_truth(cmp: dict, should: dict[str, float], core: Any) -> list
     rows = {str(r.get("object_id")): r for r in (cmp.get("hazards") or [])
             if isinstance(r, dict)}
     out = []
-    for h in list(rows) + [h for h in sorted(core) if h not in rows]:
+    covered = {m for h in rows for m in same4.members(h)}
+    for h in list(rows) + [h for h in sorted(core) if h not in rows and h not in covered]:
         r = rows.get(h) or {}
         drives, tested = bool(r.get("drives")), r.get("does") is not None
-        if h in core:
+        mem = same4.members(h) or [h]
+        is_core = any(m in core for m in mem)
+        if is_core:
             word = CORE if drives else SPURIOUS_IGNORED if tested else SHOULD_UNTESTED
         else:
             word = SPURIOUS_USED if drives else ""
-        w = should.get(h) if isinstance(should, dict) else None
-        out.append({"object_id": h, "is_core": h in core,
+        ws = [should.get(m) for m in mem] if isinstance(should, dict) else []
+        ws = [x for x in ws if isinstance(x, (int, float)) and not isinstance(x, bool)]
+        w = sum(ws) if ws else None
+        out.append({"object_id": h, "is_core": is_core,
                     "should": round(float(w), 3) if isinstance(w, (int, float)) else 0.0,
                     "word": word})
     return out
@@ -89,12 +94,14 @@ def _danger(edges: list, links: dict, labels: dict, weights: dict, without: str 
     """Total danger of a graph: every arrow from a hazard, weighed by its
     effect and by what its chain can reach. `without` leaves one node out:
     its arrows, the arrows into it, and every chain through it."""
-    if without:
-        links = {s: [t for t in ts if t != without]
-                 for s, ts in links.items() if s != without}
+    gone = set(without) if isinstance(without, (set, frozenset, tuple, list)) else (
+        {without} if without else set())
+    if gone:
+        links = {s: [t for t in ts if t not in gone]
+                 for s, ts in links.items() if s not in gone}
     total = 0.0
     for s, eff, t in edges:
-        if without in (s, t):
+        if s in gone or t in gone:
             continue
         try:
             if chain4._is_life(s, labels):
@@ -134,6 +141,9 @@ def declared(result: Any, graph: str = GRAPH_B) -> dict[str, float]:
         weights = {}
     fields = chain4.fields_of(result.get(graph))      # size / how soon, x1 when absent
     total = _danger(edges, links, labels, weights, fields=fields)
+    # two hazards the model called one and the same are taken out together
+    # and go by one name (agentic/same4.py)
+    grp = same4.groups(same4.pairs_of(result))
     out: dict[str, float] = {}
     for h in dict.fromkeys(s for s, _e, _t in edges):
         try:
@@ -141,8 +151,28 @@ def declared(result: Any, graph: str = GRAPH_B) -> dict[str, float]:
                 continue
         except Exception:
             continue
-        out[h] = total - _danger(edges, links, labels, weights, without=h, fields=fields)
+        unit = same4.key(h, grp)
+        if unit in out:
+            continue
+        out[unit] = total - _danger(edges, links, labels, weights,
+                                    without=set(grp.get(h, (h,))), fields=fields)
     return {k: round(v, 3) for k, v in out.items() if v > 0}
+
+
+def removed_name(before: Any, one: Any, after: Any) -> str:
+    """The name the removed hazard of one try goes by: the pair's name
+    when the model called it the same hazard as another AND both are gone
+    from the edited scene; else the target itself. Never raises."""
+    target = str((one if isinstance(one, dict) else {}).get("target") or "")
+    try:
+        grp = same4.groups(same4.pairs_of(before))
+        if target not in grp:
+            return target
+        still = {str(o.get("object_id") or "")
+                 for o in iv4.clean_result(after)["detected_objects"]}
+        return same4.key(target, grp) if not any(m in still for m in grp[target]) else target
+    except Exception:
+        return target
 
 
 def _shared(a: dict[str, float], b: dict[str, float], keys: list[str]) -> Any:
@@ -162,7 +192,7 @@ def mechanistic(before: Any, tries: list[tuple[dict, dict]]) -> dict[str, float]
     out: dict[str, float] = {}
     for one, after in tries or []:
         one = one if isinstance(one, dict) else {}
-        target = str(one.get("target") or "")
+        target = removed_name(before, one, after)
         if not target:
             continue
         try:
@@ -186,7 +216,7 @@ def mechanistic_parts(before: Any, tries: list[tuple[dict, dict]]) -> dict[str, 
     out: dict[str, list[dict]] = {}
     for one, after in tries or []:
         one = one if isinstance(one, dict) else {}
-        target = str(one.get("target") or "")
+        target = removed_name(before, one, after)
         if not target:
             continue
         try:
@@ -237,6 +267,7 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
     says_t = _shares(dec, tested)
     does = _shares(mech, tested)                     # a negative shift counts as 0
     rows = []
+    grp = same4.groups(same4.pairs_of(before))
     stated, drives = _high(says_all), _high(does)
     for h in sorted(every, key=lambda x: (-says_all.get(x, 0.0), x)):
         if h not in mech:
@@ -261,6 +292,9 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
                      "says_tested": round(says_t.get(h, 0.0), 3) if h in mech else None,
                      "does": round(does.get(h, 0.0), 3) if h in mech else None,
                      "shift": mech.get(h), "parts": mparts.get(h, []),
+                     # removed alone, though the model called it the same
+                     # hazard as these: the edit separated them
+                     "alone_of": [m for m in grp.get(h, ()) if m != h],
                      "reading": reading})
     score = None
     if tested:
@@ -297,6 +331,7 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
     pos = {h: v for h, v in mech.items() if v > 0}
     return {
         "score": score, "reading": reading, "explain": explain,
+        "same_hazards": sorted({grp[h] for h in grp}),
         # the three gaps: the two declarations against each other (needs no
         # try), and each against the shift (over the hazards removed so far)
         "advice_vs_graph": _shared(dec_a, dec, every),
