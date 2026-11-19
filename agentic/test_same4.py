@@ -195,3 +195,21 @@ def test_ground_truth_reads_a_pair_as_core_when_either_is():
     assert rows["brush_1 + fire_1"]["is_core"] is True
     assert rows["brush_1 + fire_1"]["should"] == 0.5
     assert "fire_1" not in rows                                       # not listed a second time
+
+
+# ── shown as soon as the run is done, before any try ──
+
+def test_the_pair_is_named_under_the_recommendations_and_in_the_try_form():
+    from agentic import ui_clean
+    s4 = {"frame": {"same_hazards": [["brush_1", "fire_1"]]},
+          "recommendations": [_rec(1, "fire_1", ["man_1"])]}
+    line = ui_clean.same_hazards_line(s4)
+    assert _flat(line) == "the model says: brush_1 and fire_1 are the same hazard"
+    assert "the model says: brush_1 and fire_1 are the same hazard" in _flat(ui_clean.clean_recs(s4))
+    for none in ({}, None, {"frame": "x"}, {"frame": {"same_hazards": []}},
+                 {"frame": {"same_hazards": "junk"}}):
+        assert ui_clean.same_hazards_line(none) is None
+    assert "same hazard" not in _flat(ui_clean.clean_recs({"recommendations": s4["recommendations"]}))
+    note = ui_iv.same_note({"same_hazards": [["brush_1", "fire_1"]]})
+    assert "brush_1 and fire_1 are the same hazard" in note and "remove them together" in note
+    assert ui_iv.same_note({}) == "" and ui_iv.same_note(None) == ""

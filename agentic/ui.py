@@ -6596,6 +6596,7 @@ def iv_setup(run_id, _n, current, value):
     keep = value if any(o["value"] == value for o in opts) else opts[0]["value"]
     note = (f"before side: {info['run']} · only the edited scene is run, "
             "with this run's settings and the pathology probes off")
+    note += ui_intervene.same_note(info.get("result"))
     return opts, keep, {"display": "block"}, note
 
 

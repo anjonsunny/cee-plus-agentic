@@ -474,7 +474,29 @@ def clean_recs(s4: dict) -> list:
                                 "cursor": "pointer"}),
             html.Div(benign, style={"padding": "2px 0 0 8px"})],
             style={"margin": "6px 0"}))
+    same = same_hazards_line(s4)
+    if same is not None:
+        cards.append(same)
     return cards
+
+
+def same_hazards_line(s4: Any) -> Any:
+    """One line naming the hazards the model called one and the same, or
+    None. Shown as soon as the run is done, before any try (Sunny,
+    2026-11-19), so the pair is known before a hazard is picked."""
+    from agentic import same4
+    frame = s4.get("frame") if isinstance(s4, dict) else None
+    grp = same4.groups(same4.pairs_of(frame if isinstance(frame, dict) else {}))
+    names = sorted({g for g in grp.values()})
+    if not names:
+        return None
+    return html.Div(
+        "the model says: " + " · ".join(" and ".join(g) + " are the same hazard" for g in names),
+        className="same-hazards",
+        title="the model was asked which hazards are one and the same physical hazard; "
+              "the causal groundedness tables count such a pair as one hazard",
+        style={"fontSize": "11.5px", "fontWeight": "700", "color": "#334155",
+               "margin": "6px 0 2px"})
 
 
 # ── gists for the folded sections ────────────────────────────────────────

@@ -815,6 +815,18 @@ TITLE_STYLE = {"fontSize": "17px", "fontWeight": "800", "letterSpacing": ".05em"
                "color": "#1d4ed8", "cursor": "pointer"}
 
 
+def same_note(result: Any) -> str:
+    """For the new-try form: which hazards the model called one and the
+    same, and what that means for the edit. '' when there are none."""
+    from agentic import same4
+    names = sorted({g for g in same4.groups(same4.pairs_of(result)).values()})
+    if not names:
+        return ""
+    return (" · the model says " + "; ".join(" and ".join(g) + " are the same hazard"
+                                              for g in names)
+            + ": remove them together to test them as one")
+
+
 def _fold(title: Any, kids: list, open_: bool = False, cls: str = "") -> Any:
     return html.Details([
         html.Summary(title, className="iv-fold-head"),
