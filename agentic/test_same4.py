@@ -170,20 +170,23 @@ def _features(pairs):
     return {**D_BEFORE, "same_hazards": pairs}
 
 
-def test_a_declared_pair_is_one_feature_row_weighed_together():
+def test_a_declared_pair_stays_two_feature_rows_each_with_its_own_weight():
+    """Sunny, 2026-11-19: "they are separate features". The pair shares a
+    try, not a row."""
     alone = declared4.declared(D_BEFORE)
-    paired = declared4.declared(_features([["brush_1", "fire_1"]]))
-    assert "fire_1" not in paired and "brush_1" not in paired
-    assert paired["brush_1 + fire_1"] == alone["fire_1"] + alone["brush_1"]
-    assert paired["spill_1"] == alone["spill_1"]
+    assert declared4.declared(_features([["brush_1", "fire_1"]])) == alone
     assert declared4.declared({**D_BEFORE, "same_hazards": "junk"}) == alone
 
 
-def test_the_shift_goes_to_the_pair_only_when_the_edit_removed_both():
+def _gone(after, ids):
+    return {**after, "detected_objects": [o for o in after["detected_objects"]
+                                          if o["object_id"] not in ids]}
+
+
+def test_one_try_on_a_pair_fills_the_shift_on_both_rows():
     b = _features([["brush_1", "fire_1"]])
     one, after = _try("fire_1", 0.6)
-    both_gone = {**after, "detected_objects": [o for o in after["detected_objects"]
-                                               if o["object_id"] not in ("fire_1", "brush_1")]}
+    both_gone = _gone(after, ("fire_1", "brush_1"))
     assert declared4.removed_name(b, one, both_gone) == "brush_1 + fire_1"
     still = {**after, "threats": [{"object_id": "brush_1"}]}
     assert declared4.removed_name(b, one, still) == "fire_1"          # the brush still burns
@@ -191,33 +194,56 @@ def test_the_shift_goes_to_the_pair_only_when_the_edit_removed_both():
     assert declared4.removed_name(None, None, None) == ""
     c = declared4.compare(b, [(one, both_gone), _try("spill_1", 0.3)])
     by = {r["object_id"]: r for r in c["hazards"]}
-    assert by["brush_1 + fire_1"]["shift"] is not None and "fire_1" not in by
+    assert "brush_1 + fire_1" not in by                                # two rows, not one
+    assert by["fire_1"]["shift"] == by["brush_1"]["shift"] is not None
+    assert by["fire_1"]["parts"] == by["brush_1"]["parts"] != []
+    assert by["fire_1"]["same_as"] == ["brush_1"] and by["brush_1"]["same_as"] == ["fire_1"]
+    assert by["fire_1"]["alone_of"] == [] and by["spill_1"]["same_as"] == []
+    assert by["fire_1"]["says"] != by["brush_1"]["says"]               # each its own weight
     assert c["same_hazards"] == [("brush_1", "fire_1")]
     card = ui_iv.card_component(c, {})
     assert "the model says: brush_1 and fire_1 are the same hazard" in _flat(card)
-    # removed alone: its own row, with the reason said
+    rows = {_flat(r).split()[0]: _flat(r) for r in _by_class(card, "iv-feature")}
+    assert "same hazard as brush_1" in rows["fire_1"] and "same hazard as fire_1" in rows["brush_1"]
+    # removed alone: the other row stays untested, and the reason is said
     c = declared4.compare(b, [(one, still), _try("spill_1", 0.3)])
     by = {r["object_id"]: r for r in c["hazards"]}
-    assert by["fire_1"]["alone_of"] == ["brush_1"] and by["brush_1 + fire_1"]["shift"] is None
+    assert by["fire_1"]["alone_of"] == ["brush_1"] and by["brush_1"]["shift"] is None
     assert "removed alone; the model calls it the same hazard as brush_1" in _flat(
         ui_iv.card_component(c, {}))
 
 
-def test_the_remove_next_button_picks_one_hazard_of_a_pair():
-    c = declared4.compare(_features([["brush_1", "fire_1"]]), [_try("spill_1", 0.3)])
-    assert "brush_1 + fire_1" in c["not_removed"]
-    card = ui_iv.card_component(c, {}, next_id=lambda h: {"type": "iv-next", "target": h})
-    (btn,) = _by_class(card, "iv-next")
-    assert btn.id["target"] in D_OBJS and " + " not in btn.id["target"]
+def test_the_score_counts_a_pair_once():
+    one, after = _try("fire_1", 0.6)
+    both_gone = _gone(after, ("fire_1", "brush_1"))
+    tries = [(one, both_gone), _try("spill_1", 0.6)]
+    paired = declared4.compare(_features([["brush_1", "fire_1"]]), tries)
+    # declared: fire 5.5 + brush 1.5 = 7 against spill 7; shifts 0.4 and 0.4
+    assert paired["score"] == pytest.approx(1.0, abs=0.01)
+    assert paired["graph_vs_mechanistic"] == paired["score"]
+    # one try on the pair and nothing else: one unit, so no score yet
+    assert declared4.compare(_features([["brush_1", "fire_1"]]), [(one, both_gone)])["score"] is None
 
 
-def test_ground_truth_reads_a_pair_as_core_when_either_is():
+def test_each_feature_row_shows_the_state_of_its_hazard():
+    b = {**D_BEFORE, "detected_objects": [
+        {**o, "state": {"fire_1": "spreading", "brush_1": "burning"}.get(o["object_id"], "")}
+        for o in D_BEFORE["detected_objects"]]}
+    c = declared4.compare(b, [_try("spill_1", 0.3)])
+    by = {r["object_id"]: r for r in c["hazards"]}
+    assert by["fire_1"]["state"] == "spreading" and by["brush_1"]["state"] == "burning"
+    rows = {_flat(r).split()[0]: r for r in _by_class(ui_iv.card_component(c, {}), "iv-feature")}
+    assert _flat(_by_class(rows["fire_1"], "iv-state")) == "\u00b7 spreading"
+    assert _by_class(rows["spill_1"], "iv-state") == []                # no state, nothing shown
+    assert declared4.compare({**D_BEFORE, "detected_objects": [None, "x"]}, [])["hazards"] is not None
+
+
+def test_ground_truth_judges_each_row_of_a_pair_by_itself():
     c = declared4.compare(_features([["brush_1", "fire_1"]]), [_try("spill_1", 0.3)])
     rows = {g["object_id"]: g for g in declared4.against_ground_truth(
         c, {"fire_1": 0.4, "brush_1": 0.1}, ["fire_1"])}
-    assert rows["brush_1 + fire_1"]["is_core"] is True
-    assert rows["brush_1 + fire_1"]["should"] == 0.5
-    assert "fire_1" not in rows                                       # not listed a second time
+    assert rows["fire_1"]["is_core"] is True and rows["brush_1"]["is_core"] is False
+    assert rows["fire_1"]["should"] == 0.4 and rows["brush_1"]["should"] == 0.1
 
 
 # ── shown as soon as the run is done, before any try ──

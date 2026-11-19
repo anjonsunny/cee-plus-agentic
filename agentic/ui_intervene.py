@@ -778,11 +778,19 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
         for r in feats:
             oid, role = str(r.get("object_id")), str(r.get("role") or "")
             alone = [str(x) for x in (r.get("alone_of") or [])]
+            same = [str(x) for x in (r.get("same_as") or [])]
+            state = str(r.get("state") or "")
             tds = [html.Td([ent_chip(oid, "#ef4444")]
+                           + ([html.Span(" \u00b7 " + state, className="iv-state",
+                                         style={"color": "#64748b"})] if state else [])
                            + ([html.Div("removed alone; the model calls it the same hazard as "
                                         + ", ".join(alone), className="iv-alone",
                                         style={"fontSize": "10px", "color": "#b45309"})]
-                              if alone and r.get("does") is not None else []), style=_TD),
+                              if alone and r.get("does") is not None else
+                              [html.Div("same hazard as " + ", ".join(same), className="iv-same",
+                                        title=SAME_TIP,
+                                        style={"fontSize": "10px", "color": "#64748b"})]
+                              if same else []), style=_TD),
                    html.Td(_bar(r.get("says_advice"), "#64748b"), style=_TD),
                    html.Td(_bar(r.get("says"), "#334155"), style=_TD),
                    html.Td(_bar(r.get("does"), "#16a34a")

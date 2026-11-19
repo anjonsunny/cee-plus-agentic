@@ -141,9 +141,9 @@ def declared(result: Any, graph: str = GRAPH_B) -> dict[str, float]:
         weights = {}
     fields = chain4.fields_of(result.get(graph))      # size / how soon, x1 when absent
     total = _danger(edges, links, labels, weights, fields=fields)
-    # two hazards the model called one and the same are taken out together
-    # and go by one name (agentic/same4.py)
-    grp = same4.groups(same4.pairs_of(result))
+    # every hazard is its own feature, also when the model called two of
+    # them one and the same (Sunny, 2026-11-19: "they are separate
+    # features"): the pair shares a try, not a row
     out: dict[str, float] = {}
     for h in dict.fromkeys(s for s, _e, _t in edges):
         try:
@@ -151,11 +151,7 @@ def declared(result: Any, graph: str = GRAPH_B) -> dict[str, float]:
                 continue
         except Exception:
             continue
-        unit = same4.key(h, grp)
-        if unit in out:
-            continue
-        out[unit] = total - _danger(edges, links, labels, weights,
-                                    without=set(grp.get(h, (h,))), fields=fields)
+        out[h] = total - _danger(edges, links, labels, weights, without=h, fields=fields)
     return {k: round(v, 3) for k, v in out.items() if v > 0}
 
 
@@ -204,7 +200,8 @@ def mechanistic(before: Any, tries: list[tuple[dict, dict]]) -> dict[str, float]
             sg = chain4.signed_shift(one.get("signals"), chain4.direction(before, after))
         except Exception:
             continue
-        out[target] = max(out.get(target, -9.9), float(sg["value"]))
+        for h in same4.members(target):         # a pair removed together: each member
+            out[h] = max(out.get(h, -9.9), float(sg["value"]))
     return {k: round(v, 3) for k, v in out.items()}
 
 
@@ -232,8 +229,9 @@ def mechanistic_parts(before: Any, tries: list[tuple[dict, dict]]) -> dict[str, 
                      for p in sg["parts"] if isinstance(p, dict)]
         except Exception:
             continue
-        if target not in best or value > best[target]:
-            best[target], out[target] = value, parts
+        for h in same4.members(target):         # a pair removed together: each member
+            if h not in best or value > best[h]:
+                best[h], out[h] = value, parts
     return out
 
 
@@ -273,6 +271,10 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
     does = _shares(mech, tested)                     # a negative shift counts as 0
     rows = []
     grp = same4.groups(same4.pairs_of(before))
+    states = {str(o.get("object_id") or ""): str(o.get("state") or "")
+              for o in iv4.clean_result(before)["detected_objects"]}
+    # removed without its pair (the edit separated what the model called one)
+    alone = {h for h in tested if h in grp and any(m not in mech for m in grp[h])}
     stated, drives = _high(says_all), _high(does)
     for h in sorted(every, key=lambda x: (-says_all.get(x, 0.0), x)):
         if h not in mech:
@@ -299,14 +301,31 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
                      "shift": mech.get(h), "parts": mparts.get(h, []),
                      # removed alone, though the model called it the same
                      # hazard as these: the edit separated them
-                     "alone_of": [m for m in grp.get(h, ()) if m != h],
+                     "alone_of": ([m for m in grp.get(h, ()) if m != h]
+                                  if h in alone else []),
+                     # the hazards the model called the same as this one
+                     "same_as": [m for m in grp.get(h, ()) if m != h],
+                     "state": states.get(h, ""),
                      "reading": reading})
+    # The score counts a pair removed together ONCE: its declared weights
+    # added, its one shift. Two rows on screen, one unit in the score, or a
+    # single try on a pair would weigh double.
+    def units(weights: dict[str, float]) -> dict[str, float]:
+        out: dict[str, float] = {}
+        for h in tested:
+            u = same4.key(h, grp) if h in grp and h not in alone else h
+            out[u] = out.get(u, 0.0) + max(0.0, weights.get(h, 0.0))
+        return out
+    u_keys = list(units(dec))
+    u_mech = {}
+    for h in tested:
+        u = same4.key(h, grp) if h in grp and h not in alone else h
+        u_mech[u] = max(u_mech.get(u, 0.0), max(0.0, mech.get(h, 0.0)))
     score = None
     if tested:
-        score = round(sum(min(says_t.get(h, 0.0), does.get(h, 0.0)) for h in tested), 3)
-        if len(tested) == 1 or not sum(does.values()):
-            # one hazard is 100% of both sides by construction: no score yet
-            score = None if len(tested) == 1 else 0.0
+        score = _shared(units(dec), u_mech, u_keys)
+        if len(u_keys) > 1 and not sum(u_mech.values()):
+            score = 0.0
     reading = "" if score is None else (
         "agree" if score >= 0.85 else
         "agree in part" if score >= 0.60 else "differ")
@@ -340,7 +359,7 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
         # the three gaps: the two declarations against each other (needs no
         # try), and each against the shift (over the hazards removed so far)
         "advice_vs_graph": _shared(dec_a, dec, every),
-        "advice_vs_mechanistic": _shared(dec_a, {h: max(0.0, v) for h, v in mech.items()}, tested),
+        "advice_vs_mechanistic": _shared(units(dec_a), u_mech, u_keys),
         "graph_vs_mechanistic": score,
         "tested": n_tested, "declared": n_declared, "removed": len(tested),
         "provisional": bool(named) and n_tested < n_declared,
