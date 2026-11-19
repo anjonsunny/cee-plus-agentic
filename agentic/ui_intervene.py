@@ -790,7 +790,13 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
                               [html.Div("same hazard as " + ", ".join(same), className="iv-same",
                                         title=SAME_TIP,
                                         style={"fontSize": "10px", "color": "#64748b"})]
-                              if same else []), style=_TD),
+                              if same else
+                              [html.Div("gone with " + ", ".join(went), className="iv-gone-with",
+                                        title="it was not removed by itself: it went when "
+                                              "these were removed, and carries that try's shift",
+                                        style={"fontSize": "10px", "color": "#64748b"})]
+                              if (went := [str(x) for x in (r.get("gone_with") or [])])
+                              and r.get("does") is not None else []), style=_TD),
                    html.Td(_bar(r.get("says_advice"), "#64748b"), style=_TD),
                    html.Td(_bar(r.get("says"), "#334155"), style=_TD),
                    html.Td(_bar(r.get("does"), "#16a34a")

@@ -187,22 +187,58 @@ def _shared(a: dict[str, float], b: dict[str, float], keys: list[str]) -> Any:
     return round(sum(min(sa[k], sb[k]) for k in keys), 3)
 
 
-def mechanistic(before: Any, tries: list[tuple[dict, dict]]) -> dict[str, float]:
-    """{removed hazard: signed shift} over the measured tries (the larger
-    one when a hazard was removed twice). Positive = the answer eased."""
-    out: dict[str, float] = {}
-    for one, after in tries or []:
+def _best_tries(before: Any, tries: Any) -> dict[str, dict]:
+    """{hazard: {"value", "parts", "try", "target"}}: for every hazard a
+    try took out, the try with the larger shift. A try takes out its
+    target, the hazards the model called the same as it, and every hazard
+    that went with them (no fire, so no smoke): all of them carry that
+    try's shift, because the shift cannot be split between them (Sunny,
+    2026-11-19: "smoke_1 also should get affected in feature table").
+    Never raises."""
+    from agentic import grounding4
+    out: dict[str, dict] = {}
+    for k, pair in enumerate(tries or []):
+        try:
+            one, after = pair
+        except Exception:
+            continue
         one = one if isinstance(one, dict) else {}
-        target = removed_name(before, one, after)
+        target = str(one.get("target") or "")
         if not target:
             continue
         try:
             sg = chain4.signed_shift(one.get("signals"), chain4.direction(before, after))
+            value = float(sg["value"])
+            parts = [{"name": PART_NAMES.get(str(p.get("signal")), str(p.get("signal"))),
+                      "signed": round(float(p.get("signed") or 0.0), 3)}
+                     for p in sg["parts"] if isinstance(p, dict)]
         except Exception:
             continue
-        for h in same4.members(target):         # a pair removed together: each member
-            out[h] = max(out.get(h, -9.9), float(sg["value"]))
-    return {k: round(v, 3) for k, v in out.items()}
+        gone = same4.members(removed_name(before, one, after))
+        aimed = set(gone)                       # the target and its same-hazard pair
+        try:
+            b, a = iv4.clean_result(before), iv4.clean_result(after)
+            gone += [h for h in grounding4.removed_set(b, a, target, grounding4.renames(b, a))
+                     if h not in gone]
+        except Exception:
+            pass
+        for h in gone:
+            # a try AIMED at this hazard beats one where it only went along
+            # (smoke gone with the fire, then smoke removed by itself: the
+            # second one is the smoke's own test)
+            direct = h in aimed
+            old = out.get(h)
+            if old is None or (direct and not old["direct"]) or (
+                    direct == old["direct"] and value > old["value"]):
+                out[h] = {"value": value, "parts": parts, "try": k, "target": target,
+                          "direct": direct}
+    return out
+
+
+def mechanistic(before: Any, tries: list[tuple[dict, dict]]) -> dict[str, float]:
+    """{removed hazard: signed shift} over the measured tries (the larger
+    one when a hazard was removed twice). Positive = the answer eased."""
+    return {h: round(v["value"], 3) for h, v in _best_tries(before, tries).items()}
 
 
 PART_NAMES = {"danger level": "level", "advice": "recommendations", "graph": "graph"}
@@ -214,25 +250,7 @@ def mechanistic_parts(before: Any, tries: list[tuple[dict, dict]]) -> dict[str, 
     the mean of, each with its own sign (positive = eased, negative =
     escalated). For a hazard removed twice, the parts of the larger
     combined shift. Never raises."""
-    best: dict[str, float] = {}
-    out: dict[str, list[dict]] = {}
-    for one, after in tries or []:
-        one = one if isinstance(one, dict) else {}
-        target = removed_name(before, one, after)
-        if not target:
-            continue
-        try:
-            sg = chain4.signed_shift(one.get("signals"), chain4.direction(before, after))
-            value = float(sg["value"])
-            parts = [{"name": PART_NAMES.get(str(p.get("signal")), str(p.get("signal"))),
-                      "signed": round(float(p.get("signed") or 0.0), 3)}
-                     for p in sg["parts"] if isinstance(p, dict)]
-        except Exception:
-            continue
-        for h in same4.members(target):         # a pair removed together: each member
-            if h not in best or value > best[h]:
-                best[h], out[h] = value, parts
-    return out
+    return {h: v["parts"] for h, v in _best_tries(before, tries).items()}
 
 
 def _shares(weights: dict[str, float], keys: list[str]) -> dict[str, float]:
@@ -261,8 +279,9 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
     two that can be compared."""
     dec = declared(before)
     dec_a = declared(before, GRAPH_A)
-    mech = mechanistic(before, tries)
-    mparts = mechanistic_parts(before, tries)
+    best = _best_tries(before, tries)
+    mech = {h: round(v["value"], 3) for h, v in best.items()}
+    mparts = {h: v["parts"] for h, v in best.items()}
     tested = [h for h in mech]
     every = list(dict.fromkeys(list(dec) + list(dec_a) + tested))
     says_all = _shares(dec, every)
@@ -274,7 +293,24 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
     states = {str(o.get("object_id") or ""): str(o.get("state") or "")
               for o in iv4.clean_result(before)["detected_objects"]}
     # removed without its pair (the edit separated what the model called one)
-    alone = {h for h in tested if h in grp and any(m not in mech for m in grp[h])}
+    alone = {h for h in tested if h in grp
+             and any(m not in best or best[m]["try"] != best[h]["try"] for m in grp[h])}
+
+    def unit_of(h: str) -> str:
+        """Everything one try took out is one unit in the score."""
+        return f"try {best[h]['try']}"
+    # the shares a row shows are its UNIT's shares, so every hazard one try
+    # took out shows the same number (Sunny: "smoke_1 also should get
+    # affected"), and a try that removed three does not read as a third each
+    _uk = list(dict.fromkeys(unit_of(h) for h in tested))
+    _us: dict[str, float] = {}
+    _ud: dict[str, float] = {}
+    for h in tested:
+        _us[unit_of(h)] = _us.get(unit_of(h), 0.0) + max(0.0, dec.get(h, 0.0))
+        _ud[unit_of(h)] = max(_ud.get(unit_of(h), 0.0), max(0.0, mech.get(h, 0.0)))
+    _us, _ud = _shares(_us, _uk), _shares(_ud, _uk)
+    says_t = {h: _us[unit_of(h)] for h in tested}
+    does = {h: _ud[unit_of(h)] for h in tested}
     stated, drives = _high(says_all), _high(does)
     for h in sorted(every, key=lambda x: (-says_all.get(x, 0.0), x)):
         if h not in mech:
@@ -305,22 +341,26 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
                                   if h in alone else []),
                      # the hazards the model called the same as this one
                      "same_as": [m for m in grp.get(h, ()) if m != h],
+                     # it went in a try that removed something else: the
+                     # other hazards of that try (no fire, so no smoke)
+                     "gone_with": ([] if h not in best or best[h]["direct"]
+                                   else sorted(m for m in best if m != h
+                                               and best[m]["try"] == best[h]["try"]
+                                               and best[m]["direct"])),
                      "state": states.get(h, ""),
                      "reading": reading})
-    # The score counts a pair removed together ONCE: its declared weights
-    # added, its one shift. Two rows on screen, one unit in the score, or a
-    # single try on a pair would weigh double.
+    # The score counts everything ONE try took out once: the declared
+    # weights added, the one shift. Several rows on screen, one unit in the
+    # score, or a single try that removed three hazards would weigh triple.
     def units(weights: dict[str, float]) -> dict[str, float]:
         out: dict[str, float] = {}
         for h in tested:
-            u = same4.key(h, grp) if h in grp and h not in alone else h
-            out[u] = out.get(u, 0.0) + max(0.0, weights.get(h, 0.0))
+            out[unit_of(h)] = out.get(unit_of(h), 0.0) + max(0.0, weights.get(h, 0.0))
         return out
     u_keys = list(units(dec))
     u_mech = {}
     for h in tested:
-        u = same4.key(h, grp) if h in grp and h not in alone else h
-        u_mech[u] = max(u_mech.get(u, 0.0), max(0.0, mech.get(h, 0.0)))
+        u_mech[unit_of(h)] = max(u_mech.get(unit_of(h), 0.0), max(0.0, mech.get(h, 0.0)))
     score = None
     if tested:
         score = _shared(units(dec), u_mech, u_keys)

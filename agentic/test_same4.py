@@ -290,3 +290,53 @@ def test_the_try_form_offers_a_declared_pair_as_one_option_with_joint_instructio
     assert ui_iv.target_options(info([["brush_1", "ghost_9"]])) == plain
     for bad in (None, {}, {"candidates": [None, "x", {}]}):
         assert ui_iv.target_options(bad) == []
+
+
+# ── a hazard that went with another (no fire, so no smoke) ──
+
+def _smoke_scene():
+    objs = ["fire_1", "smoke_1", "spill_1", "man_1"]
+    b = _belief(objs, [("fire_1", "may_harm", "man_1"), ("smoke_1", "may_harm", "man_1"),
+                       ("spill_1", "may_harm", "man_1")])
+    return {**b, "threats": [{"object_id": h} for h in ("fire_1", "smoke_1", "spill_1")]}, objs
+
+
+def _after(objs, gone, threats):
+    return {**_belief([o for o in objs if o not in gone], []),
+            "threats": [{"object_id": h} for h in threats]}
+
+
+def test_a_hazard_that_went_with_the_removed_one_carries_the_same_shift():
+    """Sunny, 2026-11-19: "smoke_1 also should get affected in feature
+    table". The recommendation table already counted it as removed."""
+    b, objs = _smoke_scene()
+    one, _ = _try("fire_1", 0.6)
+    after = _after(objs, ("fire_1", "smoke_1"), ["spill_1"])
+    c = declared4.compare(b, [(one, after)])
+    by = {r["object_id"]: r for r in c["hazards"]}
+    assert by["smoke_1"]["shift"] == by["fire_1"]["shift"] is not None
+    assert by["smoke_1"]["does"] == by["fire_1"]["does"] == 1.0        # the same number
+    assert by["smoke_1"]["gone_with"] == ["fire_1"] and by["fire_1"]["gone_with"] == []
+    assert by["spill_1"]["shift"] is None
+    assert c["score"] is None                                          # one try is one unit
+    rows = {_flat(r).split()[0]: _flat(r) for r in
+            _by_class(ui_iv.card_component(c, {}), "iv-feature")}
+    assert "gone with fire_1" in rows["smoke_1"] and "gone with" not in rows["fire_1"]
+    assert "shifts emergency responses" in rows["smoke_1"]
+
+
+def test_removing_it_by_itself_later_is_its_own_test_and_wins():
+    b, objs = _smoke_scene()
+    with_fire = (_try("fire_1", 0.9)[0], _after(objs, ("fire_1", "smoke_1"), ["spill_1"]))
+    alone = (_try("smoke_1", 0.15)[0], _after(objs, ("smoke_1",), ["fire_1", "spill_1"]))
+    for tries in ([with_fire, alone], [alone, with_fire]):
+        by = {r["object_id"]: r for r in declared4.compare(b, tries)["hazards"]}
+        assert by["smoke_1"]["gone_with"] == []                        # its own try now
+        assert by["smoke_1"]["shift"] < by["fire_1"]["shift"]          # the smaller, direct one
+    # a try that took out three counts once in the score, not three times
+    c = declared4.compare(b, [with_fire, (_try("spill_1", 0.9)[0],
+                                          _after(objs, ("spill_1",), ["fire_1", "smoke_1"]))])
+    assert c["score"] == pytest.approx(1 - abs(2 / 3 - 0.5), abs=0.02)
+    for bad in (None, "x", [None, (1,), ("a", "b", "c"), ({"target": "a"}, None)]):
+        assert isinstance(declared4.mechanistic(b, bad), dict)
+        assert isinstance(declared4.mechanistic_parts(b, bad), dict)
