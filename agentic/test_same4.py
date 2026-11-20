@@ -963,3 +963,18 @@ def test_a_feature_name_its_label_and_its_state_stay_on_one_line():
         assert _flat(name).split()[1] in ("hazard", "victim")
         # the note is under the name, not inside its line
         assert "same hazard as" not in _flat(name) and "gone with" not in _flat(name)
+
+
+def test_the_summary_line_names_a_redirected_victim_too():
+    """C_tanker ui_2345d3fc: "Redirected when removed: tanker_truck_1" left
+    out the man, who was redirected as well."""
+    b, objs = _recs_scene()
+    after = {**_after(objs, ("man_1",), ["fire_1", "spill_1"]),
+             "recommendations": [_rec(1, "fire_1", ["car_1"], "Tow car_1 away from fire_1."),
+                                 _rec(2, "spill_1", ["car_1"], "Boom around spill_1."),
+                                 _rec(3, "fire_1", ["car_1"], "Wet down car_1.")]}
+    c = declared4.compare(b, [(_mixed_try("man_1"), after)])
+    assert c["explain"] == ["Redirected when removed: man_1."]         # also before any score
+    line = _flat(_by_class(ui_iv.card_component(c, {}), "iv-explain"))
+    assert line == "Redirected when removed: man_1."
+    assert declared4.compare(b, [])["explain"] == []

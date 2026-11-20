@@ -712,9 +712,6 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
             explain.append("Shift more than declared: " + ", ".join(less) + ".")
         if worse:
             explain.append("Escalated when removed: " + ", ".join(worse) + ".")
-        turned = [r["object_id"] for r in rows if r.get("way") == REDIRECTS]
-        if turned:
-            explain.append("Redirected when removed: " + ", ".join(turned) + ".")
     # ── the victims: what can be harmed, weighed from the other end
     v_b, v_a = victims_declared(before, GRAPH_B), victims_declared(before, GRAPH_A)
     v_ids = list(dict.fromkeys(list(v_b) + list(v_best)))
@@ -731,6 +728,14 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
                 "signed": v_best[h].get("signed") if h in v_best else None,
                 "drives": v_mech.get(h, 0) > 0}
                for h in sorted(v_ids, key=lambda x: (-v_says.get(x, 0.0), x))]
+    # which way, for everything removed: hazards first, then victims (the
+    # line named only hazards: C_tanker, the man was redirected and not said)
+    turned = [r["object_id"] for r in rows + victims if r.get("way") == REDIRECTS]
+    if turned:
+        explain.append("Redirected when removed: " + ", ".join(turned) + ".")
+    v_worse = [v["object_id"] for v in victims if v.get("way") == ESCALATES]
+    if v_worse:
+        explain.append("Escalated when removed: " + ", ".join(v_worse) + ".")
     n_tested = len([h for h in tested if h in named])
     pos = {h: v for h, v in mech.items() if v > 0}
     return {
