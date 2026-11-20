@@ -181,6 +181,41 @@ def declared(result: Any, graph: str = GRAPH_B) -> dict[str, float]:
     return {k: round(v, 3) for k, v in out.items() if v > 0}
 
 
+def declared_together(result: Any, members: Any, graph: str = GRAPH_B) -> float:
+    """The danger one of the model's graphs loses when ALL of `members` are
+    taken out of it at once. This is the declared weight of a group (the
+    hazards one try took out).
+
+    Adding the members' own weights is wrong: an arrow between two of them
+    (fire -> brush) goes when either end goes, so it is in both weights
+    and would be counted twice. Taken out together it is counted once.
+    0.0 for an empty group or a graph that cannot be read. Never raises."""
+    gone = {str(m) for m in (members if isinstance(members, (list, tuple, set, frozenset))
+                             else []) if isinstance(m, str) and m}
+    if not gone:
+        return 0.0
+    result = iv4.clean_result(result)
+    labels = {str(o.get("object_id") or ""): str(o.get("label") or "")
+              for o in result["detected_objects"]}
+    try:
+        links = chain4.links_of(result)
+        edges = chain4._edges(result.get(graph))
+        # a member that is a life (a person) is not a hazard: it stays
+        gone = {m for m in gone if not chain4._is_life(m, labels)}
+    except Exception:
+        return 0.0
+    if not gone:
+        return 0.0
+    try:
+        weights = iv4._frozen()._EFFECT_THREAT
+    except Exception:
+        weights = {}
+    fields = chain4.fields_of(result.get(graph))
+    total = _danger(edges, links, labels, weights, fields=fields)
+    return round(max(0.0, total - _danger(edges, links, labels, weights,
+                                          without=gone, fields=fields)), 3)
+
+
 def removed_name(before: Any, one: Any, after: Any) -> str:
     """The name the removed hazard of one try goes by: the pair's name
     when the model called it the same hazard as another AND both are gone
@@ -331,8 +366,15 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
     _uk = list(dict.fromkeys(unit_of(h) for h in tested))
     _us: dict[str, float] = {}
     _ud: dict[str, float] = {}
+    # the hazards of each unit, and the unit's declared weight: all of them
+    # taken out of the graph TOGETHER (an arrow between two of them once)
+    _members: dict[str, list[str]] = {}
     for h in tested:
-        _us[unit_of(h)] = _us.get(unit_of(h), 0.0) + max(0.0, dec.get(h, 0.0))
+        _members.setdefault(unit_of(h), []).append(h)
+    grp_b = {u: declared_together(before, ms, GRAPH_B) for u, ms in _members.items()}
+    grp_a = {u: declared_together(before, ms, GRAPH_A) for u, ms in _members.items()}
+    for h in tested:
+        _us[unit_of(h)] = grp_b[unit_of(h)]
         _ud[unit_of(h)] = max(_ud.get(unit_of(h), 0.0), max(0.0, mech.get(h, 0.0)))
     _us, _ud = _shares(_us, _uk), _shares(_ud, _uk)
     says_t = {h: _us[unit_of(h)] for h in tested}
@@ -384,11 +426,8 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
     # weights added, the one shift. Several rows on screen, one unit in the
     # score, or a single try that removed three hazards would weigh triple.
     def units(weights: dict[str, float]) -> dict[str, float]:
-        out: dict[str, float] = {}
-        for h in tested:
-            out[unit_of(h)] = out.get(unit_of(h), 0.0) + max(0.0, weights.get(h, 0.0))
-        return out
-    u_keys = list(units(dec))
+        return dict(grp_a if weights is dec_a else grp_b)
+    u_keys = list(_members)
     u_mech = {}
     for h in tested:
         u_mech[unit_of(h)] = max(u_mech.get(unit_of(h), 0.0), max(0.0, mech.get(h, 0.0)))
@@ -446,5 +485,14 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
         "done_more": [r["object_id"] for r in rows if r["reading"] == DONE_MORE],
         "alarmed": [r["object_id"] for r in rows if r["reading"] == ALARMED],
         "not_removed": [r["object_id"] for r in rows if r["reading"] == UNTESTED],
+        # each try's group: its hazards, the two declared weights of the
+        # group (taken out together) and what the members add up to alone
+        "groups": [{"members": sorted(ms),
+                    "declared_graph": grp_b[u], "declared_recommendations": grp_a[u],
+                    "added_graph": round(sum(max(0.0, dec.get(m, 0.0)) for m in ms), 3),
+                    "added_recommendations": round(sum(max(0.0, dec_a.get(m, 0.0))
+                                                       for m in ms), 3),
+                    "shift": max(mech.get(m, 0.0) for m in ms)}
+                   for u, ms in _members.items()],
         "hazards": rows,
     }

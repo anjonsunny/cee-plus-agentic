@@ -503,3 +503,58 @@ def test_ground_truth_pairs_decide_the_word_and_a_listed_thing_gets_a_bar():
         assert card is not None
     assert _by_class(ui_iv.card_component(c, {}, {**syn, "gt_same_hazards": None}),
                      "iv-same-gt") == []
+
+
+# ── the declared weight of a group: its hazards taken out together ──
+
+def _linked_scene():
+    """fire -> man, brush -> man, and an arrow BETWEEN the two: fire -> brush."""
+    objs = ["fire_1", "brush_1", "spill_1", "man_1"]
+    arrows = [("fire_1", "may_harm", "man_1"), ("brush_1", "may_harm", "man_1"),
+              ("fire_1", "may_spread_to", "brush_1"), ("spill_1", "may_harm", "man_1")]
+    b = _belief(objs, arrows, arrows)
+    return {**b, "threats": [{"object_id": h} for h in objs[:3]],
+            "same_hazards": [["brush_1", "fire_1"]]}, objs
+
+
+def test_an_arrow_between_two_hazards_of_a_group_is_counted_once():
+    """Sunny, 2026-11-20: "fire -> brush twice? how?" The arrow goes when
+    either end goes, so it is in both hazards' own weights."""
+    b, objs = _linked_scene()
+    alone = declared4.declared(b)
+    together = declared4.declared_together(b, ["fire_1", "brush_1"])
+    between = alone["fire_1"] + alone["brush_1"] - together
+    assert between > 0                                                 # added: counted twice
+    assert together == pytest.approx(declared4.declared_together(b, ("brush_1", "fire_1")))
+    # one hazard taken out "together" is just its own weight
+    assert declared4.declared_together(b, ["spill_1"]) == pytest.approx(alone["spill_1"])
+    # a person in the group is not a hazard and stays
+    assert declared4.declared_together(b, ["fire_1", "man_1"]) == pytest.approx(alone["fire_1"])
+    assert declared4.declared_together(b, ["man_1"]) == 0.0
+    for bad in (None, "fire_1", [], [None, 3, ""], {"a": 1}):
+        assert declared4.declared_together(b, bad) == 0.0
+    for bad in (None, "x", {"graph_b": "zz"}, {"detected_objects": [None]}):
+        assert declared4.declared_together(bad, ["fire_1"]) == 0.0
+
+
+def test_the_score_uses_the_group_weight_not_the_added_one():
+    b, objs = _linked_scene()
+    pair = (_try("brush_1", 0.6)[0], _after(objs, ("fire_1", "brush_1"), ["spill_1"]))
+    spill = (_try("spill_1", 0.6)[0], _after(objs, ("spill_1",), ["fire_1", "brush_1"]))
+    c = declared4.compare(b, [pair, spill])
+    g = {tuple(x["members"]): x for x in c["groups"]}
+    two = g[("brush_1", "fire_1")]
+    assert two["declared_graph"] < two["added_graph"]                  # the arrow between, once
+    assert two["declared_graph"] == declared4.declared_together(b, ["fire_1", "brush_1"])
+    one = g[("spill_1",)]
+    assert one["declared_graph"] == one["added_graph"]                 # alone: nothing changes
+    # the score is the shared part of the group shares and the shift shares
+    total = two["declared_graph"] + one["declared_graph"]
+    assert c["score"] == pytest.approx(
+        min(two["declared_graph"] / total, 0.5) + min(one["declared_graph"] / total, 0.5),
+        abs=0.01)
+    # both rows of the pair show the group's share
+    by = {r["object_id"]: r for r in c["hazards"]}
+    assert by["fire_1"]["says_tested"] == by["brush_1"]["says_tested"] == pytest.approx(
+        two["declared_graph"] / total, abs=0.01)
+    assert declared4.compare(b, [])["groups"] == []
