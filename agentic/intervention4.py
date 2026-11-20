@@ -325,20 +325,69 @@ def _our_reading(before: dict, after: dict, res: dict) -> dict:
     return {"signals": signals, "verdict": verdict}
 
 
+ROLES = ("core", "spurious")
+
+
+def _words(label: Any) -> set[str]:
+    return {w for w in str(label or "").strip().lower().replace("-", "_").split("_") if w}
+
+
+def _gt_to_model(nodes: list, objs: list) -> dict[str, str]:
+    """{ground-truth id: model id}, one to one. In order: the same id; the
+    same label, when only one free object carries it; one label made of the
+    other's words (tanker / tanker_truck), when only one fits; a person for
+    a person, when one of each is left. A thing with no match is left out."""
+    from agentic import chain4                   # lazy: chain4 imports this module
+    free = [str(o.get("object_id") or "") for o in objs if o.get("object_id")]
+    label = {str(o.get("object_id") or ""): str(o.get("label") or "") for o in objs}
+    out: dict[str, str] = {}
+
+    def life(oid: str, lab: dict) -> bool:
+        try:
+            return bool(chain4._is_life(oid, lab))
+        except Exception:
+            return False
+    gt_label = {n["id"]: str(n.get("label") or "") for n in nodes}
+    rules = (
+        lambda g, m: g == m,
+        lambda g, m: bool(_words(gt_label[g])) and _words(gt_label[g]) == _words(label[m]),
+        lambda g, m: bool(_words(gt_label[g])) and bool(_words(label[m])) and (
+            _words(gt_label[g]) <= _words(label[m]) or _words(label[m]) <= _words(gt_label[g])),
+        lambda g, m: life(g, gt_label) and life(m, label),
+    )
+    for rule in rules:
+        for n in nodes:
+            g = n["id"]
+            if g in out:
+                continue
+            fits = [m for m in free if m not in out.values() and rule(g, m)]
+            # as many ground-truth things could claim the same object: only a
+            # one-to-one fit is taken
+            rivals = [x["id"] for x in nodes if x["id"] not in out
+                      and any(rule(x["id"], m) for m in fits)]
+            if len(fits) == 1 and rivals == [g]:
+                out[g] = fits[0]
+    return out
+
+
 def gt_objects(before: Any) -> dict:
-    """What the ground-truth file of the before run says beyond its arrows
+    """What the ground-truth file of the before run says, in the MODEL's ids
     (Sunny, 2026-11-20: "every recognizable instance should be either core
     or spurious"):
 
-      "listed"        every thing the human listed, in the MODEL's ids
-      "same_hazards"  the pairs the human calls one and the same hazard, in
-                      the model's ids; None when the file does not answer
-                      the question at all (an older file)
+      "listed"        every thing the human listed
+      "roles"         {id: "core" | "spurious"}. The human's word (`role` on
+                      the node) wins; without it: a thing with an arrow out
+                      of it, or a person, is core, anything else spurious
+                      (a thing can have an arrow INTO it and still be
+                      spurious: the shed the fire may reach)
+      "same_hazards"  the pairs the human calls one and the same hazard;
+                      None when the file does not answer the question
+      "graph"         the ground-truth graph ({"nodes", "edges"}); None
+                      when there is no readable file
 
-    A ground-truth id is matched to a model id by the id itself, else by a
-    label only one object of the run carries. A thing with no match is left
-    out. Dev-side only: this never reaches a prompt. Never raises."""
-    out: dict = {"listed": [], "same_hazards": None}
+    Dev-side only: this never reaches a prompt. Never raises."""
+    out: dict = {"listed": [], "same_hazards": None, "roles": {}, "graph": None}
     gt = _dict(_dict(before).get("gt"))
     try:
         raw = json.loads((Path(str(gt.get("dir"))) /
@@ -347,21 +396,37 @@ def gt_objects(before: Any) -> dict:
         return out
     raw = _dict(raw)
     objs = [o for o in _list(_dict(before).get("detected_objects")) if isinstance(o, dict)]
-    ids = {str(o.get("object_id") or "") for o in objs}
-    by_label: dict[str, list[str]] = {}
-    for o in objs:
-        by_label.setdefault(str(o.get("label") or "").strip().lower(), []).append(
-            str(o.get("object_id") or ""))
-    to_model: dict[str, str] = {}
-    for n in _list(raw.get("nodes")):
-        if not isinstance(n, dict) or not isinstance(n.get("id"), str):
-            continue
-        same_label = by_label.get(str(n.get("label") or "").strip().lower()) or []
-        if n["id"] in ids:
-            to_model[n["id"]] = n["id"]
-        elif len(same_label) == 1 and same_label[0]:
-            to_model[n["id"]] = same_label[0]
+    nodes = [n for n in _list(raw.get("nodes"))
+             if isinstance(n, dict) and isinstance(n.get("id"), str) and n["id"]]
+    try:
+        to_model = _gt_to_model(nodes, objs)
+    except Exception:
+        to_model = {}
     out["listed"] = sorted(set(to_model.values()))
+    edges = []
+    for e in _list(raw.get("edges")):
+        if isinstance(e, dict):
+            a, b = to_model.get(str(e.get("source"))), to_model.get(str(e.get("target")))
+            if a and b:
+                edges.append({**e, "source": a, "target": b})
+    sources = {e["source"] for e in edges}
+    g_nodes = []
+    for n in nodes:
+        mid = to_model.get(n["id"])
+        if not mid:
+            continue
+        g_nodes.append({**n, "id": mid})
+        said = str(n.get("role") or "").strip().lower()
+        if said in ROLES:
+            out["roles"][mid] = said
+        else:
+            try:
+                from agentic import chain4
+                person = bool(chain4._is_life(mid, {mid: str(n.get("label") or "")}))
+            except Exception:
+                person = False
+            out["roles"][mid] = "core" if (mid in sources or person) else "spurious"
+    out["graph"] = {"nodes": g_nodes, "edges": edges}
     if isinstance(raw.get("same_hazards"), list):
         pairs = []
         for p in raw["same_hazards"]:
@@ -442,6 +507,15 @@ def synthesis(before: dict, tries: list[tuple[dict, dict]], *,
     except Exception:
         gt_haz = set()
     out["gt_listed"], out["gt_same_hazards"] = extra["listed"], extra["same_hazards"]
+    out["gt_extra"] = extra
+    try:
+        # the hazards ground truth gives a weight of their own, by the same
+        # method as the declared side (agentic/declared4.py)
+        from agentic import declared4
+        own = {h for h, w in declared4.should_matter(extra).items() if w > 0}
+        gt_haz = own or gt_haz
+    except Exception:
+        pass
     for one, after in tries or []:
         one = _dict(one)
         picked = str(one.get("target") or "")

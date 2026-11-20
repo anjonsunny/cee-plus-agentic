@@ -88,12 +88,14 @@ def against_ground_truth(cmp: dict, should: dict[str, float], core: Any,
         own = should.get(h) if isinstance(should, dict) else None
         knows = isinstance(own, (int, float)) and not isinstance(own, bool) and own > 0
         # ...unless ground truth names it itself: then it keeps its own word
-        if not is_core and not knows and not r.get("alone_of"):
+        # (also when the human marked it core itself but its weight sits on
+        # the other one: the burning brush, weight on the fire)
+        if not knows and not r.get("alone_of"):
             partners = (gt_grp.get(h, ()) if gt_grp is not None
                         else (r.get("same_as") if isinstance(r.get("same_as"),
                                                               (list, tuple)) else []))
             via = sorted(str(m) for m in partners if str(m) in core and str(m) != h)
-            is_core = bool(via)
+            is_core = is_core or bool(via)
         if tested and r.get("gone_with"):
             # it only went along with another hazard: that try's shift is
             # not its own, so neither core nor spurious can be said
@@ -214,6 +216,90 @@ def declared_together(result: Any, members: Any, graph: str = GRAPH_B) -> float:
     total = _danger(edges, links, labels, weights, fields=fields)
     return round(max(0.0, total - _danger(edges, links, labels, weights,
                                           without=gone, fields=fields)), 3)
+
+
+def _gt_result(extra: Any) -> dict:
+    """The ground-truth graph as a result the weighing code can read."""
+    g = extra.get("graph") if isinstance(extra, dict) else None
+    g = g if isinstance(g, dict) else {}
+    nodes = [n for n in (g.get("nodes") if isinstance(g.get("nodes"), list) else [])
+             if isinstance(n, dict)]
+    graph = {"nodes": nodes, "edges": [e for e in (g.get("edges") if isinstance(
+        g.get("edges"), list) else []) if isinstance(e, dict)]}
+    return {"detected_objects": [{"object_id": n.get("id"), "label": n.get("label"),
+                                  "state": n.get("state")} for n in nodes],
+            "graph_b": graph, "causal_graph": graph, "recommendations": []}
+
+
+def _core(extra: Any) -> set[str]:
+    roles = extra.get("roles") if isinstance(extra, dict) else None
+    return {str(k) for k, v in (roles if isinstance(roles, dict) else {}).items()
+            if v == "core"}
+
+
+def should_matter(extra: Any) -> dict[str, float]:
+    """{hazard: weight} by GROUND TRUTH, measured the same way as the
+    declared side (Sunny, 2026-11-20: "we should be consistent"): the
+    danger the ground-truth graph loses when the hazard is taken out of it.
+    A thing the human calls spurious gets nothing, arrows or not (the shed
+    the fire may reach). `extra` is `intervention4.gt_objects(before)`.
+    {} without a readable graph. Never raises."""
+    try:
+        w = declared(_gt_result(extra))
+    except Exception:
+        return {}
+    core = _core(extra)
+    return {h: v for h, v in w.items() if h in core}
+
+
+def should_matter_together(extra: Any, members: Any) -> float:
+    """The ground-truth weight of a group: its core hazards taken out of the
+    ground-truth graph together. Never raises."""
+    core = _core(extra)
+    ms = [m for m in (members if isinstance(members, (list, tuple, set)) else [])
+          if isinstance(m, str) and m in core]
+    try:
+        return declared_together(_gt_result(extra), ms)
+    except Exception:
+        return 0.0
+
+
+def match_ground_truth(cmp: Any, extra: Any) -> dict:
+    """Ground truth against the shift, the same way declared is compared
+    with it: per group (the hazards one try took out), the ground-truth
+    weight of the group beside the group's shift.
+
+    Returns {"available", "should": {hazard: share over all core hazards},
+    "core": [...], "score": 0..1 or None (needs two groups), "reading":
+    agree / agree in part / differ, "removed": n, "of": m (core hazards
+    with a weight)}. Never raises."""
+    out = {"available": False, "should": {}, "core": sorted(_core(extra)),
+           "score": None, "reading": "", "removed": 0, "of": 0}
+    w = should_matter(extra)
+    if not w:
+        return out
+    out["available"] = True
+    out["should"] = {h: round(v, 3) for h, v in _shares(w, list(w)).items()}
+    groups = [g for g in ((cmp.get("groups") if isinstance(cmp, dict) else None) or [])
+              if isinstance(g, dict) and isinstance(g.get("members"), list)]
+    keys, gt_w, mech = [], {}, {}
+    gone: set[str] = set()
+    for i, g in enumerate(groups):
+        k = f"group {i}"
+        keys.append(k)
+        gt_w[k] = should_matter_together(extra, g["members"])
+        sh = g.get("shift")
+        mech[k] = max(0.0, float(sh)) if isinstance(sh, (int, float)) and not isinstance(
+            sh, bool) else 0.0
+        gone |= {str(m) for m in g["members"]}
+    out["removed"], out["of"] = len([h for h in w if h in gone]), len(w)
+    score = _shared(gt_w, mech, keys)
+    if score is None and len(keys) > 1 and sum(gt_w.values()) and not sum(mech.values()):
+        score = 0.0
+    out["score"] = score
+    out["reading"] = "" if score is None else (
+        "agree" if score >= 0.85 else "agree in part" if score >= 0.60 else "differ")
+    return out
 
 
 def removed_name(before: Any, one: Any, after: Any) -> str:

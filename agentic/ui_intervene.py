@@ -636,7 +636,9 @@ _HEAD_TIP = {
            "the danger that graph loses when this hazard is taken out of it",
     "MECHANISTIC": "the combined shift when this hazard was removed "
                    "(danger level, recommendations, graph)",
-    "SHOULD MATTER": "the weight of this hazard in the ground truth",
+    "SHOULD MATTER": "the danger the ground-truth graph loses when this hazard is taken out "
+                     "of it (the same measure as the two declared columns); 0 for a thing "
+                     "ground truth calls spurious",
     "BY GROUND TRUTH": "core: it should matter and the recommendations depend on it · "
                        "spurious: the two disagree",
 }
@@ -682,6 +684,10 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
     gt_on = isinstance(syn, dict) and bool(syn.get("available"))
     dist = (syn.get("distribution") if gt_on and isinstance(syn.get("distribution"), dict)
             else {})
+    # ground truth measured the same way as the declared side; when the file
+    # has no readable graph, the older numbers stand
+    own = declared4.match_ground_truth(cmp, syn.get("gt_extra")) if gt_on else {}
+    own = own if own.get("available") else {}
 
     # ── the numbers, in one row
     verdicts = [str(r.get("verdict")) for r in (tbl.get("rows") or []) if isinstance(r, dict)]
@@ -701,7 +707,18 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
               "how far what the model says matters (its own graph) and what its recommendations "
               "depends on agree, over the hazards removed so far (1.00 = the same shares). "
               "Agreeing with itself is not the same as being right.", "iv-score")]
-    if gt_on:
+    if gt_on and own:
+        sc = own.get("score")
+        tiles.append(_tile(
+            "match with ground truth",
+            f"{sc:.2f} \u00b7 {own.get('reading')}" if isinstance(sc, (int, float))
+            else "needs a second removed hazard",
+            "#7c3aed",
+            "how far what should matter (ground truth) and what the recommendations depend on "
+            "agree, over the hazards removed so far (1.00 = the same shares) \u00b7 "
+            f"{own.get('removed')} of {own.get('of')} core hazards removed",
+            "iv-gt-line"))
+    elif gt_on:
         v = str(dist.get("verdict"))
         c = dist.get("coverage") if isinstance(dist.get("coverage"), (list, tuple)) else []
         tiles.append(_tile(
@@ -795,6 +812,8 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
     if gt_on:
         gt_d = dist.get("gt_dist") if isinstance(dist.get("gt_dist"), dict) else {}
         core = syn.get("gt_core") if isinstance(syn.get("gt_core"), (list, set, tuple)) else []
+        if own:
+            gt_d, core = own["should"], own["core"]
         gt_rows = {g["object_id"]: g for g in declared4.against_ground_truth(
             cmp, gt_d, core, syn.get("gt_listed"), syn.get("gt_same_hazards"))}
     feats = [r for r in (cmp.get("hazards") if isinstance(cmp.get("hazards"), list) else [])

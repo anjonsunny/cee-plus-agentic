@@ -450,7 +450,9 @@ def test_ground_truth_lists_every_thing_and_its_own_same_hazards(tmp_path):
     for bad in (None, {}, {"gt": None}, {"gt": {"dir": str(tmp_path), "image_filename": "no"}},
                 _gt_before(tmp_path, "{not json"), _gt_before(tmp_path, "[1, 2]"),
                 _gt_before(tmp_path, {"nodes": "x", "same_hazards": "y"})):
-        assert iv4.gt_objects(bad) == {"listed": [], "same_hazards": None}
+        got = iv4.gt_objects(bad)
+        assert got["listed"] == [] and got["same_hazards"] is None and got["roles"] == {}
+        assert not (got["graph"] or {}).get("nodes")
 
 
 def test_a_try_counts_as_the_hazard_ground_truth_has():
@@ -558,3 +560,106 @@ def test_the_score_uses_the_group_weight_not_the_added_one():
     assert by["fire_1"]["says_tested"] == by["brush_1"]["says_tested"] == pytest.approx(
         two["declared_graph"] / total, abs=0.01)
     assert declared4.compare(b, [])["groups"] == []
+
+
+# ── ground truth measured like the declared side; roles written by the human ──
+
+GT_NODES = [{"id": "fire_1", "label": "fire", "role": "core"},
+            {"id": "brush_1", "label": "brush", "role": "core"},
+            {"id": "spill_1", "label": "spill"},                        # no word: arrow out = core
+            {"id": "shed_1", "label": "shed"},                          # no word, arrow in: spurious
+            {"id": "smoke_1", "label": "smoke", "role": "spurious"},    # the human's word wins
+            {"id": "driver_1", "label": "man"},                         # a person: core
+            {"id": "odd_1", "label": "odd", "role": "banana"}]          # not a role: the fallback
+GT_EDGES = [{"source": "fire_1", "target": "driver_1", "effect": "may_harm"},
+            {"source": "fire_1", "target": "shed_1", "effect": "may_spread_to"},
+            {"source": "spill_1", "target": "driver_1", "effect": "may_harm"},
+            {"source": "smoke_1", "target": "driver_1", "effect": "may_harm"},
+            {"source": "ghost_9", "target": "driver_1", "effect": "may_harm"}, None, "x"]
+
+
+def _gt_scene(tmp_path, same=None):
+    import json as _json
+    body = {"nodes": GT_NODES + [None, {"id": 3}], "edges": GT_EDGES}
+    if same is not None:
+        body["same_hazards"] = same
+    (tmp_path / "pic.jpg.gt.json").write_text(_json.dumps(body))
+    objs = ["fire_1", "brush_1", "spill_1", "shed_1", "smoke_1", "man_1", "odd_1"]
+    b = _belief(objs, [(h, "may_harm", "man_1") for h in objs[:3]])
+    return {**b, "threats": [{"object_id": h} for h in ("fire_1", "brush_1", "spill_1", "smoke_1")],
+            "same_hazards": [["brush_1", "fire_1"]],
+            "gt": {"dir": str(tmp_path), "image_filename": "pic.jpg", "status": "verified"}}, objs
+
+
+def test_every_thing_has_a_role_and_a_spurious_thing_may_have_an_arrow(tmp_path):
+    """Sunny, 2026-11-20: "spurious objects might have arrow" (the shed the
+    fire may reach) and "human is also core"."""
+    from agentic import intervention4 as iv4
+    b, _ = _gt_scene(tmp_path)
+    extra = iv4.gt_objects(b)
+    assert extra["roles"] == {"fire_1": "core", "brush_1": "core", "spill_1": "core",
+                              "shed_1": "spurious", "smoke_1": "spurious",
+                              "man_1": "core", "odd_1": "spurious"}
+    w = declared4.should_matter(extra)
+    assert set(w) == {"fire_1", "spill_1"}                             # smoke has an arrow, and 0
+    assert w["fire_1"] > w["spill_1"]                                  # the arrow to the shed too
+    # the brush is core and adds nothing: taken out with the fire, the fire's weight
+    assert declared4.should_matter_together(extra, ["fire_1", "brush_1", "smoke_1"]) == (
+        pytest.approx(w["fire_1"]))
+    assert declared4.should_matter_together(extra, ["smoke_1"]) == 0.0
+    for bad in (None, "x", {}, {"graph": "zz", "roles": 3}, {"graph": {"nodes": [None]}}):
+        assert declared4.should_matter(bad) == {}
+        assert declared4.should_matter_together(bad, ["fire_1"]) == 0.0
+        assert declared4.match_ground_truth({}, bad)["available"] is False
+    assert declared4.should_matter_together(extra, None) == 0.0
+
+
+def test_the_match_with_ground_truth_is_measured_like_declared_vs_mechanistic(tmp_path):
+    from agentic import intervention4 as iv4
+    b, objs = _gt_scene(tmp_path, same=[["fire_1", "brush_1"]])
+    extra = iv4.gt_objects(b)
+    fire = (_try("brush_1", 0.6)[0], _after(objs, ("fire_1", "brush_1", "smoke_1"), ["spill_1"]))
+    c1 = declared4.compare(b, [fire])
+    m1 = declared4.match_ground_truth(c1, extra)
+    assert m1["available"] and m1["score"] is None                     # one group: nothing to compare
+    assert (m1["removed"], m1["of"]) == (1, 2)
+    assert sum(m1["should"].values()) == pytest.approx(1.0, abs=0.01)
+    spill = (_try("spill_1", 0.6)[0], _after(objs, ("spill_1",), ["fire_1", "brush_1", "smoke_1"]))
+    c2 = declared4.compare(b, [fire, spill])
+    m2 = declared4.match_ground_truth(c2, extra)
+    w = declared4.should_matter(extra)
+    share = w["fire_1"] / (w["fire_1"] + w["spill_1"])
+    assert m2["score"] == pytest.approx(min(share, 0.5) + min(1 - share, 0.5), abs=0.01)
+    assert m2["reading"] in ("agree", "agree in part", "differ") and m2["removed"] == 2
+    # on the card: the new tile and bars; the brush reads core with the fire
+    syn = {"available": True, "distribution": {"verdict": "misproportioned", "overlap": 0.1},
+           "gt": {}, "gt_extra": extra, "gt_listed": extra["listed"],
+           "gt_same_hazards": extra["same_hazards"]}
+    card = ui_iv.card_component(c2, {}, syn)
+    tile = _flat(_by_class(card, "iv-gt-line"))
+    assert f"{m2['score']:.2f}" in tile and m2["reading"] in tile and "misproportioned" not in tile
+    rows = {_flat(r).split()[0]: r for r in _by_class(card, "iv-feature")}
+    assert _flat(_by_class(rows["brush_1"], "iv-gt-word")) == "core, as fire_1"
+    assert _flat(_by_class(rows["smoke_1"], "iv-gt-word")) == "not tested alone"
+    # the file cannot be read: the older numbers stand, nothing breaks
+    old = ui_iv.card_component(c2, {}, {**syn, "gt_extra": None})
+    assert "misproportioned" in _flat(_by_class(old, "iv-gt-line"))
+    for bad in ("x", {"graph": None}, {"graph": {"nodes": "n", "edges": 3}, "roles": []}):
+        assert ui_iv.card_component(c2, {}, {**syn, "gt_extra": bad}) is not None
+    assert declared4.match_ground_truth(None, extra)["score"] is None
+    assert declared4.match_ground_truth({"groups": [None, {"members": "x"}, {"members": ["fire_1"],
+                                         "shift": "big"}]}, extra)["available"] is True
+
+
+def test_ground_truth_names_are_matched_one_to_one(tmp_path):
+    from agentic import intervention4 as iv4
+    objs = [{"object_id": "tanker_truck_1", "label": "tanker_truck"},
+            {"object_id": "man_1", "label": "man"}, {"object_id": "tree_1", "label": "tree"},
+            {"object_id": "tree_2", "label": "tree"}]
+    nodes = [{"id": "tanker_1", "label": "tanker"}, {"id": "driver_1", "label": "driver"},
+             {"id": "oak_1", "label": "tree"}]
+    got = iv4._gt_to_model(nodes, objs)
+    assert got["tanker_1"] == "tanker_truck_1"                         # one label inside the other
+    assert got["driver_1"] == "man_1"                                  # a person for the person
+    assert "oak_1" not in got                                          # two trees: no guess
+    assert iv4._gt_to_model([], objs) == {} and iv4._gt_to_model(nodes, []) == {}
