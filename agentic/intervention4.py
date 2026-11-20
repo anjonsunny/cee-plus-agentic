@@ -164,6 +164,9 @@ def frozen_result(record: Any, assessment: Any, stage4: Any,
                          if isinstance(p, list)],
         "pre_intervention_trust": {"score": trust.get("score", 0.0),
                                    "level": trust.get("band", "unknown")},
+        # the picture's size, so boxes of two runs can be compared as
+        # fractions of the picture (agentic/align4.py)
+        "image_size": rec.get("image_size") if isinstance(rec.get("image_size"), list) else None,
     }
 
 
@@ -193,6 +196,17 @@ def result_from_run_dir(run_dir: Path, *, gt_verified: Path | None = None,
     if gt["status"] != "none":
         result["image_filename"] = gt["image_filename"]   # the name the frozen lookup uses
     return result
+
+
+def after_result(before: Any, after_dir: Any) -> dict:
+    """The edited run of a try, in the BEFORE run's names: two runs can
+    hand out the names differently (the floating child is child_2 in one
+    and child_1 in the other), so the same object is recognised by its
+    place in the picture and renamed in a copy (agentic/align4.py). The
+    copy carries `renamed` when anything was. Never raises on a bad run."""
+    from agentic import align4                   # lazy: pure code
+    after = result_from_run_dir(Path(after_dir)) if after_dir else {}
+    return align4.aligned(before, after)
 
 
 def _gt_dir(before: dict, gt_dir: Path | None) -> Path | None:

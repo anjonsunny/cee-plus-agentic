@@ -198,6 +198,36 @@ def _match_column(base: list[dict], after_recs: list[dict], removed: set[str],
                 j = free(i, lambda a: True)
             if j is not None:
                 take(i, j, STAYS if (want == "exact" or threat in removed) else CHANGED)
+    # THE SAME VICTIM UNDER ANOTHER HAZARD WORD (B_pool ui_b3ada51c, Sunny,
+    # 2026-11-20): before, "rescue the child" named the pool as its hazard;
+    # after the edit the model named the child itself. No recommendation
+    # was "about the pool" any more and all three read dropped, though the
+    # rescue was still there. So before a recommendation is called
+    # dropped: is one left that names, AS ITS HAZARD, the very thing this
+    # one protected? That recommendation names no hazard at all, only the
+    # victim, so it is this one, kept. (A recommendation about ANOTHER
+    # hazard for the same victim is another recommendation: smoke -> man
+    # is not kept because fire -> man is still there.)
+    def protects(a: dict, left: frozenset) -> bool:
+        return a["quad"][0] in left
+    for i, rec in enumerate(base):
+        if cells[i] is not None:
+            continue
+        threat, _effect, affected = quads[i]
+        left = affected - removed
+        if threat in removed or not left:
+            continue
+        if any(a["quad"][0] == threat for a in after_recs):
+            continue                            # its hazard still has advice: handled below
+        j = next((j for j, a in enumerate(after_recs)
+                  if j not in used and protects(a, left)), None)
+        k = j if j is not None else next(
+            (k for k, a in enumerate(after_recs) if protects(a, left)), None)
+        if k is not None:
+            if j is not None:
+                used.add(j)
+            cells[i] = {"state": STAYS, "named_removed": False,
+                        "after": after_recs[k]["rec"], "hazard_renamed": True}
     for i, rec in enumerate(base):
         if cells[i] is not None:
             continue
@@ -258,6 +288,9 @@ def impact_detail(rec: Any, cell: Any, n: int) -> dict:
     if state == CHANGED:
         total += IMPACT["target or effect"]
         reasons.append({"text": "target or effect changed", "way": ""})
+    if cell.get("hazard_renamed"):
+        # said, not charged: the recommendation is the same one
+        reasons.append({"text": "same victim, the hazard is no longer named", "way": ""})
     # how soon: later is eased. size: smaller is eased.
     for key, allowed, name, eased_when_up in (("how_soon", _SOON, "how soon", True),
                                               ("size", _SIZE, "size", False)):
@@ -384,6 +417,11 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
         columns.append({
             "index": one.get("index"), "target": one.get("target"),
             "victim": is_victim,
+            # names of the edited run that were matched to this run's by
+            # their place in the picture (agentic/align4.py)
+            "renamed": after.get("renamed") if isinstance(after.get("renamed"), dict) else {},
+            "renamed_new": (after.get("renamed_new")
+                            if isinstance(after.get("renamed_new"), dict) else {}),
             "kind": "dealt with" if one.get("kind") == "dealt with" else "removed",
             "also_removed": [x for x in removed if x != str(one.get("target") or "")],
             "left_behind": left_behind,

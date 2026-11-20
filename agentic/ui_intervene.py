@@ -270,6 +270,34 @@ def plan_try(info: dict, target: str, modality: str, edited_caption: str | None,
             "image_changed": img_changed if modality != "caption" else False}
 
 
+def try_pairs(base_dir: Any, runs_dir: Any, tries: Any) -> tuple[dict, list]:
+    """(before run, [(try, edited run in the before run's names)]) for the
+    measured tries of one run. A try that was measured BEFORE its edited
+    run's names were matched (its saved numbers compared the wrong
+    objects) is measured again here, in memory, and marked."""
+    before = iv4.result_from_run_dir(Path(base_dir))
+    pairs = []
+    for t in tries or []:
+        if not isinstance(t, dict) or not t.get("after_run"):
+            continue
+        after = iv4.after_result(before, Path(runs_dir) / str(t["after_run"]))
+        renamed = after.get("renamed") if isinstance(after, dict) else None
+        if renamed and t.get("renamed") != renamed:
+            try:
+                res = iv4.measure(before, after, str(t.get("target") or ""),
+                                  modality=str(t.get("modality") or "both"),
+                                  caption_changed=bool(t.get("caption_changed")),
+                                  image_changed=bool(t.get("image_changed")))
+                if res.get("signals"):
+                    t = {**t, "signals": res.get("signals"), "verdict": res.get("verdict"),
+                         "summary": iv4.summary(res), "u_check": res.get("u_check"),
+                         "renamed": renamed, "measured_again": True}
+            except Exception:
+                pass
+        pairs.append((t, after))
+    return before, pairs
+
+
 def load_tries(run_dir: Path | None) -> list[dict]:
     if not run_dir:
         return []
@@ -311,12 +339,15 @@ def finish_try(base_dir: Path, after_dir: Path | None, pending: dict,
     }
     if error:
         return {**one, "status": "failed", "why": str(error)}
-    after = iv4.result_from_run_dir(after_dir) if after_dir else {}
+    base = iv4.result_from_run_dir(base_dir)
+    # the edited run in the before run's names (agentic/align4.py)
+    after = iv4.after_result(base, after_dir) if after_dir else {}
+    one["renamed"] = after.get("renamed") or {}
     if not after.get("recommendations") and not after.get("detected_objects"):
         return {**one, "status": "failed",
                 "why": "the after run produced no answer to compare"}
     try:
-        res = iv4.measure(iv4.result_from_run_dir(base_dir), after,
+        res = iv4.measure(base, after,
                           str(pending.get("target") or ""),
                           modality=str(pending.get("modality") or "both"),
                           caption_changed=one["caption_changed"],
@@ -325,7 +356,7 @@ def finish_try(base_dir: Path, after_dir: Path | None, pending: dict,
         return {**one, "status": "failed", "why": f"could not be measured: {exc}"}
     try:
         from agentic import chain4
-        ch = chain4.direction(iv4.result_from_run_dir(base_dir), after)
+        ch = chain4.direction(base, after)
         one["chain"] = {k: ch[k] for k in ("before", "after", "delta", "direction",
                                            "frozen_count")}
         one["signed_shift"] = chain4.signed_shift(res.get("signals"), ch)
@@ -491,6 +522,11 @@ def signed_cell(sg: Any) -> list:
         style={"fontWeight": "800", "color": _DIR_COL.get(word, "#64748b")})]
 
 
+def _align_note(mapping: Any, new: Any = None) -> str:
+    from agentic import align4
+    return align4.note(mapping, new)
+
+
 def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
     """The grounding table: recommendations down, removed hazards across."""
     from agentic.ui_clean import ent_chip
@@ -516,6 +552,12 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
                                 "every hazard stayed",
                           style={"fontWeight": "400", "color": "#64748b"})]
                if c.get("victim") else [])
+            + ([html.Div(align_note, className="iv-renamed",
+                         title="each run names its objects by itself; the same object is "
+                               "recognised by where it is in the picture, and the edited run "
+                               "is shown in this run's names",
+                         style={"fontWeight": "400", "color": "#b45309"})]
+               if (align_note := _align_note(c.get("renamed"), c.get("renamed_new"))) else [])
             + ([html.Div("also missing from the edited picture: " + ", ".join(also),
                          style={"fontWeight": "400", "color": "#94a3b8"})] if also else [])
             # the model called these one hazard; the edit took one and left the other
@@ -1193,9 +1235,7 @@ def result_parts(base_dir: Path | None, runs_dir: Path | None,
     bottom: list = []
     if measured and base_dir:
         try:
-            before = iv4.result_from_run_dir(base_dir)
-            pairs = [(t, iv4.result_from_run_dir(Path(runs_dir) / str(t["after_run"])))
-                     for t in measured]
+            before, pairs = try_pairs(base_dir, runs_dir, measured)
             tbl = grounding4.table(before, pairs)
             for col, (t, after) in zip(tbl["columns"], pairs):
                 try:
@@ -1249,8 +1289,8 @@ def scene_summary(base_dir: Path | None, runs_dir: Path | None) -> dict | None:
     out: dict[str, Any] = {"n": len(tries),
                            "targets": [str(t.get("target")) for t in tries]}
     try:
-        cmp = declared4.compare(iv4.result_from_run_dir(base_dir), [
-            (t, iv4.result_from_run_dir(Path(runs_dir) / str(t["after_run"]))) for t in tries])
+        before, pairs = try_pairs(base_dir, runs_dir, tries)
+        cmp = declared4.compare(before, pairs)
     except Exception:
         return out
     out.update({k: cmp.get(k) for k in ("score", "reading", "tested", "declared",
@@ -1258,9 +1298,7 @@ def scene_summary(base_dir: Path | None, runs_dir: Path | None) -> dict | None:
                                         "done_more", "alarmed")})
     try:
         from agentic import grounding4
-        before = iv4.result_from_run_dir(base_dir)
-        tbl = grounding4.table(before, [
-            (t, iv4.result_from_run_dir(Path(runs_dir) / str(t["after_run"]))) for t in tries])
+        tbl = grounding4.table(before, pairs)
         judged = [str(r.get("verdict")) for r in tbl["rows"] if r.get("verdict") != "untested"]
         out["grounded"] = sum(1 for v in judged if v == "grounded")
         out["judged"] = len(judged)
