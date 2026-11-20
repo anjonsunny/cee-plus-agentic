@@ -692,12 +692,13 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
                                    u_before=ev.get("u_before"),
                                    u_after=ev.get("u_after"))
             for tk in A["tickets"].values():
-                if tk["status"] in ("open", "fixing"):
+                if tk["status"] in ("open", "fixing") and ev.get("reason") != "loop_off":
                     tk["status"] = ("fixed" if ev.get("reason") == "clean"
                                     else "stood")
             stamp = {"clean": "all problems resolved",
                      "no_change": "model stood its ground",
                      "cap_reached": "round cap reached",
+                     "loop_off": "repair loop off: found, not sent back",
                      "model_error": "model unavailable"}.get(
                 ev.get("reason"), ev.get("reason", ""))
             d["activity"] = {"text": f"reflection: {stamp}", "oid": None,
@@ -759,6 +760,7 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
             d["round_in_progress"] = False
             act("Repair", {"clean": "all problems resolved — clean",
                            "no_change": "model stood its ground — stopping",
+                           "loop_off": "repair loop off — problems found, not sent back",
                            "cap_reached": "round cap reached — stopping"}.get(
                 ev.get("reason"), ev.get("reason", "")))
         elif t == "masking_entity":
@@ -790,6 +792,7 @@ def derive(events: list[dict[str, Any]]) -> dict[str, Any]:
                              "oid": None, "busy": True}
         elif t == "repair_stopped":
             verdict = {"clean": "repair clean", "no_change": "model stood its ground",
+                       "loop_off": "repair loop off",
                        "cap_reached": "repair cap reached"}.get(ev.get("reason"), "")
             d["activity"] = {"text": verdict, "oid": None, "busy": False}
         elif t == "entity_bound":
@@ -1035,6 +1038,8 @@ def settings_snapshot(control: Any = None, retrieval: Any = None,
     return {
         "control": control, "retrieval": retrieval, "subject": subject,
         "judges": bool(S4_JUDGES["on"]),
+        # the two loops (Sunny, 2026-11-20): off unless ticked, for speed
+        "repair": bool(LOOPS["repair"]), "reflect": bool(LOOPS["reflect"]),
         "stage2": bool(REASKS["s2"]), "stage4": bool(REASKS["s4"]),
         "concealment": bool(CONCEALMENT["on"]),
         "concealment_motives": list(CONCEALMENT["motives"] or []),
@@ -1082,8 +1087,11 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str,
             from agentic.retrieval import drain_shadow_log
             from agentic.uncertainty import _ollama_explain
             drain_shadow_log()                    # clear any prior run's rows
+            # a settings copy from before the switch existed has no key:
+            # those runs had both loops on
             record = run_perception(image_path, caption=caption,
-                                    out_dir=run_dir, on_event=sink)
+                                    out_dir=run_dir, on_event=sink,
+                                    repair=bool(S.get("repair", True)))
             # Stage 1 (repair P1-P6) quotes rules too, through the same
             # retrieval switch — so in rag/both mode it fills the shadow.
             # Drain it HERE, before Stage 2 runs, or Stage 2's drain would
@@ -1108,6 +1116,7 @@ def start_live_run(image_bytes: bytes, filename: str, caption: str,
                 str(image_path), record, on_event=sink,
                 n_probes=DEFAULT_N_PROBES if S["stage2"] else 0,
                 explain_fn=_ollama_explain,
+                reflect=bool(S.get("reflect", True)),
                 runoff_judge_fn=_judge)
             # Surface the RAG shadow (only populated in rag/both mode): the
             # exact-key vs RAG top-1 comparison for the rules this run used.
@@ -1461,7 +1470,7 @@ def rail_component(d: dict[str, Any], mode: str = "detailed") -> html.Div:
             stood = sum(1 for v in d["violations"].values() if v["status"] == "stood")
             open_ = n_v - fixed - stood
             pips = "".join("●" if i < d["rounds_used"] else "○" for i in range(2))
-            stamp = {"clean": "CLEAN", "no_change": "STOOD GROUND",
+            stamp = {"clean": "CLEAN", "no_change": "STOOD GROUND", "loop_off": "LOOP OFF",
                      "cap_reached": "CAP REACHED", "skipped": "SKIPPED", None: ""}.get(
                 d["stop_reason"], "")
             if n_v:
@@ -6153,9 +6162,20 @@ def _picked(name: str, ticked, total: int):
     return f"{name}: {len(ticked)} of {total}"
 
 
+def loops_chip(loops: Any) -> Any:
+    """The chip that says which of the two loops this run will use."""
+    on = [n for v, n in (("repair", "perception repair"), ("reflect", "assessment reflection"))
+          if v in (loops if isinstance(loops, (list, tuple)) else [])]
+    if len(on) == 2:
+        return html.Span("loops: both on", className="set-chip")
+    if on:
+        return html.Span(f"loops: {on[0]} only", className="set-chip")
+    return html.Span("loops off (faster)", className="set-chip quiet")
+
+
 def settings_summary(control, retrieval, subject, reasks, judges,
                      concealment, env, sandbagging, sycophancy=None,
-                     env_lines=None) -> list:
+                     env_lines=None, loops=None) -> list:
     """The run-settings line as chips (html.Span), from the toggle values.
     Pure: no app state. A slow choice gets an amber chip that says how much
     slower ("about 1 hour", "about 3x slower"). With nothing extra ticked
@@ -6173,6 +6193,7 @@ def settings_summary(control, retrieval, subject, reasks, judges,
     look = {"rulebook": "exact", "rag": "RAG", "both": "both"}.get(
         retrieval, str(retrieval))
     chips.append(html.Span(f"rule lookup: {look}", className="set-chip"))
+    chips.append(loops_chip(loops))
 
     extra = []
     if judges == "on":
@@ -6298,6 +6319,18 @@ app.layout = html.Div([
                 # On the 27B subject each re-ask is ~80 s and the three sets of five
                 # are about half a run. Off by default; the pathology probes run
                 # either way and say when their baseline was a single answer.
+                # The two loops (Sunny, 2026-11-20): a box each, so a run can
+                # skip them for speed. Tick = on; unticked by default like every
+                # other box here. The checks of the perception loop still run
+                # and are shown when it is off; the model is not asked again.
+                html.Div([
+                    html.Span("loops", className="ctl-lbl"),
+                    dcc.Checklist(
+                        id="loops-mode", value=[], inline=True,
+                        options=[{"label": " perception repair", "value": "repair"},
+                                 {"label": " assessment reflection", "value": "reflect"}],
+                        className="ctl-toggle"),
+                ], className="ctl-group"),
                 html.Div([
                     html.Span("re-asks", className="ctl-lbl"),
                     dcc.Checklist(
@@ -6608,15 +6641,16 @@ app.clientside_callback(
               Input("env-conditions", "value"),
               Input("sandbagging-motives", "value"),
               Input("sycophancy-probes", "value"),
-              Input("env-lines", "value"))
+              Input("env-lines", "value"),
+              Input("loops-mode", "value"))
 def update_settings_summary(control, retrieval, subject, reasks, judges,
                             concealment, env, sandbagging, sycophancy=None,
-                            env_lines=None):
+                            env_lines=None, loops=None):
     """Keep the folded run-settings line in step with the toggles."""
     return ([html.Span("run settings", className="set-head")]
             + settings_summary(control, retrieval, subject, reasks, judges,
                                concealment, env, sandbagging, sycophancy,
-                               env_lines))
+                               env_lines, loops))
 
 
 @app.callback(Output("upload-cache", "data"), Output("upload", "children"),
@@ -6969,12 +7003,14 @@ def refresh_replay_options(_run_id, n, current):
               State("sycophancy-probes", "value"),
               State("env-conditions", "value"),
               State("env-lines", "value"),
+              State("loops-mode", "value"),
               prevent_initial_call=True)
 def start_run(_clicks, replay_path, cached, caption,
               control_mode, retrieval_choice, judges_choice="off",
               subject_choice=None, reasks_choice=None,
               concealment_motives=None, sandbagging_motives=None,
-              sycophancy_probes=None, env_conditions=None, env_lines=None):
+              sycophancy_probes=None, env_conditions=None, env_lines=None,
+              loops_choice=None):
     # Apply the on-screen toggles for this run (in-process override).
     from agentic.graph_live import set_control
     from agentic.retrieval import set_retrieval
@@ -6982,6 +7018,8 @@ def start_run(_clicks, replay_path, cached, caption,
     set_retrieval(retrieval_choice)
     S4_JUDGES["on"] = (judges_choice == "on")
     _models.set_subject(subject_choice)
+    LOOPS["repair"] = "repair" in (loops_choice or [])
+    LOOPS["reflect"] = "reflect" in (loops_choice or [])
     REASKS["s2"] = "s2" in (reasks_choice or [])
     REASKS["s4"] = "s4" in (reasks_choice or [])
     picked = list(concealment_motives or [])
@@ -7016,6 +7054,9 @@ S4_JUDGES: dict[str, bool] = {"on": False}
 
 # The on-screen "re-asks" switches, one per stage, applied at launch.
 REASKS: dict[str, bool] = {"s2": False, "s4": False}
+# The two loops, applied at launch: tick = on, unticked by default like the
+# other boxes (Sunny, 2026-11-20: "all the other boxes are opposite").
+LOOPS: dict[str, bool] = {"repair": False, "reflect": False}
 
 # The on-screen "concealment" switch, applied at launch.
 CONCEALMENT: dict[str, Any] = {"on": False, "motives": []}

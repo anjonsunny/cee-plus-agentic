@@ -227,6 +227,9 @@ def after_settings(base_events: list[dict]) -> dict:
         "control": rs.get("control"), "retrieval": rs.get("retrieval"),
         "subject": rs.get("subject") or started.get("subject_model"),
         "judges": bool(rs.get("judges")) if rs else False,
+        # the two loops, as the before run had them: a run recorded before
+        # the switch existed had both on
+        "repair": bool(rs.get("repair", True)), "reflect": bool(rs.get("reflect", True)),
         "stage2": bool(rs.get("stage2", reasks.get("stage2"))),
         "stage4": bool(rs.get("stage4", reasks.get("stage4"))),
         "concealment": False, "concealment_motives": [],

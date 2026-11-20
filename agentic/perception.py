@@ -911,6 +911,20 @@ def run_perception(
         )
         repair_trace = trace.model_dump()
         stage_done("Repair", stopped=trace.stopped_reason)
+    elif not repair and source == "vlm":
+        # The loop is switched OFF for this run (speed). The checks still
+        # run and what they find is still reported; the model is simply not
+        # asked again, so nothing is repaired and nothing is hidden.
+        from agentic.repair_loop import detect_violations
+        try:
+            found = detect_violations(entities, caption)
+        except Exception:
+            found = []
+        for v in found:
+            emit("violation_found", round=1, **v.model_dump())
+        emit("repair_stopped", reason="loop_off" if found else "clean", rounds=0,
+             remaining=[v.model_dump() for v in found])
+        stage_done("Repair", stopped="loop_off" if found else "clean")
     else:
         stage_done("Repair", stopped="skipped")
 

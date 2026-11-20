@@ -845,6 +845,12 @@ def run_settings_line(d: dict) -> Any | None:
     syc = [n for k, n in (("hint", "leading hint"), ("readers", "readers")) if S.get(k)]
     if syc:
         parts.append("sycophancy: " + ", ".join(syc))
+    # the two loops (2026-11-20): a run recorded before the switch existed
+    # had both on and says nothing; a newer run says which are off
+    off = [n for k, n in (("repair", "perception repair"), ("reflect", "assessment reflection"))
+           if k in S and not S.get(k)]
+    if off:
+        parts.append("loops off: " + ", ".join(off))
     return html.Div(
         [html.Span("this run: ", style={"fontWeight": "700", "color": "#64748b"}),
          html.Span(" · ".join(parts) if parts else "no extra probes")],
