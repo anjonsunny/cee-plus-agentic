@@ -950,3 +950,16 @@ def test_the_title_counts_hazards_and_victims_apart_and_the_key_names_amber():
                           {"value": 0.03, "direction": "eased",
                            "reading": {"size": 0.7, "way": "redirects"}})
     assert line.endswith(": redirects, changed 0.70 \u00b7 danger level -1")
+
+
+def test_a_feature_name_its_label_and_its_state_stay_on_one_line():
+    b, objs = _pair_smoke_scene()
+    after = _after(objs, ("fire_1", "brush_1", "smoke_1"), ["spill_1"])
+    c = declared4.compare(b, [(_try("brush_1", 0.6)[0], after)])
+    card = ui_iv.card_component(c, {})
+    for row in _by_class(card, "iv-feature") + _by_class(card, "iv-victim"):
+        (name,) = _by_class(row, "iv-name")
+        assert name.style["whiteSpace"] == "nowrap"
+        assert _flat(name).split()[1] in ("hazard", "victim")
+        # the note is under the name, not inside its line
+        assert "same hazard as" not in _flat(name) and "gone with" not in _flat(name)

@@ -985,10 +985,11 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
             way = ("" if not isinstance(sh, (int, float)) or isinstance(sh, bool) else
                    "eased" if sh > 0 else "escalated" if sh < 0 else "unchanged")
             td = {**_TD, "borderTop": "2px solid #cbd5e1"} if k == 0 else _TD
-            tds = [html.Td([ent_chip(oid, "#f97316"), kind("victim")]
-                           + ([html.Span(" \u00b7 " + state, className="iv-state",
-                                         style={"color": "#64748b"})] if state else []),
-                           style=td),
+            tds = [html.Td(html.Div(
+                [ent_chip(oid, "#f97316"), kind("victim")]
+                + ([html.Span(" \u00b7 " + state, className="iv-state",
+                              style={"color": "#64748b"})] if state else []),
+                className="iv-name", style={"whiteSpace": "nowrap"}), style=td),
                    html.Td(_bar(r.get("says_advice"), "#64748b"), style=td),
                    html.Td(_bar(r.get("says"), "#334155"), style=td),
                    html.Td(mech_cell(r) if r.get("does") is not None
@@ -1028,9 +1029,13 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
             alone = [str(x) for x in (r.get("alone_of") or [])]
             same = [str(x) for x in (r.get("same_as") or [])]
             state = str(r.get("state") or "")
-            tds = [html.Td([ent_chip(oid, "#ef4444"), kind("hazard")]
-                           + ([html.Span(" \u00b7 " + state, className="iv-state",
-                                         style={"color": "#64748b"})] if state else [])
+            # the name, its label and its state stay on ONE line; any note
+            # (same hazard as / gone with) goes on the line under it
+            tds = [html.Td([html.Div(
+                [ent_chip(oid, "#ef4444"), kind("hazard")]
+                + ([html.Span(" \u00b7 " + state, className="iv-state",
+                              style={"color": "#64748b"})] if state else []),
+                className="iv-name", style={"whiteSpace": "nowrap"})]
                            + ([html.Div("removed alone; the model calls it the same hazard as "
                                         + ", ".join(alone), className="iv-alone",
                                         style={"fontSize": "10px", "color": "#b45309"})]
