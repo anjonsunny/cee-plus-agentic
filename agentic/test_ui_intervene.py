@@ -1180,10 +1180,13 @@ def test_said_more_done_more_and_more_alarmed_are_named():
     assert c["does_least"] == "fire_1"
     by = {r["object_id"]: r for r in c["hazards"]}
     assert by["fire_1"]["reading"] == d.SAID_MORE and by["spill_1"]["reading"] == d.DONE_MORE
-    # removing it made the answer MORE alarmed: it counts as depending on it not at all
+    # removing it made the answer MORE alarmed: it is named, and it still counts
+    # as depending on it (how much is one thing, which way another: 2026-11-20)
     c = d.compare(D_BEFORE, [_try("fire_1", -0.5), _try("spill_1", 0.6)])
     assert c["alarmed"] == ["fire_1"]
-    assert {r["object_id"]: r["does"] for r in c["hazards"]}["fire_1"] == 0.0
+    fire = {r["object_id"]: r for r in c["hazards"]}["fire_1"]
+    assert fire["does"] > 0 and fire["way"] == d.ESCALATES and fire["shift"] > 0
+    assert fire["signed"] < 0                                          # the old signed number, kept
     # every declared hazard removed: no longer provisional
     full = d.compare(D_BEFORE, [_try(h, 0.3) for h in ("fire_1", "spill_1", "tanker_1",
                                                        "brush_1")])
@@ -1352,8 +1355,8 @@ def test_the_card_shows_each_feature_declared_beside_mechanistic():
     rows = _by_class(card, "iv-feature")
     assert [_flat(r).split()[0] for r in rows] == ["spill_1", "fire_1", "tanker_1", "brush_1"]
     by = {_flat(r).split()[0]: r for r in rows}
-    assert _flat(_by_class(by["fire_1"], "iv-role")) == "shifts emergency responses"
-    assert _flat(_by_class(by["spill_1"], "iv-role")) == "shifts emergency responses"
+    assert _flat(_by_class(by["fire_1"], "iv-role")) == "eases emergency responses"
+    assert _flat(_by_class(by["spill_1"], "iv-role")) == "eases emergency responses"
     assert _by_class(by["fire_1"], "iv-role")[0].style["color"] == "#16a34a"      # eased: green
     assert "not removed yet" in _flat(by["tanker_1"])    # declared bars, no mechanistic bar
     assert _flat(_by_class(by["tanker_1"], "iv-role")) == ""
@@ -1534,7 +1537,8 @@ def test_the_feature_row_says_one_phrase_coloured_by_the_direction_of_the_shift(
     rows = {_flat(r).split()[0]: r for r in _by_class(card, "iv-feature")}
     (fire,), (spill,), (brush,) = (_by_class(rows[h], "iv-role")
                                    for h in ("fire_1", "spill_1", "brush_1"))
-    assert _flat(fire) == _flat(spill) == "shifts emergency responses"
+    assert _flat(fire) == "eases emergency responses"
+    assert _flat(spill) == "escalates emergency responses"
     assert fire.style["color"] == "#16a34a" and getattr(fire, "data-way") == "eased"
     assert spill.style["color"] == "#b91c1c" and getattr(spill, "data-way") == "escalated"
     assert _flat(brush) == "does not shift emergency responses"

@@ -609,7 +609,33 @@ def _bar(v: Any, col: str) -> Any:
         style={"whiteSpace": "nowrap"})
 
 
-SHIFTS, NO_SHIFT = "shifts emergency responses", "does not shift emergency responses"
+NO_SHIFT = "does not shift emergency responses"
+# one phrase per row: which way the emergency responses went (the bar
+# beside it says how much). data-way keeps the older words.
+WAY_PHRASE = {"eases": ("eases emergency responses", "eased", "#16a34a"),
+              "escalates": ("escalates emergency responses", "escalated", "#b91c1c"),
+              "redirects": ("redirects emergency responses", "redirected", "#b45309"),
+              "no change": (NO_SHIFT, "unchanged", "#94a3b8")}
+WAY_TIP = {"eases": "removing it eased the emergency responses: recommendations were dropped, "
+                    "or came later or smaller",
+           "escalates": "removing it escalated the emergency responses: recommendations came "
+                        "sooner or bigger",
+           "redirects": "removing it redirected the emergency responses: recommendations were "
+                        "kept but aimed at something else",
+           "no change": "removing it did not shift the emergency responses"}
+
+
+def way_cell(r: Any, td: dict) -> Any:
+    """The phrase cell of a feature row, with the counts on hover."""
+    r = r if isinstance(r, dict) else {}
+    phrase, old, col = WAY_PHRASE.get(str(r.get("way")), ("", "", "#94a3b8"))
+    counts = r.get("counts") if isinstance(r.get("counts"), dict) else {}
+    said = " \u00b7 ".join(f"{n} {k}" for k, n in counts.items()
+                           if isinstance(n, int) and not isinstance(n, bool) and n)
+    tip = WAY_TIP.get(str(r.get("way")), "")
+    return html.Td(phrase, className="iv-role", **{"data-way": old},
+                   title=(tip + (" \u2014 " + said if said else "")) if phrase else "",
+                   style={**td, "fontWeight": "700", "color": col})
 
 
 def _parts_line(parts: Any) -> Any:
@@ -907,11 +933,7 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
                 tds.append(html.Td(_bar(g.get("should"), "#7c3aed") if g.get("listed")
                                    else html.Span("not in ground truth", style=quiet),
                                    style=td))
-            tds.append(html.Td(
-                SHIFTS if way in ("eased", "escalated") else NO_SHIFT if way else "",
-                className="iv-role", **{"data-way": way},
-                style={**td, "fontWeight": "700",
-                       "color": {"eased": "#16a34a", "escalated": "#b91c1c"}.get(way, "#94a3b8")}))
+            tds.append(way_cell(r, td))
             if gt_on:
                 word = str(g.get("word") or "")
                 short, why = _GT_SHORT.get(word, (word, ""))
@@ -978,20 +1000,9 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
                                    else _bar(g.get("should"), "#7c3aed") if named
                                    else html.Span("not in ground truth", style=quiet),
                                    style=_TD))
-            # one phrase, coloured by the direction of the combined shift
-            # (Sunny, 2026-11-17: no separate parts, no label variants)
-            sh = r.get("shift")
-            way = ("" if not isinstance(sh, (int, float)) else
-                   "eased" if sh > 0 else "escalated" if sh < 0 else "unchanged")
-            tds.append(html.Td(
-                SHIFTS if way in ("eased", "escalated") else NO_SHIFT if way else "",
-                className="iv-role", **{"data-way": way},
-                title={"eased": "removing it eased the emergency responses",
-                       "escalated": "removing it escalated the emergency responses",
-                       "unchanged": "removing it did not shift the emergency responses"
-                       }.get(way, ""),
-                style={**_TD, "fontWeight": "700",
-                       "color": {"eased": "#16a34a", "escalated": "#b91c1c"}.get(way, "#94a3b8")}))
+            # one phrase: which way the responses went (eases / escalates /
+            # redirects); the mechanistic bar beside it says how much
+            tds.append(way_cell(r, _TD))
             if gt_on:
                 word = str(g.get("word") or "")
                 short, why = _GT_SHORT.get(word, (word, ""))

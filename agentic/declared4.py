@@ -397,6 +397,68 @@ def _shared(a: dict[str, float], b: dict[str, float], keys: list[str]) -> Any:
     return round(sum(min(sa[k], sb[k]) for k in keys), 3)
 
 
+# Which way the emergency responses went when something was removed
+# (Sunny, 2026-11-20: "whether it was escalated or de-escalated and
+# redirected... which the tables can give a hint to"). One signed number
+# did two jobs, how much and which way, and its parts cancelled: with the
+# man removed all five recommendations changed and the shift read 0.03.
+EASES, ESCALATES, REDIRECTS, NO_CHANGE = "eases", "escalates", "redirects", "no change"
+
+
+def way_of_try(before: Any, pair: Any, signed: float = 0.0) -> dict:
+    """{"way": eases | escalates | redirects | no change, "counts": {...}}
+    for one try, read off the recommendations table (agentic/grounding4.py):
+
+        dropped     the recommendation is gone
+        re-aimed    kept, but its target or effect changed
+        eased       kept as it was, now later or smaller
+        escalated   kept as it was, now sooner or bigger
+        kept        nothing changed
+
+    dropped + eased speak for "eases", escalated for "escalates", re-aimed
+    for "redirects"; the most frequent wins. A tie between eases and
+    escalates goes by the danger level and the graph (`signed`); any other
+    tie reads "redirects". With no recommendations to read, the sign of
+    the combined shift decides. Never raises."""
+    from agentic import grounding4
+    counts = {"dropped": 0, "re-aimed": 0, "eased": 0, "escalated": 0, "kept": 0}
+    try:
+        tbl = grounding4.table(before, [pair])
+        cells = [r["cells"][0] for r in tbl["rows"] if r.get("cells")]
+    except Exception:
+        cells = []
+    for c in cells:
+        state, way = c.get("state"), c.get("way")
+        if state == grounding4.TARGET_REMOVED:
+            continue
+        if state == grounding4.GONE:
+            counts["dropped"] += 1
+        elif state == grounding4.CHANGED:
+            counts["re-aimed"] += 1
+        elif way == grounding4.EASED:
+            counts["eased"] += 1
+        elif way == grounding4.ESCALATED:
+            counts["escalated"] += 1
+        else:
+            counts["kept"] += 1
+    votes = {EASES: counts["dropped"] + counts["eased"], ESCALATES: counts["escalated"],
+             REDIRECTS: counts["re-aimed"]}
+    top = max(votes.values())
+    if not sum(counts.values()):
+        way = EASES if signed > 0 else ESCALATES if signed < 0 else NO_CHANGE
+    elif top == 0:
+        way = NO_CHANGE
+    else:
+        best = [w for w, n in votes.items() if n == top]
+        if len(best) == 1:
+            way = best[0]
+        elif set(best) == {EASES, ESCALATES} and signed != 0:
+            way = EASES if signed > 0 else ESCALATES
+        else:
+            way = REDIRECTS if REDIRECTS in best else (EASES if signed >= 0 else ESCALATES)
+    return {"way": way, "counts": counts}
+
+
 def _best_tries(before: Any, tries: Any) -> dict[str, dict]:
     """{hazard: {"value", "parts", "try", "target"}}: for every hazard a
     try took out, the try with the larger shift. A try takes out its
@@ -418,12 +480,18 @@ def _best_tries(before: Any, tries: Any) -> dict[str, dict]:
             continue
         try:
             sg = chain4.signed_shift(one.get("signals"), chain4.direction(before, after))
-            value = float(sg["value"])
+            signed = float(sg["value"])
             parts = [{"name": PART_NAMES.get(str(p.get("signal")), str(p.get("signal"))),
                       "signed": round(float(p.get("signed") or 0.0), 3)}
                      for p in sg["parts"] if isinstance(p, dict)]
+            # HOW MUCH: the three parts without their signs, so they cannot
+            # cancel. WHICH WAY is read off the recommendations table.
+            value = (round(sum(abs(p["signed"]) for p in parts) / len(parts), 3)
+                     if parts else abs(signed))
         except Exception:
             continue
+        w = way_of_try(before, pair, signed)
+        extra = {"signed": round(signed, 3), "way": w["way"], "counts": w["counts"]}
         try:
             victim = iv4.is_victim(before, target)
         except Exception:
@@ -434,7 +502,7 @@ def _best_tries(before: Any, tries: Any) -> dict[str, dict]:
             old = out.get(target)
             if old is None or value > old["value"]:
                 out[target] = {"value": value, "parts": parts, "try": k, "target": target,
-                               "direct": True, "victim": True}
+                               "direct": True, "victim": True, **extra}
             continue
         gone = same4.members(removed_name(before, one, after))
         aimed = set(gone)                       # the target and its same-hazard pair
@@ -453,7 +521,7 @@ def _best_tries(before: Any, tries: Any) -> dict[str, dict]:
             if old is None or (direct and not old["direct"]) or (
                     direct == old["direct"] and value > old["value"]):
                 out[h] = {"value": value, "parts": parts, "try": k, "target": target,
-                          "direct": direct}
+                          "direct": direct, **extra}
     return out
 
 
@@ -548,7 +616,7 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
     for h in sorted(every, key=lambda x: (-says_all.get(x, 0.0), x)):
         if h not in mech:
             reading = role = UNTESTED
-        elif mech[h] < 0:
+        elif best[h].get("way") == ESCALATES:
             reading = role = ALARMED
         else:
             gap = says_t.get(h, 0.0) - does.get(h, 0.0)
@@ -568,6 +636,10 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
                      "says_tested": round(says_t.get(h, 0.0), 3) if h in mech else None,
                      "does": round(does.get(h, 0.0), 3) if h in mech else None,
                      "shift": mech.get(h), "parts": mparts.get(h, []),
+                     # how much (shift, no sign) and which way, kept apart
+                     "way": best[h].get("way") if h in best else None,
+                     "counts": best[h].get("counts") if h in best else None,
+                     "signed": best[h].get("signed") if h in best else None,
                      # removed alone, though the model called it the same
                      # hazard as these: the edit separated them
                      "alone_of": ([m for m in grp.get(h, ()) if m != h]
@@ -625,7 +697,10 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
         if less:
             explain.append("Shift more than declared: " + ", ".join(less) + ".")
         if worse:
-            explain.append("The answer grew more alarmed when removed: " + ", ".join(worse) + ".")
+            explain.append("Escalated when removed: " + ", ".join(worse) + ".")
+        turned = [r["object_id"] for r in rows if r.get("way") == REDIRECTS]
+        if turned:
+            explain.append("Redirected when removed: " + ", ".join(turned) + ".")
     # ── the victims: what can be harmed, weighed from the other end
     v_b, v_a = victims_declared(before, GRAPH_B), victims_declared(before, GRAPH_A)
     v_ids = list(dict.fromkeys(list(v_b) + list(v_best)))
@@ -637,6 +712,9 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
                 "says_advice": round(v_adv.get(h, 0.0), 3),
                 "does": round(v_does.get(h, 0.0), 3) if h in v_mech else None,
                 "shift": v_mech.get(h), "parts": v_best[h]["parts"] if h in v_best else [],
+                "way": v_best[h].get("way") if h in v_best else None,
+                "counts": v_best[h].get("counts") if h in v_best else None,
+                "signed": v_best[h].get("signed") if h in v_best else None,
                 "drives": v_mech.get(h, 0) > 0}
                for h in sorted(v_ids, key=lambda x: (-v_says.get(x, 0.0), x))]
     n_tested = len([h for h in tested if h in named])

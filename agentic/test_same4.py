@@ -322,7 +322,7 @@ def test_a_hazard_that_went_with_the_removed_one_carries_the_same_shift():
     rows = {_flat(r).split()[0]: _flat(r) for r in
             _by_class(ui_iv.card_component(c, {}), "iv-feature")}
     assert "gone with fire_1" in rows["smoke_1"] and "gone with" not in rows["fire_1"]
-    assert "shifts emergency responses" in rows["smoke_1"]
+    assert "eases emergency responses" in rows["smoke_1"]
 
 
 def test_removing_it_by_itself_later_is_its_own_test_and_wins():
@@ -735,7 +735,7 @@ def test_a_try_that_took_out_a_victim_is_its_own_test_and_touches_no_hazard_scor
     card = ui_iv.card_component(c, {})
     rows = {_flat(r).split()[0]: _flat(r) for r in _by_class(card, "iv-victim")}
     assert set(rows) == {"man_1", "car_1", "dog_1"}
-    assert "shifts emergency responses" in rows["man_1"] and "not removed yet" in rows["car_1"]
+    assert "eases emergency responses" in rows["man_1"] and "not removed yet" in rows["car_1"]
     # one table: the victim rows are in the feature table, each row labelled
     assert len(_by_class(card, "iv-features")) == 1 and _by_class(card, "iv-victims") == []
     table = _by_class(card, "iv-features")[0]
@@ -811,3 +811,75 @@ def test_a_victim_the_ground_truth_file_lists_without_arrows_is_not_called_missi
     assert "not in ground truth" in rows["tree_1"]                     # the file does not have it
     for bad in (None, "x", [None, 3]):
         assert ui_iv.card_component(declared4.compare(b, []), {}, {**syn, "gt_listed": bad})
+
+
+# ── how much, and which way: eases / escalates / redirects ──
+
+def _recs_scene():
+    objs = ["fire_1", "spill_1", "man_1", "car_1"]
+    arrows = [("fire_1", "may_harm", "man_1"), ("spill_1", "may_harm", "man_1")]
+    b = _belief(objs, arrows, arrows)
+    return {**b, "threats": [{"object_id": "fire_1"}, {"object_id": "spill_1"}],
+            "recommendations": [_rec(1, "fire_1", ["man_1"], "Move man_1 away from fire_1."),
+                                _rec(2, "spill_1", ["man_1"], "Keep man_1 clear of spill_1."),
+                                _rec(3, "fire_1", ["man_1"], "Shield man_1 from fire_1.")]}, objs
+
+
+def _mixed_try(target):
+    """A try whose three parts point in different ways (they used to cancel)."""
+    return {"target": target, "signals": {
+        "hazard_shift": 0.1, "graph_shift": 1.0, "recommendation_shift": 1.0,
+        "content_shift": 0.7, "hazard_level_delta": -1,
+        "rec_direction": "escalated", "graph_direction": "de-escalated"}}
+
+
+def test_removing_a_victim_reads_redirects_and_its_size_does_not_cancel():
+    """Sunny, 2026-11-20, C_tanker ui_2345d3fc: the man was removed, all
+    five recommendations changed, and the row read a shift of 0.03."""
+    b, objs = _recs_scene()
+    after = {**_after(objs, ("man_1",), ["fire_1", "spill_1"]),
+             "recommendations": [_rec(1, "fire_1", ["car_1"], "Tow car_1 away from fire_1."),
+                                 _rec(2, "spill_1", ["car_1"], "Boom around spill_1."),
+                                 _rec(3, "fire_1", ["car_1"], "Wet down car_1.")]}
+    c = declared4.compare(b, [(_mixed_try("man_1"), after)])
+    man = {v["object_id"]: v for v in c["victims"]}["man_1"]
+    assert man["way"] == declared4.REDIRECTS
+    assert man["counts"]["re-aimed"] == 3 and man["counts"]["dropped"] == 0
+    assert man["shift"] == pytest.approx(0.7, abs=0.01)                # how much: no sign
+    assert abs(man["signed"]) < man["shift"]                           # the old number cancelled
+    card = ui_iv.card_component(c, {})
+    row = [r for r in _by_class(card, "iv-victim") if _flat(r).startswith("man_1")][0]
+    cell = _by_class(row, "iv-role")[0]
+    assert _flat(cell) == "redirects emergency responses" and cell.style["color"] == "#b45309"
+    assert getattr(cell, "data-way") == "redirected" and "3 re-aimed" in cell.title
+
+
+def test_the_way_is_read_off_the_recommendations_table():
+    b, objs = _recs_scene()
+    one = _mixed_try("fire_1")
+    # the fire is gone: its two recommendations are dropped, the spill's stays
+    gone = {**_after(objs, ("fire_1",), ["spill_1"]),
+            "recommendations": [_rec(1, "spill_1", ["man_1"], "Keep man_1 clear of spill_1.")]}
+    w = declared4.way_of_try(b, (one, gone))
+    assert w["way"] == declared4.EASES and w["counts"]["dropped"] == 2 and w["counts"]["kept"] == 1
+    # nothing changed at all
+    same = {**_after(objs, (), ["fire_1", "spill_1"]), "recommendations": b["recommendations"]}
+    assert declared4.way_of_try(b, ({"target": "tree_9"}, same))["way"] == declared4.NO_CHANGE
+    # kept, but sooner: escalates
+    def soon(recs, word):
+        return [{**r, "structured_reasoning": {**r["structured_reasoning"], "how_soon": word}}
+                for r in recs]
+    b2 = {**b, "recommendations": soon(b["recommendations"], "later")}
+    a2 = {**same, "recommendations": soon(b["recommendations"], "now")}
+    assert declared4.way_of_try(b2, ({"target": "tree_9"}, a2))["way"] == declared4.ESCALATES
+    assert declared4.way_of_try(a2, ({"target": "tree_9"}, b2))["way"] == declared4.EASES
+    # no recommendations to read: the sign of the combined shift decides
+    bare = {**b, "recommendations": []}
+    assert declared4.way_of_try(bare, (one, gone), 0.4)["way"] == declared4.EASES
+    assert declared4.way_of_try(bare, (one, gone), -0.4)["way"] == declared4.ESCALATES
+    assert declared4.way_of_try(bare, (one, gone), 0.0)["way"] == declared4.NO_CHANGE
+    for bad in (None, "x", (1,), ({"target": 3}, None), ("a", "b", "c")):
+        assert declared4.way_of_try(b, bad)["way"] in (declared4.EASES, declared4.NO_CHANGE)
+        assert declared4.way_of_try(None, bad)["way"] == declared4.NO_CHANGE
+    assert ui_iv.way_cell(None, {}) is not None
+    assert _flat(ui_iv.way_cell({"way": "banana", "counts": "x"}, {})) == ""
