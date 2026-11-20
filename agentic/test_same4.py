@@ -883,3 +883,70 @@ def test_the_way_is_read_off_the_recommendations_table():
         assert declared4.way_of_try(None, bad)["way"] == declared4.NO_CHANGE
     assert ui_iv.way_cell(None, {}) is not None
     assert _flat(ui_iv.way_cell({"way": "banana", "counts": "x"}, {})) == ""
+
+
+# ── the shift over all recommendations, beside the count ──
+
+def test_the_tile_says_how_much_the_recommendations_changed_named_and_other():
+    """Sunny, 2026-11-20: "the total shift considering all the recs we
+    should also show that beside count"."""
+    from agentic import grounding4 as g
+    rows = [{"cells": [{"impact": 1.0, "named_removed": True},
+                       {"impact": 0.6, "named_removed": True},
+                       {"impact": 0.4, "named_removed": False}]},
+            {"cells": [{"impact": 0.8, "named_removed": True},
+                       {"impact": 0.0, "named_removed": False},
+                       {"impact": None, "named_removed": False}]},       # bookkeeping: left out
+            {"cells": [{"impact": 0.2, "named_removed": False}]}]
+    s = g.shift_summary(rows)
+    assert s["named"] == pytest.approx((0.8 + 0.8) / 2) and s["n_named"] == 2
+    assert s["other"] == pytest.approx((0.4 + 0.0 + 0.2) / 3) and s["n_other"] == 3
+    for bad in (None, "x", [None, 3, {"cells": "zz"}, {"cells": [None, {"impact": True}]}]):
+        assert g.shift_summary(bad) == {"named": None, "other": None, "n_named": 0, "n_other": 0}
+    lines = ui_iv.shift_lines(s)
+    assert [_flat(x) for x in lines] == [
+        "shift when a named hazard or victim was removed: 0.80",
+        "shift when another one was removed: 0.20"]
+    assert ui_iv.shift_lines(None) == [] and ui_iv.shift_lines({"named": "x", "other": None}) == []
+    # on the card, under the count; and the real table carries it
+    b, objs = _recs_scene()
+    gone = {**_after(objs, ("fire_1",), ["spill_1"]),
+            "recommendations": [_rec(1, "spill_1", ["man_1"], "Keep man_1 clear of spill_1.")]}
+    t = g.table(b, [({"index": 1, "target": "fire_1"}, gone)])
+    assert t["shift"]["named"] == 1.0                                  # both fire ones dropped
+    assert t["shift"]["other"] == pytest.approx(0.1)                   # the spill one: rank 2 -> 1
+    tile = _by_class(ui_iv.card_component(declared4.compare(b, []), t), "iv-tied")[0]
+    assert len(_by_class(tile, "iv-shift")) == 2 and "should be high" in _by_class(
+        tile, "iv-shift")[0].title
+
+
+def test_the_share_stays_in_the_bar_and_the_size_is_written_beside_it():
+    """A lone row always has a share of 1.00 (C_tanker: man_1), so the
+    size of the change is written small beside the bar; the bar itself
+    stays a share, comparable with the declared columns."""
+    b, objs = _recs_scene()
+    after = {**_after(objs, ("man_1",), ["fire_1", "spill_1"]),
+             "recommendations": [_rec(1, "fire_1", ["car_1"], "Tow car_1 away from fire_1.")]}
+    c = declared4.compare(b, [(_mixed_try("man_1"), after)])
+    row = [r for r in _by_class(ui_iv.card_component(c, {}), "iv-victim")
+           if _flat(r).startswith("man_1")][0]
+    assert "1.00 \u00b7 changed 0.70" in _flat(row)
+    assert _flat(_by_class(row, "iv-changed")) == "\u00b7 changed 0.70"
+    assert _by_class(ui_iv.mech_cell({"does": 0.5, "shift": "x"}), "iv-changed") == []
+    assert ui_iv.mech_cell(None) is not None
+
+
+def test_the_title_counts_hazards_and_victims_apart_and_the_key_names_amber():
+    assert ui_iv.removed_words([{"victim": False}] * 3 + [{"victim": True}]) == (
+        "3 removed hazards and 1 removed victim")
+    assert ui_iv.removed_words([{}]) == "1 removed hazard"
+    assert ui_iv.removed_words([{"victim": True}, {"victim": True}]) == "2 removed victims"
+    assert ui_iv.removed_words(None) == "0 removed hazards"
+    assert ui_iv.removed_words([None, "x", {"victim": True}]) == "1 removed victim"
+    assert "amber" in ui_iv.TABLE_KEY and "hazard or victim" in ui_iv.TABLE_KEY
+    # the try line gives the same reading as the tables
+    line = ui_iv.try_line({"index": 4, "target": "man_1", "modality": "both",
+                           "status": "measured", "summary": {"level_delta": -1}},
+                          {"value": 0.03, "direction": "eased",
+                           "reading": {"size": 0.7, "way": "redirects"}})
+    assert line.endswith(": redirects, changed 0.70 \u00b7 danger level -1")

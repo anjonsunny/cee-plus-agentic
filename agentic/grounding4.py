@@ -285,6 +285,39 @@ def _verdict(cells: list[dict]) -> str:
     return UNTESTED
 
 
+def shift_summary(rows: Any) -> dict:
+    """How much the recommendations changed, over the whole table, in two
+    numbers (Sunny, 2026-11-20: "the total shift considering all the recs
+    we should also show beside the count"):
+
+      "named"   when a hazard or victim the recommendation NAMES was removed
+                (grounded recommendations change here: should be high)
+      "other"   when another one was removed (should be low)
+
+    A model that rewrites everything on every edit scores high on both, so
+    the second number is what makes the first one mean something. Each is
+    the mean over the recommendations of that recommendation's own mean
+    change (0..1; dropped = 1). None when no cell of that kind exists.
+    Bookkeeping cells (no change value) are left out. Never raises."""
+    named: list[float] = []
+    other: list[float] = []
+    for r in rows if isinstance(rows, list) else []:
+        cells = r.get("cells") if isinstance(r, dict) else None
+        mine: list[float] = []
+        rest: list[float] = []
+        for c in cells if isinstance(cells, list) else []:
+            v = c.get("impact") if isinstance(c, dict) else None
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                (mine if c.get("named_removed") else rest).append(float(v))
+        if mine:
+            named.append(sum(mine) / len(mine))
+        if rest:
+            other.append(sum(rest) / len(rest))
+    return {"named": round(sum(named) / len(named), 3) if named else None,
+            "other": round(sum(other) / len(other), 3) if other else None,
+            "n_named": len(named), "n_other": len(other)}
+
+
 def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
     """`before`: the before run in the frozen shape. `tries`: (saved try,
     after run in the frozen shape) for every MEASURED try, in order.
@@ -358,5 +391,5 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
                      "threat": threat, "effect": effect, "affected": sorted(affected),
                      "same_as": [m for m in grp.get(threat, ()) if m != threat],
                      "cells": cells, "verdict": _verdict(cells)})
-    return {"rows": rows, "columns": columns,
+    return {"rows": rows, "columns": columns, "shift": shift_summary(rows),
             "same_hazards": sorted({grp[h] for h in grp})}

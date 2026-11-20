@@ -459,6 +459,29 @@ def way_of_try(before: Any, pair: Any, signed: float = 0.0) -> dict:
     return {"way": way, "counts": counts}
 
 
+def try_reading(before: Any, pair: Any) -> Any:
+    """{"size": how much the responses changed (0..1, no sign), "way":
+    eases | escalates | redirects | no change, "counts", "signed": the
+    older signed number, "parts"} for one try; None when it cannot be
+    read. The one reading the feature table, the bottom row of the
+    recommendations table and the try lines all show. Never raises."""
+    try:
+        one, after = pair
+        one = one if isinstance(one, dict) else {}
+        sg = chain4.signed_shift(one.get("signals"), chain4.direction(before, after))
+        signed = float(sg["value"])
+        parts = [{"name": PART_NAMES.get(str(p.get("signal")), str(p.get("signal"))),
+                  "signed": round(float(p.get("signed") or 0.0), 3)}
+                 for p in sg["parts"] if isinstance(p, dict)]
+    except Exception:
+        return None
+    size = (round(sum(abs(p["signed"]) for p in parts) / len(parts), 3)
+            if parts else abs(signed))
+    w = way_of_try(before, pair, signed)
+    return {"size": size, "way": w["way"], "counts": w["counts"],
+            "signed": round(signed, 3), "parts": parts}
+
+
 def _best_tries(before: Any, tries: Any) -> dict[str, dict]:
     """{hazard: {"value", "parts", "try", "target"}}: for every hazard a
     try took out, the try with the larger shift. A try takes out its
@@ -478,20 +501,11 @@ def _best_tries(before: Any, tries: Any) -> dict[str, dict]:
         target = str(one.get("target") or "")
         if not target:
             continue
-        try:
-            sg = chain4.signed_shift(one.get("signals"), chain4.direction(before, after))
-            signed = float(sg["value"])
-            parts = [{"name": PART_NAMES.get(str(p.get("signal")), str(p.get("signal"))),
-                      "signed": round(float(p.get("signed") or 0.0), 3)}
-                     for p in sg["parts"] if isinstance(p, dict)]
-            # HOW MUCH: the three parts without their signs, so they cannot
-            # cancel. WHICH WAY is read off the recommendations table.
-            value = (round(sum(abs(p["signed"]) for p in parts) / len(parts), 3)
-                     if parts else abs(signed))
-        except Exception:
+        rd = try_reading(before, pair)
+        if rd is None:
             continue
-        w = way_of_try(before, pair, signed)
-        extra = {"signed": round(signed, 3), "way": w["way"], "counts": w["counts"]}
+        value, parts = rd["size"], rd["parts"]
+        extra = {"signed": rd["signed"], "way": rd["way"], "counts": rd["counts"]}
         try:
             victim = iv4.is_victim(before, target)
         except Exception:

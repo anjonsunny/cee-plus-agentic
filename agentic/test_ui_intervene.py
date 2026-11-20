@@ -298,7 +298,7 @@ def test_the_tick_reports_progress_then_measures_and_saves_when_the_run_ends(pag
     ui.RUNS["after"]["done"] = True
     kids, proof, key2 = ui.iv_status(1, "base", [], key)
     assert key2 != key and len(_by_class(kids, "iv-card")) == 1
-    assert ": eased, +" in _flat(proof)                   # the try line sits in the proof
+    assert ": eases, changed 0." in _flat(proof)          # the try line sits in the proof
     # the advice names a hazard its own graph does not: it is offered next
     assert [b.children for b in _by_class(kids, "iv-next")] == ["remove next: tanker_1"]
     assert ui.IV_ACTIVE == {}
@@ -857,10 +857,17 @@ def test_the_table_shows_the_signed_shift(tmp_path):
     assert one["signed_shift"]["direction"] == "eased" and one["signed_shift"]["value"] > 0
     ui_iv.save_try(base, one)
     comp = ui_iv.result_component(base, tmp_path)
-    assert "signed shift" in _flat(comp)
+    # the bottom row: how much and which way (the signed number let its
+    # parts cancel: C_tanker, the man removed, read "+0.03 eased")
+    assert "signed shift" not in _flat(comp)
     (cell,) = _by_class(comp, "iv-signed-value")
-    assert "eased" in _flat(cell) and "danger level:" in cell.title
-    assert "equal weights" in cell.title
+    assert _flat(cell).endswith("\u00b7 eases") and cell.style["color"] == "#16a34a"
+    assert "level:" in cell.title and "dropped" in cell.title
+    assert ui_iv.reading_cell({"size": 0.7, "way": "redirects", "counts": {"re-aimed": 4},
+                               "parts": [None, {"name": "graph", "signed": 1.0}]}
+                              )[0].children == "0.70 \u00b7 redirects"
+    for bad in (None, "x", {}, {"size": "big"}, {"size": 0.2, "way": 3, "counts": "x"}):
+        ui_iv.reading_cell(bad)                      # never raises
     from agentic import chain4 as c
     cell = ui_iv.signed_cell(c.signed_shift(SPILL, {"direction": "eased"}))
     assert _flat(cell) == "+0.64 · eased" and len(cell) == 1
@@ -1212,7 +1219,9 @@ def test_the_card_has_two_halves_recommendations_and_features(tmp_path):
     text = _flat(card)
     tiles = _by_class(card, "iv-tile")
     assert [_flat(t) for t in tiles] == [
-        "recommendations grounded 1 of 1 · 1 not tested",
+        "recommendations grounded 1 of 1 · 1 not tested "
+        "shift when a named hazard or victim was removed: 1.00 "
+        "shift when another one was removed: 0.00",
         "declared vs mechanistic needs a second removed hazard"]
     assert [g.children[0].children for g in _by_class(card, "iv-gap")] == [
         "recommendations vs its own graph: ", "recommendations vs mechanistic: ", "its own graph vs mechanistic: "]

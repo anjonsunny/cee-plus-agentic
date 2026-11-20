@@ -367,9 +367,10 @@ _CELL_MEANS = {
                "target or effect word",
     "target removed": "the only thing this recommendation pointed at was removed, and its "
                       "hazard has no other recommendation; not counted as evidence"}
-TABLE_KEY = ("each cell: what happened to this recommendation when that hazard was removed; "
-             "the bar is how much it changed (dropped = 1.00); "
-             "green = eased, red = escalated")
+TABLE_KEY = ("each cell: what happened to this recommendation when that hazard or victim was "
+             "removed; the bar is how much it changed (dropped = 1.00); "
+             "green = eased, red = escalated, amber = changed without a direction "
+             "(aimed at something else, or moved in rank)")
 _VERDICT = {"grounded": "#16a34a", "masquerade": "#b91c1c",
             "spurious": "#b45309", "mixed": "#b45309",
             "correctly_ignored": "#64748b", "untested": "#94a3b8"}
@@ -414,6 +415,24 @@ def direction_cell(ch: Any) -> list:
         # grey on purpose: this is one of three inputs to the signed shift
         # below, which carries the colour
         style={"fontWeight": "700", "color": "#475569"})]
+
+
+def reading_cell(rd: Any) -> list:
+    """One try in two words: how much the responses changed, and which way
+    (the same reading as the feature table). The hover gives the counts
+    and the three parts."""
+    if not isinstance(rd, dict) or not isinstance(rd.get("size"), (int, float)):
+        return []
+    phrase, _old, col = WAY_PHRASE.get(str(rd.get("way")), ("", "", "#64748b"))
+    counts = rd.get("counts") if isinstance(rd.get("counts"), dict) else {}
+    said = " \u00b7 ".join(f"{n} {k}" for k, n in counts.items()
+                           if isinstance(n, int) and not isinstance(n, bool) and n)
+    parts = "; ".join(f"{p.get('name')}: {p.get('signed'):+.2f}"
+                      for p in (rd.get("parts") if isinstance(rd.get("parts"), list) else [])
+                      if isinstance(p, dict) and isinstance(p.get("signed"), (int, float)))
+    return [html.Div(f"{rd['size']:.2f} \u00b7 {rd.get('way')}", className="iv-signed-value",
+                     title=" \u2014 ".join(x for x in (said, parts) if x),
+                     style={"fontWeight": "800", "color": col})]
 
 
 def signed_cell(sg: Any) -> list:
@@ -560,10 +579,14 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
         row.append(html.Td("", style=_TD))
         foot_rows.append(html.Tr(row, className="iv-direction"))
     if any(isinstance(c.get("signed"), dict) for c in cols):
-        row = [html.Td("signed shift", style={**_TD, "fontWeight": "800"}),
+        # how much and which way, as in the feature table (the signed
+        # number let its parts cancel: the man removed read "+0.03 eased")
+        row = [html.Td("shift", style={**_TD, "fontWeight": "800"},
+                       title="how much the emergency responses changed (0 to 1), and which way"),
                html.Td("", style=_TD)]
         for c in cols:
-            row.append(html.Td(signed_cell(c.get("signed")), style=_TD))
+            row.append(html.Td(reading_cell(c.get("reading")) or signed_cell(c.get("signed")),
+                               style=_TD))
         row.append(html.Td("", style=_TD))
         foot_rows.append(html.Tr(row, className="iv-signed"))
     out: list = [html.Div(TABLE_KEY, className="iv-key",
@@ -623,6 +646,25 @@ WAY_TIP = {"eases": "removing it eased the emergency responses: recommendations 
            "redirects": "removing it redirected the emergency responses: recommendations were "
                         "kept but aimed at something else",
            "no change": "removing it did not shift the emergency responses"}
+
+
+def mech_cell(r: Any, faded: bool = False) -> Any:
+    """The mechanistic cell of a feature row: the SHARE as the bar (the
+    same kind of number as the declared columns, so they can be compared),
+    and beside it, small, how much the responses really changed (a lone
+    row always has a share of 1.00)."""
+    r = r if isinstance(r, dict) else {}
+    sh = r.get("shift")
+    kids = [_bar(r.get("does"), "#16a34a")]
+    if isinstance(sh, (int, float)) and not isinstance(sh, bool):
+        kids.append(html.Span(f" \u00b7 changed {sh:.2f}", className="iv-changed",
+                              title="how much the emergency responses changed when it was "
+                                    "removed, 0 to 1 (level, recommendations, graph)",
+                              style={"fontSize": "10px", "color": "#94a3b8",
+                                     "whiteSpace": "nowrap"}))
+    return html.Div(kids, className="iv-again" if faded else "iv-own",
+                    title=ONE_TRY_TIP if faded else "",
+                    style={"opacity": ".45"} if faded else {})
 
 
 def way_cell(r: Any, td: dict) -> Any:
@@ -717,13 +759,36 @@ _HEAD_TIP = {
 }
 
 
-def _tile(label: str, value: str, colour: str, title: str = "", cls: str = "") -> Any:
+SHIFT_NAMED = "shift when a named hazard or victim was removed"
+SHIFT_OTHER = "shift when another one was removed"
+SHIFT_TIP = ("how much the recommendations changed, 0 to 1 (dropped = 1), averaged over the "
+             "recommendations. Grounded recommendations change when something they name is "
+             "removed and stay put otherwise, so the first should be high and the second low.")
+
+
+def shift_lines(shift: Any) -> list:
+    """The two shift numbers under the grounded count."""
+    shift = shift if isinstance(shift, dict) else {}
+    out = []
+    for key, words in (("named", SHIFT_NAMED), ("other", SHIFT_OTHER)):
+        v = shift.get(key)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            out.append(html.Div([html.Span(words + ": ", style={"color": "#64748b"}),
+                                 html.Span(f"{v:.2f}", style={"fontWeight": "800",
+                                                              "color": "#0f172a"})],
+                                className=f"iv-shift iv-shift-{key}", title=SHIFT_TIP,
+                                style={"fontSize": "11px", "marginTop": "2px"}))
+    return out
+
+
+def _tile(label: str, value: str, colour: str, title: str = "", cls: str = "",
+          extra: Any = None) -> Any:
     return html.Div([
         html.Div(label, style={"fontSize": "9.5px", "fontWeight": "800",
                                "letterSpacing": ".06em", "color": "#64748b",
                                "textTransform": "uppercase"}),
         html.Div(value, style={"fontSize": "19px", "fontWeight": "800", "color": colour}),
-    ], className=("iv-tile " + cls).strip(), title=title,
+    ] + list(extra or []), className=("iv-tile " + cls).strip(), title=title,
         style={"flex": "1", "minWidth": "110px", "padding": "8px 11px",
                "border": f"1px solid {colour}55", "borderRadius": "8px",
                "background": f"{colour}0d"})
@@ -772,7 +837,7 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
         + (f" · {len(verdicts) - len(judged)} not tested" if len(verdicts) > len(judged) else ""),
         "#16a34a" if judged and tied == len(judged) else "#b45309" if judged else "#94a3b8",
         "a recommendation is grounded when it is dropped once the hazard it names "
-        "is removed", "iv-tied"),
+        "is removed", "iv-tied", extra=shift_lines(tbl.get("shift"))),
         _tile("declared vs mechanistic",
               f"{score:.2f} · {reading}" if isinstance(score, (int, float))
               else "needs a second removed hazard",
@@ -926,7 +991,7 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
                            style=td),
                    html.Td(_bar(r.get("says_advice"), "#64748b"), style=td),
                    html.Td(_bar(r.get("says"), "#334155"), style=td),
-                   html.Td(_bar(r.get("does"), "#16a34a") if r.get("does") is not None
+                   html.Td(mech_cell(r) if r.get("does") is not None
                            else html.Span("not removed yet", style=quiet), style=td)]
             g = v_gt.get(oid) or {}
             if gt_on:
@@ -982,10 +1047,7 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
                               and r.get("does") is not None else []), style=_TD),
                    html.Td(_bar(r.get("says_advice"), "#64748b"), style=_TD),
                    html.Td(_bar(r.get("says"), "#334155"), style=_TD),
-                   html.Td(html.Div(_bar(r.get("does"), "#16a34a"),
-                                    className="iv-again" if again else "iv-own",
-                                    title=ONE_TRY_TIP if again else "",
-                                    style={"opacity": ".45"} if again else {})
+                   html.Td(mech_cell(r, again)
                            if r.get("does") is not None
                            else html.Span("not removed yet", style=quiet), style=_TD)]
             g = gt_rows.get(oid) or {}
@@ -1093,7 +1155,9 @@ def result_parts(base_dir: Path | None, runs_dir: Path | None,
                 except Exception:
                     col["chain"] = None         # the table still stands without it
                 col["signed"] = chain4.signed_shift(t.get("signals"), col["chain"])
-                signed[t.get("index")] = col["signed"]
+                col["reading"] = declared4.try_reading(before, (t, after))
+                signed[t.get("index")] = ({**col["signed"], "reading": col["reading"]}
+                                          if isinstance(col["signed"], dict) else col["signed"])
             cmp = declared4.compare(before, pairs)
             syn = iv4.synthesis(before, pairs) if with_gt else None
             top += card_component(cmp, tbl, syn, next_id=next_id)
@@ -1101,7 +1165,7 @@ def result_parts(base_dir: Path | None, runs_dir: Path | None,
             bottom.append(_fold(
                 [html.Span(TITLE_RECS, className="iv-title", style=TITLE_STYLE),
                  html.Span(f" · {n_r} recommendation{'s' if n_r != 1 else ''} by "
-                           f"{n_c} removed hazard{'s' if n_c != 1 else ''}",
+                           + removed_words(tbl["columns"]),
                            style={"fontWeight": "400", "color": "#64748b"})],
                 # one of the two main panels: open to start, one click to fold
                 table_component(tbl, runs_dir), open_=True, cls="by-recommendation"))
@@ -1192,6 +1256,16 @@ def summary_line(sm: Any) -> str:
                if sm.get("provisional") else ""))
 
 
+def removed_words(columns: Any) -> str:
+    """'3 removed hazards and 1 removed victim' for the tries of a table."""
+    cols = [c for c in (columns if isinstance(columns, list) else []) if isinstance(c, dict)]
+    n_v = sum(1 for c in cols if c.get("victim"))
+    n_h = len(cols) - n_v
+    bits = ([f"{n_h} removed hazard{'s' if n_h != 1 else ''}"] if n_h or not n_v else []) \
+        + ([f"{n_v} removed victim{'s' if n_v != 1 else ''}"] if n_v else [])
+    return " and ".join(bits)
+
+
 def try_line(t: dict, signed: dict | None = None) -> str:
     """One plain sentence for a saved try. With `signed` (the signed shift
     worked out for the table) it gives that reading; the frozen arm's own
@@ -1206,6 +1280,10 @@ def try_line(t: dict, signed: dict | None = None) -> str:
     lvl = s.get("level_delta")
     lvl_txt = f" · danger level {lvl:+d}" if isinstance(lvl, int) and lvl else ""
     sg = signed if isinstance(signed, dict) else t.get("signed_shift")
+    rd = sg.get("reading") if isinstance(sg, dict) else None
+    if isinstance(rd, dict) and isinstance(rd.get("size"), (int, float)) and rd.get("way"):
+        # how much and which way, the same reading as the two tables
+        return f"{head}: {rd['way']}, changed {rd['size']:.2f}{lvl_txt}"
     if isinstance(sg, dict) and isinstance(sg.get("value"), (int, float)):
         return f"{head}: {sg.get('direction')}, {sg['value']:+.2f}{lvl_txt}"
     if s.get("moved") is None:
@@ -1221,8 +1299,11 @@ def status_component(tries: list[dict], active: dict | None,
     for t in tries or []:
         sg = (signed or {}).get(t.get("index")) or t.get("signed_shift")
         word = sg.get("direction") if isinstance(sg, dict) else None
+        rd = sg.get("reading") if isinstance(sg, dict) else None
         if t.get("status") != "measured":
             col = "#64748b"
+        elif isinstance(rd, dict) and str(rd.get("way")) in WAY_PHRASE:
+            col = WAY_PHRASE[str(rd.get("way"))][2]
         elif word:
             col = _DIR_COL.get(str(word), "#64748b")
         else:
