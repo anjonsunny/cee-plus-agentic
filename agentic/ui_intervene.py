@@ -61,6 +61,14 @@ def base_info(run_dir: Path | None) -> dict | None:
         cands = iv4.candidates(result).get("candidates") or []
     except Exception:
         cands = []
+    # the other end of the danger: every thing that can be harmed (a person,
+    # an animal, a car, a house) can be taken out too (agentic/intervention4.py)
+    try:
+        have = {str(c.get("object_id")) for c in cands if isinstance(c, dict)}
+        cands = list(cands) + [{**v, "variable_role": "victim"}
+                               for v in iv4.victims_of(result) if v["object_id"] not in have]
+    except Exception:
+        pass
     try:
         s4 = json.loads((run_dir / "stage4.json").read_text())
         picks = s4.get("picks") if isinstance(s4, dict) else {}
@@ -112,6 +120,22 @@ def target_options(info: dict | None) -> list[dict]:
     return out
 
 
+def victim_instructions(label: str, others: list[str]) -> tuple[str, str]:
+    """(caption instruction, image instruction) for taking a VICTIM out of
+    the scene. The victim is not in the picture at all; every hazard stays
+    exactly as it is. Text for the person who edits, never for the model."""
+    label = str(label or "").strip() or "the object"
+    keep = ", ".join(dict.fromkeys(x for x in (str(o).strip() for o in others or []) if x)) \
+        or "every other object in the scene"
+    cap = (f"Rewrite the caption so the {label} is not in the scene at all: do not mention it. "
+           f"Every hazard stays exactly as it is. Keep every other detail identical.")
+    img = (f"Remove the {label} from the picture entirely and fill the place where it was with "
+           f"what would be behind it. Change nothing else: keep {keep}, and the positions, "
+           f"lighting, camera angle, and framing exactly the same. Every hazard must stay "
+           f"exactly as it is.")
+    return cap, img
+
+
 def instructions(info: dict | None, target: str) -> tuple[str, str]:
     """(caption instruction, image instruction) for removing `target`, in
     the frozen arm's words. ("", "") when the target is not a candidate."""
@@ -131,6 +155,11 @@ def instructions(info: dict | None, target: str) -> tuple[str, str]:
     caps, imgs = [], []
     for oid in unit:
         c = cands[oid]
+        if c.get("variable_role") == "victim":
+            cap, img = victim_instructions(str(c.get("label") or ""), others)
+            caps.append(cap)
+            imgs.append(img)
+            continue
         cap, img = build_intervention_edit_texts(
             str(c.get("label") or ""), str(c.get("state") or ""), MODE,
             other_labels=others,
@@ -179,7 +208,7 @@ def plan_try(info: dict, target: str, modality: str, edited_caption: str | None,
     if not info:
         return {"ok": False, "why": "this run has no recommendations to compare"}
     if not any(str(c.get("object_id")) == str(target) for c in info["candidates"]):
-        return {"ok": False, "why": "pick one of the listed hazards first"}
+        return {"ok": False, "why": "pick one of the listed hazards or victims first"}
     if modality not in iv4.MODALITIES:
         return {"ok": False, "why": "choose caption, image or both"}
     original = str(info.get("caption") or "")
@@ -422,6 +451,11 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
                                        "display": "block", "marginBottom": "2px"})]
              if img else [])
             + [html.Span(f"#{c.get('index')} removed "), ent_chip(str(c.get("target")), "#0f172a")]
+            + ([html.Span(" \u00b7 victim", className="iv-victim-col",
+                          title="this try took out something that can be harmed, not a hazard; "
+                                "every hazard stayed",
+                          style={"fontWeight": "400", "color": "#64748b"})]
+               if c.get("victim") else [])
             + ([html.Div("also missing from the edited picture: " + ", ".join(also),
                          style={"fontWeight": "400", "color": "#94a3b8"})] if also else [])
             # the model called these one hazard; the edit took one and left the other
@@ -475,6 +509,11 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
                                  className="iv-cell-word", **{"data-way": way},
                                  style={"color": tone if state != "gone" else col,
                                         "fontWeight": "700"})]
+                if c.get("victim") and c.get("still_names"):
+                    kids.append(html.Div("still names what was removed",
+                                         className="iv-still-names",
+                                         style={"fontSize": "10px", "fontWeight": "700",
+                                                "color": _VERDICT["masquerade"]}))
                 if why:
                     bits: list = []
                     for k, w in enumerate(why):
@@ -488,7 +527,9 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
                     kids.append(html.Div(bits, className="iv-why", style={"fontSize": "10px"}))
             elif lab == "masquerade":
                 # it names the removed hazard and is still there: not a quiet cell
-                kids = [html.Span(short + ", though its hazard was removed",
+                kids = [html.Span(short + (", still names what was removed"
+                                           if c.get("victim") else
+                                           ", though its hazard was removed"),
                                   className="iv-cell-word",
                                   style={"color": _VERDICT["masquerade"], "fontWeight": "700"})]
             else:
@@ -625,6 +666,11 @@ _GT_SHORT = {
                                              "so that try's shift is not its own; remove it "
                                              "by itself to test it"),
 }
+VICTIMS_NOTE = "what can be harmed"
+VICTIMS_TIP = ("danger needs two ends, and taking away either one lowers it. Each row is "
+               "weighed like a hazard, from the other end of the arrow: the danger a graph "
+               "loses when it is taken out. Shares are among these rows; they are not counted "
+               "in the scores above.")
 ONE_TRY = "removed in one try, counted once: "
 ONE_TRY_TIP = ("one try took these out together, so each row shows that try's share; "
                "the score counts the try once")
@@ -907,6 +953,61 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
                                  for x in head])), html.Tbody(body)],
             className="iv-features",
             style={"borderCollapse": "collapse", "width": "100%", "marginTop": "4px"}))
+    # ── VICTIMS: the other end of the danger, weighed the same way
+    vrows = [r for r in (cmp.get("victims") if isinstance(cmp.get("victims"), list) else [])
+             if isinstance(r, dict)]
+    if vrows:
+        v_gt: dict[str, dict] = {}
+        if gt_on and own:
+            v_gt = {g["object_id"]: g for g in declared4.against_ground_truth(
+                {"hazards": vrows}, own.get("victims_should") or {},
+                own.get("core_victims") or [], own.get("victims") or [], [])
+                if g["object_id"] in {str(r.get("object_id")) for r in vrows}}
+        quiet = {"color": "#94a3b8", "fontSize": "10.5px"}
+        head = ["VICTIM", A_COL, B_COL, "MECHANISTIC"] + (["SHOULD MATTER"] if v_gt else []) \
+            + [""] + (["BY GROUND TRUTH"] if v_gt else [])
+        body = []
+        for r in vrows:
+            oid, state = str(r.get("object_id")), str(r.get("state") or "")
+            sh = r.get("shift")
+            way = ("" if not isinstance(sh, (int, float)) else
+                   "eased" if sh > 0 else "escalated" if sh < 0 else "unchanged")
+            tds = [html.Td([ent_chip(oid, "#f97316")]
+                           + ([html.Span(" \u00b7 " + state, className="iv-state",
+                                         style={"color": "#64748b"})] if state else []),
+                           style=_TD),
+                   html.Td(_bar(r.get("says_advice"), "#64748b"), style=_TD),
+                   html.Td(_bar(r.get("says"), "#334155"), style=_TD),
+                   html.Td(_bar(r.get("does"), "#16a34a") if r.get("does") is not None
+                           else html.Span("not removed yet", style=quiet), style=_TD)]
+            g = v_gt.get(oid) or {}
+            if v_gt:
+                tds.append(html.Td(_bar(g.get("should"), "#7c3aed") if g.get("listed")
+                                   else html.Span("not in ground truth", style=quiet),
+                                   style=_TD))
+            tds.append(html.Td(
+                SHIFTS if way in ("eased", "escalated") else NO_SHIFT if way else "",
+                className="iv-role", **{"data-way": way},
+                style={**_TD, "fontWeight": "700",
+                       "color": {"eased": "#16a34a", "escalated": "#b91c1c"}.get(way, "#94a3b8")}))
+            if v_gt:
+                word = str(g.get("word") or "")
+                short, why = _GT_SHORT.get(word, (word, ""))
+                tds.append(html.Td(short, className="iv-gt-word", title=why,
+                                   **{"data-word": word},
+                                   style={**_TD, "fontWeight": "800",
+                                          "color": "#16a34a" if short == "core" else
+                                          "#94a3b8" if short == "not removed yet"
+                                          else "#b91c1c"}))
+            body.append(html.Tr(tds, className="iv-victim"))
+        rows.append(html.Div(VICTIMS_NOTE, className="iv-victims-note", title=VICTIMS_TIP,
+                             style={"fontSize": "11px", "color": "#64748b",
+                                    "margin": "10px 0 0"}))
+        rows.append(html.Table(
+            [html.Thead(html.Tr([html.Th(x, style=_TH, title=_HEAD_TIP.get(x, ""))
+                                 for x in head])), html.Tbody(body)],
+            className="iv-victims",
+            style={"borderCollapse": "collapse", "width": "100%", "marginTop": "2px"}))
     foot = "one ask per try"
     if gt_on:
         gt = syn.get("gt") if isinstance(syn.get("gt"), dict) else {}

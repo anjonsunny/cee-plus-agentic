@@ -247,6 +247,71 @@ def candidates(before: dict, *, gt_dir: Path | None = None,
     return iv.enumerate_candidates(baseline, core_basis=core_basis, core_rule=core_rule)
 
 
+def _graph_ends(result: dict) -> tuple[set[str], set[str]]:
+    """(sources, targets) over both graphs of a run; ids stripped of ' · state'."""
+    src: set[str] = set()
+    tgt: set[str] = set()
+    for key in ("causal_graph", "graph_b"):
+        for e in _list(_dict(result.get(key)).get("edges")):
+            if isinstance(e, dict):
+                a = str(e.get("source") or "").split("·")[0].strip()
+                b = str(e.get("target") or "").split("·")[0].strip()
+                if a:
+                    src.add(a)
+                if b:
+                    tgt.add(b)
+    return src, tgt
+
+
+def hazards_of(before: Any) -> set[str]:
+    """The things of a run that harm: its threats, the hazard each
+    recommendation names, and every arrow's source that is not a person
+    or an animal (a man blocking a road harms nobody). Never raises."""
+    from agentic import chain4                   # lazy: chain4 imports this module
+    r = clean_result(before)
+    labels = {str(o.get("object_id") or ""): str(o.get("label") or "")
+              for o in r["detected_objects"]}
+    out = {str(t.get("object_id") or "") for t in r["threats"]}
+    for rec in r["recommendations"]:
+        q = rec.get("structured_reasoning")
+        if isinstance(q, dict) and not rec.get("benign"):
+            out.add(str(q.get("threat") or "").strip())
+    for s in _graph_ends(r)[0]:
+        try:
+            if not chain4._is_life(s, labels):
+                out.add(s)
+        except Exception:
+            pass
+    return {h for h in out if h}
+
+
+def victims_of(before: Any) -> list[dict]:
+    """The things of a run that can be harmed and are not hazards
+    themselves: whatever an arrow ends at in either graph, or a
+    recommendation lists as affected. A person, an animal, a car, a house:
+    anything (Sunny, 2026-11-20: "danger needs two ends... take away
+    either end and the danger drops"). [{object_id, label, state}], in the
+    order the run lists its objects. Never raises."""
+    r = clean_result(before)
+    ends = set(_graph_ends(r)[1])
+    for rec in r["recommendations"]:
+        q = rec.get("structured_reasoning")
+        aff = q.get("affected_objects") if isinstance(q, dict) else None
+        if not rec.get("benign"):
+            ends |= {str(x).strip() for x in (aff if isinstance(aff, list) else [])
+                     if isinstance(x, str)}
+    haz = hazards_of(r)
+    return [{"object_id": str(o.get("object_id")), "label": str(o.get("label") or ""),
+             "state": str(o.get("state") or "")}
+            for o in r["detected_objects"]
+            if str(o.get("object_id") or "") in ends and str(o.get("object_id")) not in haz]
+
+
+def is_victim(before: Any, oid: Any) -> bool:
+    """True when `oid` is one of the run's victims (not a hazard)."""
+    return any(v["object_id"] == str(oid or "") for v in victims_of(before))
+
+
 def measure(before: dict, after: dict, target_oid: str, *,
             modality: str = "both", caption_changed: bool = True,
             image_changed: bool = True, gt_dir: Path | None = None,
@@ -274,6 +339,25 @@ def measure(before: dict, after: dict, target_oid: str, *,
         baseline, {"target_object_id": str(target_oid or ""), "modality": modality},
         _after, run_control=False, edit=edit,
         core_basis=core_basis, core_rule=core_rule)
+    if result.get("signals") is None and is_victim(before, target_oid):
+        # The frozen arm lists only victims in a distress state. Any victim
+        # can be taken out of the scene, so the same frozen measuring is
+        # run for this one directly (its own `_run_one`, nothing rewritten).
+        v = next(x for x in victims_of(before) if x["object_id"] == str(target_oid))
+        cand = {**v, "variable_role": "victim", "outgoing_edge_count": 0,
+                "edge_count": 0, "rank": 0}
+        try:
+            core = iv._run_one(baseline, cand,
+                               {"target_object_id": v["object_id"], "modality": modality},
+                               _after, role="core", core_basis=None, edit=edit)
+            enum = result.get("candidates") or iv.enumerate_candidates(
+                baseline, core_basis=core_basis, core_rule=core_rule)
+            result = {**result, "spec": core.get("spec"), "u_check": core.get("u_check"),
+                      "signals": core.get("signals"),
+                      "verdict": iv.adjudicate_groundedness(core["spec"], core["signals"], enum),
+                      "victim": True}
+        except Exception:
+            pass
     result["edit"] = edit
     result["after_missing"] = not (_list(after.get("recommendations"))
                                    or _list(after.get("detected_objects")))

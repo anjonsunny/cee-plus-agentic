@@ -35,7 +35,7 @@ def test_a_finished_run_lists_its_hazards_with_who_picked_them(tmp_path):
     info = ui_iv.base_info(_run_dir(tmp_path))
     assert info["run"] == "ui_base" and info["image"].endswith("C_tanker_fire.jpg")
     opts = ui_iv.target_options(info)
-    assert [o["value"] for o in opts] == ["fire_1", "tanker_1"]
+    assert [o["value"] for o in opts] == ["fire_1", "tanker_1", "man_1"]
     assert "fire_1 · spreading · hazard" in opts[0]["label"]
     assert "picked by code, model, asked" in opts[0]["label"]
     assert "picked by model's graph" in opts[1]["label"]
@@ -54,7 +54,7 @@ def test_a_run_that_cannot_be_compared_offers_nothing(tmp_path):
     # malformed picks never break the list
     odd = ui_iv.base_info(_run_dir(tmp_path, "odd", picks={"a_pick": "x", "b_pick": None,
                                                            "llm_pick": {"object_id": 7}}))
-    assert [o["value"] for o in ui_iv.target_options(odd)] == ["fire_1", "tanker_1"]
+    assert [o["value"] for o in ui_iv.target_options(odd)] == ["fire_1", "tanker_1", "man_1"]
 
 
 def test_the_instructions_are_the_frozen_arms_words_for_never_happened(tmp_path):
@@ -228,7 +228,7 @@ def _url(b: bytes) -> str:
 
 def test_the_panel_lists_hazards_for_the_open_run_and_hides_otherwise(page):
     opts, value, style, note = ui.iv_setup("base", 0, [], None)
-    assert [o["value"] for o in opts] == ["fire_1", "tanker_1"] and value == "fire_1"
+    assert [o["value"] for o in opts] == ["fire_1", "tanker_1", "man_1"] and value == "fire_1"
     assert style == {"display": "block"} and "before side: ui_base" in note
     assert "pathology probes off" in note
     # same list on the next tick: the user's pick is left alone
@@ -1482,12 +1482,27 @@ def test_gone_spurious_and_target_removed_still_exist_when_the_hazard_has_no_adv
     assert by[1]["cells"][0]["state"] == "stays"
     assert by[4]["cells"][0]["state"] == "changed"        # shares the one piece of fire advice
     assert by[2]["cells"][0]["state"] == "gone" and by[2]["verdict"] == "spurious"
-    assert by[3]["cells"][0]["state"] == "target removed" and by[3]["cells"][0]["label"] == ""
-    assert t["columns"][0]["of"] == 3                     # the bookkeeping row is not counted
+    # the shed is a VICTIM: the advice that protected it was dropped with it,
+    # which is evidence now (for a hazard try that cell is only bookkeeping)
+    assert by[3]["cells"][0]["state"] == "gone" and by[3]["cells"][0]["label"] == "grounded"
+    assert t["columns"][0]["victim"] is True
+    assert t["columns"][0]["of"] == 4                     # every row counts in a victim try
     comp = ui_iv.table_component(t)
     cells = {_flat(r).split()[0]: _flat(_by_class(r, "iv-cell")) for r in _by_class(comp, "iv-row")}
-    assert cells["#3"] == "its target was removed"
+    assert cells["#3"] == "1.00 dropped"
     assert cells["#2"] == "1.00 dropped"
+    # a HAZARD try: advice whose only target was the removed hazard is bookkeeping
+    before = _res(["fire_1", "spill_1", "man_1"],
+                  [_rec(1, "fire_1", ["man_1"]), _rec(2, "spill_1", ["fire_1"])],
+                  threats=["fire_1", "spill_1"])
+    after = _res(["spill_1", "man_1"], [])
+    t = g.table(before, [({"index": 1, "target": "fire_1"}, after)])
+    by = {r["rank"]: r for r in t["rows"]}
+    assert by[2]["cells"][0]["state"] == "target removed" and by[2]["cells"][0]["label"] == ""
+    assert t["columns"][0]["of"] == 1 and t["columns"][0]["victim"] is False
+    cells = {_flat(r).split()[0]: _flat(_by_class(r, "iv-cell"))
+             for r in _by_class(ui_iv.table_component(t), "iv-row")}
+    assert cells["#2"] == "its target was removed"
 
 
 def test_the_card_says_in_which_direction_declared_and_mechanistic_differ():

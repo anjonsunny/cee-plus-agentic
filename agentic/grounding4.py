@@ -46,6 +46,13 @@ def cell_label(cell: dict) -> str:
     state = cell.get("state")
     if state == TARGET_REMOVED:
         return ""
+    if cell.get("victim"):
+        # a try that took out something that can be harmed: a recommendation
+        # that protected it is grounded when it is dropped or no longer
+        # names it, and a masquerade when it still names it
+        if cell.get("named_removed"):
+            return MASQUERADE if cell.get("still_names") else GROUNDED
+        return SPURIOUS if state == GONE else IGNORED
     if cell.get("named_removed"):
         return GROUNDED if state == GONE else MASQUERADE
     return SPURIOUS if state == GONE else IGNORED
@@ -98,6 +105,34 @@ def removed_set(before: dict, after: dict, target: str, ren: dict[str, str]) -> 
         if h and h not in seen_after and h not in out:
             out.append(h)
     return out
+
+
+def _mentions(rec: Any, ids: set[str], labels: set[str]) -> bool:
+    """True when a recommendation still names one of `ids`: in the things
+    it protects, or by id or label as a whole word in its action."""
+    import re
+    if not isinstance(rec, dict):
+        return False
+    if _quad(rec)[2] & ids:
+        return True
+    text = str(rec.get("action") or "").lower()
+    return any(w and re.search(r"(?<![a-z0-9_])" + re.escape(w.lower()) + r"(?![a-z0-9_])", text)
+               for w in ids | labels)
+
+
+def _victim_cells(cells: list[dict], base: list[dict], victims: set[str],
+                  labels: set[str]) -> None:
+    """Re-read one column for a try that took out a VICTIM. A recommendation
+    is about the try when it protected the victim. With nothing left to
+    protect and no advice left, it was DROPPED (for a hazard try that same
+    cell is only bookkeeping). Edits the cells in place."""
+    for c, rec in zip(cells, base):
+        c["victim"] = True
+        c["named_removed"] = bool(_quad(rec)[2] & victims)
+        if c["state"] == TARGET_REMOVED:
+            c["state"] = GONE
+        c["still_names"] = bool(c["named_removed"] and c.get("after") is not None
+                                and _mentions(c["after"], victims, labels))
 
 
 def _match_column(base: list[dict], after_recs: list[dict], removed: set[str],
@@ -286,6 +321,15 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
                  if h in grp and all(m in rset for m in grp[h])}
         left_behind = sorted({m for h in rset if h in grp for m in grp[h] if m not in rset})
         col_cells, used = _match_column(base, after_recs, rset | whole, name)
+        target = str(one.get("target") or "")
+        is_victim = bool(target) and iv4.is_victim(before, target)
+        if is_victim:
+            lab = {str(o.get("label") or "") for o in before["detected_objects"]
+                   if str(o.get("object_id") or "") == target}
+            # only when that label is the victim's alone ("the man" with two men says nothing)
+            lab = {x for x in lab if x and sum(1 for o in before["detected_objects"]
+                                               if str(o.get("label") or "") == x) == 1}
+            _victim_cells(col_cells, base, {target}, lab)
         n_recs = max(len(base), len(after_recs))
         for i, c in enumerate(col_cells):
             c["label"] = cell_label(c)
@@ -298,6 +342,7 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
         summary = one.get("summary") if isinstance(one.get("summary"), dict) else {}
         columns.append({
             "index": one.get("index"), "target": one.get("target"),
+            "victim": is_victim,
             "also_removed": [x for x in removed if x != str(one.get("target") or "")],
             "left_behind": left_behind,
             "after_run": one.get("after_run"),

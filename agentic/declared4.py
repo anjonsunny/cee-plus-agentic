@@ -218,6 +218,47 @@ def declared_together(result: Any, members: Any, graph: str = GRAPH_B) -> float:
                                           without=gone, fields=fields)), 3)
 
 
+def _lost(result: Any, graph: str, gone: set[str]) -> float:
+    """The danger one graph of a run loses when the nodes in `gone` are
+    taken out of it, whatever they are. 0.0 when it cannot be read."""
+    if not gone:
+        return 0.0
+    result = iv4.clean_result(result)
+    labels = {str(o.get("object_id") or ""): str(o.get("label") or "")
+              for o in result["detected_objects"]}
+    try:
+        links = chain4.links_of(result)
+        edges = chain4._edges(result.get(graph))
+    except Exception:
+        return 0.0
+    try:
+        weights = iv4._frozen()._EFFECT_THREAT
+    except Exception:
+        weights = {}
+    fields = chain4.fields_of(result.get(graph))
+    try:
+        total = _danger(edges, links, labels, weights, fields=fields)
+        return round(max(0.0, total - _danger(edges, links, labels, weights,
+                                              without=set(gone), fields=fields)), 3)
+    except Exception:
+        return 0.0
+
+
+def victims_declared(result: Any, graph: str = GRAPH_B) -> dict[str, float]:
+    """{victim: weight} from one of the model's graphs: the danger that
+    graph loses when the victim is taken out of it (every arrow that ends
+    at it, and every chain through it). The same measure as a hazard's
+    declared weight, from the other end of the arrow (Sunny, 2026-11-20:
+    "take away either end and the danger drops"). Victims are
+    `intervention4.victims_of`: a person, an animal, a car, a house.
+    Never raises."""
+    try:
+        ids = [v["object_id"] for v in iv4.victims_of(result)]
+    except Exception:
+        return {}
+    return {v: _lost(result, graph, {v}) for v in ids}
+
+
 def _gt_result(extra: Any) -> dict:
     """The ground-truth graph as a result the weighing code can read."""
     g = extra.get("graph") if isinstance(extra, dict) else None
@@ -264,6 +305,23 @@ def should_matter_together(extra: Any, members: Any) -> float:
         return 0.0
 
 
+def victims_should(extra: Any) -> dict[str, float]:
+    """{victim: weight} by ground truth, the same measure on the
+    ground-truth graph. A victim the human calls spurious gets 0 (the shed
+    the fire may reach). Never raises."""
+    try:
+        r = _gt_result(extra)
+        ids = [v["object_id"] for v in iv4.victims_of(r)]
+        # a person with no arrow yet is still a victim the human listed
+        labels = {str(o.get("object_id") or ""): str(o.get("label") or "")
+                  for o in r["detected_objects"]}
+        ids += [o for o in labels if o and o not in ids and chain4._is_life(o, labels)]
+    except Exception:
+        return {}
+    core = _core(extra)
+    return {v: (_lost(r, GRAPH_B, {v}) if v in core else 0.0) for v in ids}
+
+
 def match_ground_truth(cmp: Any, extra: Any) -> dict:
     """Ground truth against the shift, the same way declared is compared
     with it: per group (the hazards one try took out), the ground-truth
@@ -280,6 +338,11 @@ def match_ground_truth(cmp: Any, extra: Any) -> dict:
         return out
     out["available"] = True
     out["should"] = {h: round(v, 3) for h, v in _shares(w, list(w)).items()}
+    vs = victims_should(extra)
+    out["victims_should"] = {h: round(v, 3) for h, v in _shares(vs, list(vs)).items()}
+    out["victims"] = sorted(vs)
+    out["core_victims"] = sorted(v for v in vs if v in _core(extra))
+    out["core"] = sorted(h for h in _core(extra) if h not in vs)
     groups = [g for g in ((cmp.get("groups") if isinstance(cmp, dict) else None) or [])
               if isinstance(g, dict) and isinstance(g.get("members"), list)]
     keys, gt_w, mech = [], {}, {}
@@ -361,6 +424,18 @@ def _best_tries(before: Any, tries: Any) -> dict[str, dict]:
                      for p in sg["parts"] if isinstance(p, dict)]
         except Exception:
             continue
+        try:
+            victim = iv4.is_victim(before, target)
+        except Exception:
+            victim = False
+        if victim:
+            # the other end of the danger: this try is the victim's own
+            # test and says nothing about any hazard
+            old = out.get(target)
+            if old is None or value > old["value"]:
+                out[target] = {"value": value, "parts": parts, "try": k, "target": target,
+                               "direct": True, "victim": True}
+            continue
         gone = same4.members(removed_name(before, one, after))
         aimed = set(gone)                       # the target and its same-hazard pair
         try:
@@ -427,6 +502,10 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
     dec = declared(before)
     dec_a = declared(before, GRAPH_A)
     best = _best_tries(before, tries)
+    # tries that took out a victim are their own table: the hazard rows and
+    # the hazard scores never count them
+    v_best = {h: v for h, v in best.items() if v.get("victim")}
+    best = {h: v for h, v in best.items() if not v.get("victim")}
     mech = {h: round(v["value"], 3) for h, v in best.items()}
     mparts = {h: v["parts"] for h, v in best.items()}
     tested = [h for h in mech]
@@ -547,6 +626,19 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
             explain.append("Shift more than declared: " + ", ".join(less) + ".")
         if worse:
             explain.append("The answer grew more alarmed when removed: " + ", ".join(worse) + ".")
+    # ── the victims: what can be harmed, weighed from the other end
+    v_b, v_a = victims_declared(before, GRAPH_B), victims_declared(before, GRAPH_A)
+    v_ids = list(dict.fromkeys(list(v_b) + list(v_best)))
+    v_says, v_adv = _shares(v_b, v_ids), _shares(v_a, v_ids)
+    v_mech = {h: round(v["value"], 3) for h, v in v_best.items()}
+    v_does = _shares(v_mech, list(v_mech))
+    victims = [{"object_id": h, "state": states.get(h, ""), "victim": True,
+                "says": round(v_says.get(h, 0.0), 3),
+                "says_advice": round(v_adv.get(h, 0.0), 3),
+                "does": round(v_does.get(h, 0.0), 3) if h in v_mech else None,
+                "shift": v_mech.get(h), "parts": v_best[h]["parts"] if h in v_best else [],
+                "drives": v_mech.get(h, 0) > 0}
+               for h in sorted(v_ids, key=lambda x: (-v_says.get(x, 0.0), x))]
     n_tested = len([h for h in tested if h in named])
     pos = {h: v for h, v in mech.items() if v > 0}
     return {
@@ -581,4 +673,5 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
                     "shift": max(mech.get(m, 0.0) for m in ms)}
                    for u, ms in _members.items()],
         "hazards": rows,
+        "victims": victims,
     }

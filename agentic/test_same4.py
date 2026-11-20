@@ -663,3 +663,123 @@ def test_ground_truth_names_are_matched_one_to_one(tmp_path):
     assert got["driver_1"] == "man_1"                                  # a person for the person
     assert "oak_1" not in got                                          # two trees: no guess
     assert iv4._gt_to_model([], objs) == {} and iv4._gt_to_model(nodes, []) == {}
+
+
+# ── victims: the other end of the danger (a person, an animal, a car, a house) ──
+
+def _victim_scene():
+    objs = ["fire_1", "spill_1", "man_1", "car_1", "dog_1", "sign_1"]
+    arrows = [("fire_1", "may_harm", "man_1"), ("fire_1", "may_spread_to", "car_1"),
+              ("spill_1", "may_harm", "man_1"), ("spill_1", "may_harm", "dog_1")]
+    b = _belief(objs, arrows, arrows)
+    return {**b, "threats": [{"object_id": "fire_1"}, {"object_id": "spill_1"}],
+            "recommendations": [_rec(1, "fire_1", ["man_1"], "Move man_1 away from fire_1."),
+                                _rec(2, "fire_1", ["car_1"], "Tow car_1."),
+                                _rec(3, "spill_1", ["dog_1"], "Contain spill_1.")]}, objs
+
+
+def test_anything_an_arrow_ends_at_is_a_victim_and_can_be_picked():
+    """Sunny, 2026-11-20: "I want victims (whether life or animal or
+    anything else, properties, cars etc)"."""
+    from agentic import intervention4 as iv4
+    b, _ = _victim_scene()
+    assert [v["object_id"] for v in iv4.victims_of(b)] == ["man_1", "car_1", "dog_1"]
+    assert iv4.hazards_of(b) == {"fire_1", "spill_1"}
+    assert iv4.is_victim(b, "car_1") and not iv4.is_victim(b, "fire_1")
+    assert not iv4.is_victim(b, "sign_1")                              # nothing points at it
+    for bad in (None, "x", {}, {"detected_objects": [None], "causal_graph": "zz",
+                                "recommendations": [None, {"structured_reasoning": 3}]}):
+        assert iv4.victims_of(bad) == [] and iv4.hazards_of(bad) == set()
+        assert iv4.is_victim(bad, "man_1") is False
+    # the edit wording: the victim is out of the picture, every hazard stays
+    cap, img = ui_iv.victim_instructions("car", ["fire", "man", "fire", ""])
+    assert "car is not in the scene at all" in cap and "Every hazard stays" in cap
+    assert "Remove the car from the picture entirely" in img and "keep fire, man," in img
+    assert "the object" in ui_iv.victim_instructions(None, None)[0]
+    info = {"result": b, "picked_by": {}, "candidates": [
+        {"object_id": "fire_1", "label": "fire", "state": "s"},
+        {"object_id": "car_1", "label": "car", "state": "s", "variable_role": "victim"}]}
+    assert ui_iv.target_options(info)[1]["label"].strip() == "car_1 \u00b7 s \u00b7 victim"
+    assert ui_iv.instructions(info, "car_1")[0] == ui_iv.victim_instructions(
+        "car", ["fire", "spill", "man", "dog", "sign"])[0]
+
+
+def test_a_victim_is_weighed_from_the_other_end_of_the_arrow():
+    b, _ = _victim_scene()
+    w = declared4.victims_declared(b)
+    assert set(w) == {"man_1", "car_1", "dog_1"}
+    assert w["man_1"] > w["dog_1"] > 0                                 # two arrows end at the man
+    assert w["man_1"] > w["car_1"] > 0                                 # a life counts double
+    c = declared4.compare(b, [])
+    assert [v["object_id"] for v in c["victims"]][0] == "man_1"
+    assert sum(v["says"] for v in c["victims"]) == pytest.approx(1.0, abs=0.01)
+    assert all(v["does"] is None for v in c["victims"])
+    assert {r["object_id"] for r in c["hazards"]} == {"fire_1", "spill_1"}   # rows unchanged
+    for bad in (None, "x", {"graph_b": 3}):
+        assert declared4.victims_declared(bad) == {}
+        assert declared4.compare(bad, [])["victims"] == []
+
+
+def test_a_try_that_took_out_a_victim_is_its_own_test_and_touches_no_hazard_score():
+    b, objs = _victim_scene()
+    spill = (_try("spill_1", 0.6)[0], _after(objs, ("spill_1",), ["fire_1"]))
+    fire = (_try("fire_1", 0.6)[0], _after(objs, ("fire_1",), ["spill_1"]))
+    plain = declared4.compare(b, [spill, fire])
+    man = (_try("man_1", 0.5)[0], _after(objs, ("man_1",), ["fire_1", "spill_1"]))
+    c = declared4.compare(b, [spill, fire, man])
+    assert c["score"] == plain["score"] and c["groups"] == plain["groups"]
+    assert [r["shift"] for r in c["hazards"]] == [r["shift"] for r in plain["hazards"]]
+    by = {v["object_id"]: v for v in c["victims"]}
+    assert by["man_1"]["shift"] == pytest.approx(0.5, abs=0.01) and by["man_1"]["does"] == 1.0
+    assert by["car_1"]["shift"] is None
+    card = ui_iv.card_component(c, {})
+    rows = {_flat(r).split()[0]: _flat(r) for r in _by_class(card, "iv-victim")}
+    assert set(rows) == {"man_1", "car_1", "dog_1"}
+    assert "shifts emergency responses" in rows["man_1"] and "not removed yet" in rows["car_1"]
+    assert _flat(_by_class(card, "iv-victims-note")) == "what can be harmed"
+    assert "man_1" not in {_flat(r).split()[0] for r in _by_class(card, "iv-feature")}
+    # no victims, or nonsense: no block, no crash
+    assert _by_class(ui_iv.card_component({**c, "victims": []}, {}), "iv-victim") == []
+    assert ui_iv.card_component({**c, "victims": [None, "x", {"object_id": "a", "shift": "z"}]},
+                                {}) is not None
+
+
+def test_the_recommendation_that_protected_a_removed_victim_is_the_evidence():
+    from agentic import grounding4 as g
+    b, objs = _victim_scene()
+    # the man is gone: his recommendation is dropped, the others stay
+    after = {**_after(objs, ("man_1",), ["fire_1", "spill_1"]),
+             "recommendations": [_rec(1, "fire_1", ["car_1"], "Tow car_1."),
+                                 _rec(2, "spill_1", ["dog_1"], "Contain spill_1.")]}
+    t = g.table(b, [({"index": 1, "target": "man_1"}, after)])
+    by = {r["rank"]: r["cells"][0] for r in t["rows"]}
+    assert t["columns"][0]["victim"] is True
+    assert by[1]["label"] == "grounded" and by[1]["named_removed"] is True
+    assert by[2]["label"] == "correctly_ignored" and by[3]["label"] == "correctly_ignored"
+    # the model still tells someone to move the man who is not there
+    ghost = {**after, "recommendations": [_rec(1, "fire_1", ["car_1"], "Move the man away."),
+                                          _rec(2, "spill_1", ["dog_1"], "Contain spill_1.")]}
+    t = g.table(b, [({"index": 1, "target": "man_1"}, ghost)])
+    cell = t["rows"][0]["cells"][0]
+    assert cell["still_names"] is True and cell["label"] == "masquerade"
+    comp = ui_iv.table_component(t)
+    assert "still names what was removed" in _flat(_by_class(comp, "iv-row")[0])
+    assert _flat(_by_class(comp, "iv-victim-col")).strip() == "\u00b7 victim"
+    # "manual" is not "man": whole words only
+    assert g._mentions({"action": "Use the manual valve."}, {"man_1"}, {"man"}) is False
+    assert g._mentions({"action": "Evacuate man_1 now."}, {"man_1"}, set()) is True
+    for bad in (None, "x", {"action": None}, {"structured_reasoning": 3}):
+        assert g._mentions(bad, {"man_1"}, {"man"}) is False
+
+
+def test_ground_truth_weighs_victims_the_same_way(tmp_path):
+    from agentic import intervention4 as iv4
+    b, objs = _gt_scene(tmp_path)
+    extra = iv4.gt_objects(b)
+    vs = declared4.victims_should(extra)
+    assert vs["man_1"] > 0 and vs["shed_1"] == 0.0                     # the shed: spurious, arrow in
+    m = declared4.match_ground_truth(declared4.compare(b, []), extra)
+    assert m["victims_should"]["man_1"] == 1.0 and "man_1" not in m["core"]
+    assert m["core_victims"] == ["man_1"]
+    for bad in (None, "x", {"graph": 3}):
+        assert declared4.victims_should(bad) == {}
