@@ -251,3 +251,77 @@ def test_the_groundedness_cells_cover_every_state():
     assert "a, b, c" in full[2].title
     for bad in ("x", {}, {"n": 2}, {"n": 1, "judged": "z", "score": "q"}):
         assert len(ui_scenes._grounded_cells(bad)) == 3
+
+
+# ── the replay list: a run, and its edited runs under it (Sunny, 2026-11-20:
+#    "simplify the runs... easily recognizable") ──────────────────────────
+
+def _listed(tmp_path, monkeypatch, runs):
+    """runs: [(name, image, t, origin or None)] -> the option texts."""
+    import json as _json, os as _os
+    for name, image, t, origin in runs:
+        d = tmp_path / name
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "events.jsonl").write_text(_json.dumps(
+            {"t": t, "type": "run_started", "image_name": image}) + "\n")
+        _os.utime(d / "events.jsonl", (t, t))
+        if origin is not None:
+            (d / "after_of.json").write_text(origin if isinstance(origin, str)
+                                             else _json.dumps(origin))
+    monkeypatch.setattr(ui, "UI_RUNS_DIR", tmp_path)
+    monkeypatch.setattr(ui, "PERCEPTION_DIR", tmp_path / "none")
+    return ui.saved_records()
+
+
+def test_edited_runs_sit_under_their_run_and_say_what_was_removed(tmp_path, monkeypatch):
+    import json as _json
+    opts = _listed(tmp_path, monkeypatch, [
+        ("ui_old", "A_fire.png", 1000.0, None),
+        ("ui_base", "C_tanker_fire.jpg", 2000.0, None),
+        ("ui_e1", "C_tanker_fire.jpg", 3000.0, {"before_run": "ui_base", "target": "fire_1"}),
+        ("ui_e2", "C_tanker_fire.jpg", 4000.0, {"before_run": "ui_base", "target": "man_1"}),
+        ("ui_lost", "B_pool.jpg", 5000.0, {"before_run": "ui_gone", "target": "pool_1"}),
+    ])
+    (tmp_path / "ui_base" / "interventions.json").write_text(_json.dumps(
+        {"tries": [{"after_run": "ui_e1", "status": "measured", "target": "fire_1"},
+                   {"after_run": "ui_e2", "status": "failed"}]}))
+    opts = ui.saved_records()
+    text = [ui.option_text(o) for o in opts]
+    # newest run first; an edited run whose own run is gone is a line of its own
+    assert text[0].startswith("edit of B_pool · removed pool_1 · ") and text[0].endswith("ui_lost")
+    assert text[1].startswith("C_tanker_fire · ") and " · 1 try · ui_base" in text[1]
+    # its edited runs under it, newest first, set in with the corner
+    assert text[2].startswith(ui.EDIT_MARK + "removed man_1 · ") and "not measured" in text[2]
+    assert text[3].startswith(ui.EDIT_MARK + "removed fire_1 · ") and "not measured" not in text[3]
+    assert text[4].startswith("A_fire · ") and "tries" not in text[4] and "try" not in text[4]
+    assert [o["value"].split("/")[-2] for o in opts] == [
+        "ui_lost", "ui_base", "ui_e2", "ui_e1", "ui_old"]
+    # an edited line is found by typing its scene or its id
+    assert "C_tanker_fire" in opts[2]["search"] and "ui_e2" in opts[2]["search"]
+    assert "edit of" not in text[2]
+    # the list does not look "changed" every time it is rebuilt
+    import json as _j
+    as_browser = _j.loads(_j.dumps(opts, default=lambda c: c.to_plotly_json()))
+    monkeypatch.setattr(ui, "ctx", type("C", (), {"triggered_id": "run-id"})())
+    assert ui.refresh_replay_options("x", 0, as_browser) is ui.dash.no_update
+    assert ui.refresh_replay_options("x", 0, as_browser[:-1]) is not ui.dash.no_update
+
+
+def test_a_torn_or_odd_origin_file_never_breaks_the_list(tmp_path, monkeypatch):
+    opts = _listed(tmp_path, monkeypatch, [
+        ("ui_base", "C_tanker_fire.jpg", 2000.0, None),
+        ("ui_torn", "C_tanker_fire.jpg", 3000.0, "{ torn"),
+        ("ui_list", "C_tanker_fire.jpg", 3100.0, "[1, 2]"),
+        ("ui_self", "C_tanker_fire.jpg", 3200.0, {"before_run": "ui_self"}),
+        ("ui_bare", "C_tanker_fire.jpg", 3300.0, {"before_run": "ui_base"}),
+        ("ui_num", "C_tanker_fire.jpg", 3400.0, {"before_run": 7, "target": 9}),
+    ])
+    (tmp_path / "ui_base" / "interventions.json").write_text("{ torn")
+    opts = ui.saved_records()
+    text = [ui.option_text(o) for o in opts]
+    assert len(opts) == 6
+    assert any(t.startswith(ui.EDIT_MARK + "removed something · ") for t in text)   # no target
+    assert sum(1 for t in text if t.startswith("edit of C_tanker_fire")) == 4
+    assert ui.option_text(None) == "" and ui.option_text({"label": 3}) == ""
+    (tmp_path / "ui_empty").mkdir()
+    assert len(ui.saved_records()) == 6                                # a folder with no events

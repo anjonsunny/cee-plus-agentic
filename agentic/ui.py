@@ -875,35 +875,107 @@ def build_replay_events(record: dict[str, Any]) -> list[dict[str, Any]]:
     return ev
 
 
-def saved_records() -> list[dict[str, str]]:
+EDIT_MARK = "\u00a0\u00a0\u2514 "          # the corner that sets an edited run under its run
+
+
+def option_text(opt: Any) -> str:
+    """The words of one replay option (an edited run's label is a styled
+    component; its words are kept under `search`)."""
+    if not isinstance(opt, dict):
+        return ""
+    return str(opt.get("search") or (opt.get("label") if isinstance(opt.get("label"), str)
+                                     else ""))
+
+
+def saved_records() -> list[dict[str, Any]]:
     """Replayables: every UI run's events.jsonl flight recorder (true
-    replay, exact event stream), newest first, labelled with the image and
-    the time — then the frozen worked-example records.
+    replay, exact event stream), then the frozen worked-example records.
 
     Sunny (2026-11-02): the list was built once at server start, sorted by
     run id (random hex) and labelled only "ui run · ui_xxxx", so a fresh
     run was not in it and an older one got picked. Now rebuilt every time
-    the dropdown opens, newest first, with image name and time."""
+    the dropdown opens, newest first, with image name and time.
+
+    Sunny (2026-11-20: "simplify the runs... easily recognizable"): a real
+    run is one line that says how many tries it has; its edited runs (the
+    after side of a try) sit under it, set in with a corner, grey, and say
+    WHAT WAS REMOVED instead of "edit of ...". An edited run that was never
+    measured says so. An edited run whose own run is gone stays a line of
+    its own. Never raises on a torn file."""
     import datetime as _dt
-    opts: list[dict[str, str]] = []
+    opts: list[dict[str, Any]] = []
+    rows: list[dict] = []
     if UI_RUNS_DIR.exists():
-        runs = sorted(UI_RUNS_DIR.glob("*/events.jsonl"),
-                      key=lambda q: q.stat().st_mtime, reverse=True)
-        for p in runs:
-            img, when = "", ""
+        for p in UI_RUNS_DIR.glob("*/events.jsonl"):
+            img, t = "", None
+            try:
+                mtime = p.stat().st_mtime
+            except OSError:
+                continue
             try:
                 # run_settings is now the first event, so look past it
                 from agentic.ui_scenes import run_head
                 head = run_head(p)
                 img = str(head.get("image_name") or "").rsplit(".", 1)[0]
-                when = _dt.datetime.fromtimestamp(
-                    float(head.get("t") or p.stat().st_mtime)).strftime("%b %d %H:%M")
+                t = float(head.get("t") or mtime)
             except Exception:
-                when = _dt.datetime.fromtimestamp(p.stat().st_mtime).strftime("%b %d %H:%M")
-            if (p.parent / "after_of.json").exists():
-                img = "edit of " + (img or "run")       # an intervention's after side
-            opts.append({"label": f"{img or 'run'} · {when} · {p.parent.name}",
-                         "value": str(p)})
+                t = mtime
+            origin = None
+            try:
+                if (p.parent / "after_of.json").exists():
+                    origin = json.loads((p.parent / "after_of.json").read_text())
+            except (OSError, ValueError):
+                origin = {}
+            if origin is not None and not isinstance(origin, dict):
+                origin = {}
+            rows.append({"path": p, "name": p.parent.name, "img": img, "t": t,
+                         "origin": origin,
+                         "when": _dt.datetime.fromtimestamp(t).strftime("%b %d %H:%M")})
+    names = {r["name"] for r in rows}
+    under: dict[str, list[dict]] = {}
+    for r in rows:
+        base = str((r["origin"] or {}).get("before_run") or "")
+        if r["origin"] is not None and base in names and base != r["name"]:
+            under.setdefault(base, []).append(r)
+    nested = {e["name"] for es in under.values() for e in es}
+
+    def measured(base: dict) -> set[str]:
+        try:
+            from agentic import ui_intervene
+            return {str(t.get("after_run")) for t in ui_intervene.load_tries(base["path"].parent)
+                    if isinstance(t, dict) and t.get("status") == "measured"}
+        except Exception:
+            return set()
+
+    def running(name: str) -> bool:
+        run = RUNS.get(name[3:] if name.startswith("ui_") else name)
+        return isinstance(run, dict) and not run.get("done")
+
+    for r in sorted((x for x in rows if x["name"] not in nested),
+                    key=lambda x: x["t"], reverse=True):
+        img = r["img"] or "run"
+        if r["origin"] is not None:
+            # the after side of a try whose own run is no longer here
+            what = str(r["origin"].get("target") or "")
+            opts.append({"label": f"edit of {img} · " + (f"removed {what} · " if what else "")
+                                  + f"{r['when']} · {r['name']}", "value": str(r["path"])})
+            continue
+        edits = sorted(under.get(r["name"], []), key=lambda x: x["t"], reverse=True)
+        done = measured(r) if edits else set()
+        n = sum(1 for e in edits if e["name"] in done)
+        opts.append({"label": f"{img} · {r['when']}"
+                              + (f" · {n} tr{'y' if n == 1 else 'ies'}" if n else "")
+                              + f" · {r['name']}", "value": str(r["path"])})
+        for e in edits:
+            what = str(e["origin"].get("target") or "") or "something"
+            text = (f"{EDIT_MARK}removed {what} · {e['when']}"
+                    + ("" if e["name"] in done else
+                       " · running" if running(e["name"]) else " · not measured"))
+            opts.append({"label": html.Span(text, className="replay-edit",
+                                            style={"color": "#64748b", "fontSize": "12px"}),
+                         "value": str(e["path"]),
+                         # typed text finds it by what was removed, its scene, its id
+                         "search": f"{text} {img} {e['name']}"})
     if PERCEPTION_DIR.exists():
         opts += [{"label": "example · " + p.name.replace("__perception.json", ""),
                   "value": str(p)}
@@ -6147,7 +6219,8 @@ app.layout = html.Div([
         html.Button("ANALYZE", id="analyze", className="go", n_clicks=0),
         dcc.Dropdown(id="replay", options=saved_records(),
                      placeholder="or replay a saved run...",
-                     style={"width": "260px", "color": "#111"}),
+                     optionHeight=28, maxHeight=460,
+                     style={"width": "400px", "color": "#111"}),
         # UI cleanup step 2 (2026-10-30): one switch for the whole page.
         # A fresh browser opens in clean view (Sunny); the choice is kept
         # in localStorage, page-level, never in events.jsonl.
@@ -6812,7 +6885,10 @@ def refresh_replay_options(_run_id, n, current):
     if ctx.triggered_id == "tick" and (n or 0) % 100:
         return dash.no_update
     fresh = saved_records()
-    return fresh if fresh != (current or []) else dash.no_update
+
+    def key(opts: Any) -> list:
+        return [(o.get("value"), option_text(o)) for o in (opts or []) if isinstance(o, dict)]
+    return fresh if key(fresh) != key(current) else dash.no_update
 
 
 @app.callback(Output("run-id", "data"),
