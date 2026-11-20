@@ -671,7 +671,7 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
     and the words core / spurious. Every explanation is on hover (Sunny,
     2026-11-16: "cleaner without losing substance"). `next_id(hazard)`
     gives the id of the "remove next" button; ui.py owns its callback."""
-    from agentic import declared4
+    from agentic import declared4, same4
     from agentic.ui_clean import ent_chip
     cmp = cmp if isinstance(cmp, dict) else {}
     tbl = tbl if isinstance(tbl, dict) else {}
@@ -727,6 +727,24 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
                 className="iv-same", title=SAME_TIP,
                 style={"fontSize": "11px", "color": "#334155", "margin": "4px 0 0"}))
 
+    # ── the same question, answered by ground truth (calibration only)
+    if gt_on and isinstance(syn.get("gt_same_hazards"), list):
+        said = {tuple(sorted(str(x) for x in g)) for g in (cmp.get("same_hazards") or [])
+                if isinstance(g, (list, tuple))}
+        gt_groups = sorted(set(same4.groups(syn["gt_same_hazards"]).values()))
+        for g in gt_groups:
+            rows.append(html.Div(
+                "ground truth says: " + " and ".join(g) + " are the same hazard · "
+                + ("the model says the same" if tuple(sorted(g)) in said
+                   else "the model does not say so"),
+                className="iv-same-gt",
+                style={"fontSize": "11px", "color": "#7c3aed", "margin": "2px 0 0"}))
+        for g in sorted(said - set(gt_groups)):
+            rows.append(html.Div(
+                "ground truth does not call " + " and ".join(g) + " the same hazard",
+                className="iv-same-gt",
+                style={"fontSize": "11px", "color": "#7c3aed", "margin": "2px 0 0"}))
+
     # ── the three gaps: two declarations and the shift (1.00 = the same shares)
     def _gap(v: Any) -> str:
         return f"{v:.2f}" if isinstance(v, (int, float)) else "needs a second removed hazard"
@@ -777,7 +795,8 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
     if gt_on:
         gt_d = dist.get("gt_dist") if isinstance(dist.get("gt_dist"), dict) else {}
         core = syn.get("gt_core") if isinstance(syn.get("gt_core"), (list, set, tuple)) else []
-        gt_rows = {g["object_id"]: g for g in declared4.against_ground_truth(cmp, gt_d, core)}
+        gt_rows = {g["object_id"]: g for g in declared4.against_ground_truth(
+            cmp, gt_d, core, syn.get("gt_listed"), syn.get("gt_same_hazards"))}
     feats = [r for r in (cmp.get("hazards") if isinstance(cmp.get("hazards"), list) else [])
              if isinstance(r, dict)]
     known = {str(r.get("object_id")) for r in feats}
@@ -825,7 +844,8 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
                            else html.Span("not removed yet", style=quiet), style=_TD)]
             g = gt_rows.get(oid) or {}
             if gt_on:
-                named = bool(g.get("is_core")) or float(g.get("should") or 0) > 0
+                named = (bool(g.get("is_core")) or float(g.get("should") or 0) > 0
+                         or bool(g.get("listed")))
                 via = [str(x) for x in (g.get("via") or [])]
                 tds.append(html.Td(html.Span("with " + ", ".join(via), className="iv-gt-via",
                                              title="ground truth names " + ", ".join(via)

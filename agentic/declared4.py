@@ -59,12 +59,18 @@ def _high(shares: dict[str, float]) -> set[str]:
     return {k for k, v in shares.items() if top > 0 and v >= HALF * top}
 
 
-def against_ground_truth(cmp: dict, should: dict[str, float], core: Any) -> list[dict]:
+def against_ground_truth(cmp: dict, should: dict[str, float], core: Any,
+                         listed: Any = None, gt_same: Any = None) -> list[dict]:
     """Each feature judged by ground truth: [{object_id, should, word}].
     `should` is the ground-truth share per hazard, `core` the hazards
     ground truth marks as core. A ground-truth hazard the model never
     declared or removed is listed too."""
     core = {str(x) for x in (core or [])}
+    # `listed`: every thing ground truth lists (a listed thing with no arrow
+    # should not matter). `gt_same`: the pairs GROUND TRUTH calls the same
+    # hazard; None = the file does not say, so the model's own pairs are used.
+    listed = {str(x) for x in (listed if isinstance(listed, (list, set, tuple)) else [])}
+    gt_grp = same4.groups(gt_same) if isinstance(gt_same, list) else None
     rows = {str(r.get("object_id")): r for r in (cmp.get("hazards") or [])
             if isinstance(r, dict)}
     out = []
@@ -83,7 +89,10 @@ def against_ground_truth(cmp: dict, should: dict[str, float], core: Any) -> list
         knows = isinstance(own, (int, float)) and not isinstance(own, bool) and own > 0
         # ...unless ground truth names it itself: then it keeps its own word
         if not is_core and not knows and not r.get("alone_of"):
-            via = sorted(str(m) for m in (r.get("same_as") or []) if str(m) in core)
+            partners = (gt_grp.get(h, ()) if gt_grp is not None
+                        else (r.get("same_as") if isinstance(r.get("same_as"),
+                                                              (list, tuple)) else []))
+            via = sorted(str(m) for m in partners if str(m) in core and str(m) != h)
             is_core = bool(via)
         if tested and r.get("gone_with"):
             # it only went along with another hazard: that try's shift is
@@ -97,6 +106,7 @@ def against_ground_truth(cmp: dict, should: dict[str, float], core: Any) -> list
         ws = [x for x in ws if isinstance(x, (int, float)) and not isinstance(x, bool)]
         w = sum(ws) if ws else None
         out.append({"object_id": h, "is_core": is_core, "via": via,
+                    "listed": h in listed or is_core or knows,
                     "should": round(float(w), 3) if isinstance(w, (int, float)) else 0.0,
                     "word": word})
     return out

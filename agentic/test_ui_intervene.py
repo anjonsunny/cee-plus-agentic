@@ -631,7 +631,8 @@ def test_with_verified_ground_truth_a_try_gets_its_frozen_cell_and_labels(gt):
     before = iv4.result_from_run_dir(base)
     syn = iv4.synthesis(before, [(ui_iv.load_tries(base)[0], iv4.result_from_run_dir(after))])
     assert syn["available"] is True and syn["tries"] == [
-        {"index": 1, "target": "fire_1", "cell": "grounded", "frozen_cell": "grounded"}]
+        {"index": 1, "target": "fire_1", "picked": "fire_1", "cell": "grounded",
+         "frozen_cell": "grounded"}]
     by = {h["object_id"]: h for h in syn["hazards"]}
     assert by["fire_1"]["status"] == "grounded" and by["fire_1"]["is_core"] is True
     assert by["tanker_1"]["status"] == "untested"

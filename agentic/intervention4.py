@@ -325,6 +325,86 @@ def _our_reading(before: dict, after: dict, res: dict) -> dict:
     return {"signals": signals, "verdict": verdict}
 
 
+def gt_objects(before: Any) -> dict:
+    """What the ground-truth file of the before run says beyond its arrows
+    (Sunny, 2026-11-20: "every recognizable instance should be either core
+    or spurious"):
+
+      "listed"        every thing the human listed, in the MODEL's ids
+      "same_hazards"  the pairs the human calls one and the same hazard, in
+                      the model's ids; None when the file does not answer
+                      the question at all (an older file)
+
+    A ground-truth id is matched to a model id by the id itself, else by a
+    label only one object of the run carries. A thing with no match is left
+    out. Dev-side only: this never reaches a prompt. Never raises."""
+    out: dict = {"listed": [], "same_hazards": None}
+    gt = _dict(_dict(before).get("gt"))
+    try:
+        raw = json.loads((Path(str(gt.get("dir"))) /
+                          f"{gt.get('image_filename')}.gt.json").read_text())
+    except Exception:
+        return out
+    raw = _dict(raw)
+    objs = [o for o in _list(_dict(before).get("detected_objects")) if isinstance(o, dict)]
+    ids = {str(o.get("object_id") or "") for o in objs}
+    by_label: dict[str, list[str]] = {}
+    for o in objs:
+        by_label.setdefault(str(o.get("label") or "").strip().lower(), []).append(
+            str(o.get("object_id") or ""))
+    to_model: dict[str, str] = {}
+    for n in _list(raw.get("nodes")):
+        if not isinstance(n, dict) or not isinstance(n.get("id"), str):
+            continue
+        same_label = by_label.get(str(n.get("label") or "").strip().lower()) or []
+        if n["id"] in ids:
+            to_model[n["id"]] = n["id"]
+        elif len(same_label) == 1 and same_label[0]:
+            to_model[n["id"]] = same_label[0]
+    out["listed"] = sorted(set(to_model.values()))
+    if isinstance(raw.get("same_hazards"), list):
+        pairs = []
+        for p in raw["same_hazards"]:
+            if (isinstance(p, (list, tuple)) and len(p) == 2
+                    and all(isinstance(x, str) for x in p)):
+                a, b = to_model.get(p[0]), to_model.get(p[1])
+                if a and b and a != b:
+                    pairs.append(sorted([a, b]))
+        out["same_hazards"] = pairs
+    return out
+
+
+def same_pairs_for_gt(before: Any, extra: Any = None) -> list:
+    """The same-hazard pairs the ground-truth comparison goes by: the
+    human's when the file answers the question, else the model's own."""
+    extra = extra if isinstance(extra, dict) else gt_objects(before)
+    if isinstance(extra.get("same_hazards"), list):
+        return extra["same_hazards"]
+    from agentic import same4                    # lazy: same4 is pure code
+    return same4.pairs_of(before)
+
+
+def counted_as(target: str, after: Any, gt_hazards: Any, pairs: Any) -> str:
+    """The hazard a try counts as against ground truth. A try is saved under
+    the name that was picked; when ground truth does not have that name as a
+    hazard but calls it the same hazard as one it does have, and that one
+    went too, the try counts as that hazard (C_tanker ui_2345d3fc: the fire
+    was removed, saved as brush_1, and read as a mistake). Never raises."""
+    target = str(target or "")
+    gt_hazards = {str(x) for x in (gt_hazards if isinstance(gt_hazards, (set, list, tuple))
+                                   else [])}
+    if not target or target in gt_hazards:
+        return target
+    from agentic import same4
+    after = _dict(after)
+    still = {str(t.get("object_id") or "") for t in _list(after.get("threats"))
+             if isinstance(t, dict)}
+    for m in sorted(same4.groups(pairs if isinstance(pairs, list) else []).get(target, ())):
+        if m != target and m in gt_hazards and m not in still:
+            return m
+    return target
+
+
 def synthesis(before: dict, tries: list[tuple[dict, dict]], *,
               core_basis: str = CORE_BASIS, core_rule: str = "half_max") -> dict:
     """The frozen arm's labels that need ground truth, over all tries of one
@@ -352,8 +432,20 @@ def synthesis(before: dict, tries: list[tuple[dict, dict]], *,
     clean_before = clean_result(before)
     history = []
     frozen_history = []
+    extra = gt_objects(before)
+    gt_pairs = same_pairs_for_gt(before, extra)
+    try:
+        gt_haz = {str(c.get("object_id")) for c in
+                  _list(_dict(candidates(before, core_basis=core_basis,
+                                         core_rule=core_rule)).get("candidates"))
+                  if isinstance(c, dict) and c.get("is_gt_hazard")}
+    except Exception:
+        gt_haz = set()
+    out["gt_listed"], out["gt_same_hazards"] = extra["listed"], extra["same_hazards"]
     for one, after in tries or []:
         one = _dict(one)
+        picked = str(one.get("target") or "")
+        one = {**one, "target": counted_as(picked, after, gt_haz, gt_pairs)}
         try:
             res = measure(before, after, str(one.get("target") or ""),
                           modality=str(one.get("modality") or "both"),
@@ -378,6 +470,7 @@ def synthesis(before: dict, tries: list[tuple[dict, dict]], *,
         ours = _our_reading(before, after, res)
         history.append({**entry, "signals": ours["signals"], "verdict": ours["verdict"]})
         out["tries"].append({"index": one.get("index"), "target": one.get("target"),
+                             "picked": picked,
                              "cell": _dict(ours["verdict"]).get("cell"),
                              "frozen_cell": _dict(res.get("verdict")).get("cell")})
     try:

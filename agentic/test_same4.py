@@ -415,3 +415,91 @@ def test_one_try_that_took_out_several_is_said_once_and_later_bars_are_faded():
     assert c1["one_try"] == [] and _by_class(ui_iv.card_component(c1, {}), "iv-one-try") == []
     assert ui_iv.card_component({"one_try": [None, "x", ["a"]], "hazards": [
         {"object_id": "a", "try_with": "zz", "does": 0.5}]}, {}) is not None
+
+
+# ── ground truth lists every thing, and says which are the same hazard ──
+
+def _gt_before(tmp_path, body):
+    import json as _json
+    (tmp_path / "pic.jpg.gt.json").write_text(body if isinstance(body, str) else _json.dumps(body))
+    objs = [{"object_id": "fire_1", "label": "fire"}, {"object_id": "brush_1", "label": "brush"},
+            {"object_id": "tanker_truck_1", "label": "tanker"}, {"object_id": "man_1", "label": "man"},
+            {"object_id": "man_2", "label": "man"}, None, "x"]
+    return {"gt": {"dir": str(tmp_path), "image_filename": "pic.jpg", "status": "verified"},
+            "detected_objects": objs, "same_hazards": [["man_1", "man_2"]]}
+
+
+def test_ground_truth_lists_every_thing_and_its_own_same_hazards(tmp_path):
+    from agentic import intervention4 as iv4
+    b = _gt_before(tmp_path, {
+        "nodes": [{"id": "fire_1", "label": "fire"}, {"id": "brush_1", "label": "brush"},
+                  {"id": "tanker_1", "label": "tanker"},      # another id, one label: matched
+                  {"id": "driver_1", "label": "man"},         # two men in the run: no match
+                  {"id": "ghost_1", "label": "ghost"}, None, {"id": 7}],
+        "same_hazards": [["fire_1", "brush_1"], ["fire_1", "ghost_1"], ["fire_1"], None, "x",
+                         ["fire_1", "fire_1"]]})
+    got = iv4.gt_objects(b)
+    assert got["listed"] == ["brush_1", "fire_1", "tanker_truck_1"]
+    assert got["same_hazards"] == [["brush_1", "fire_1"]]
+    assert iv4.same_pairs_for_gt(b) == [["brush_1", "fire_1"]]         # the human's, not the model's
+    # an older file does not answer the question: the model's own pairs stand
+    old = _gt_before(tmp_path, {"nodes": [{"id": "fire_1", "label": "fire"}]})
+    assert iv4.gt_objects(old)["same_hazards"] is None
+    assert iv4.same_pairs_for_gt(old) == [["man_1", "man_2"]]
+    # no file, a broken file, nonsense: nothing listed, never raises
+    for bad in (None, {}, {"gt": None}, {"gt": {"dir": str(tmp_path), "image_filename": "no"}},
+                _gt_before(tmp_path, "{not json"), _gt_before(tmp_path, "[1, 2]"),
+                _gt_before(tmp_path, {"nodes": "x", "same_hazards": "y"})):
+        assert iv4.gt_objects(bad) == {"listed": [], "same_hazards": None}
+
+
+def test_a_try_counts_as_the_hazard_ground_truth_has():
+    """C_tanker ui_2345d3fc: the fire was removed, the try was saved under
+    brush_1, ground truth has only fire_1, and the match read 0.786."""
+    from agentic import intervention4 as iv4
+    pairs, gt = [["brush_1", "fire_1"]], {"fire_1", "spill_1"}
+    gone = {"threats": [{"object_id": "spill_1"}]}
+    assert iv4.counted_as("brush_1", gone, gt, pairs) == "fire_1"
+    assert iv4.counted_as("fire_1", gone, gt, pairs) == "fire_1"       # already a GT hazard
+    assert iv4.counted_as("smoke_1", gone, gt, pairs) == "smoke_1"     # no pair: itself
+    # the fire is still a hazard after the edit: the brush was removed alone
+    kept = {"threats": [{"object_id": "fire_1"}, None, "x"]}
+    assert iv4.counted_as("brush_1", kept, gt, pairs) == "brush_1"
+    for bad in (None, "x", [], {"threats": "zz"}):
+        assert iv4.counted_as("brush_1", bad, gt, pairs) == "fire_1"
+    assert iv4.counted_as("brush_1", gone, None, None) == "brush_1"
+    assert iv4.counted_as(None, gone, gt, pairs) == ""
+
+
+def test_ground_truth_pairs_decide_the_word_and_a_listed_thing_gets_a_bar():
+    b, objs = _pair_smoke_scene()
+    after = _after(objs, ("fire_1", "brush_1", "smoke_1"), ["spill_1"])
+    c = declared4.compare(b, [(_try("brush_1", 0.6)[0], after)])
+    should, core = {"fire_1": 0.4, "spill_1": 0.6}, ["fire_1", "spill_1"]
+    # ground truth answers "none are the same": the model's pair is not used
+    gt = {g["object_id"]: g for g in declared4.against_ground_truth(c, should, core, [], [])}
+    assert gt["brush_1"]["via"] == [] and gt["brush_1"]["word"] != declared4.CORE
+    # ground truth says the pair: core with the fire
+    gt = {g["object_id"]: g for g in declared4.against_ground_truth(
+        c, should, core, ["brush_1", "smoke_1"], [["brush_1", "fire_1"]])}
+    assert gt["brush_1"]["via"] == ["fire_1"] and gt["brush_1"]["word"] == declared4.CORE
+    assert gt["smoke_1"]["listed"] is True
+    syn = {"available": True, "distribution": {"gt_dist": should}, "gt_core": core, "gt": {},
+           "gt_listed": ["brush_1", "smoke_1"], "gt_same_hazards": [["brush_1", "fire_1"]]}
+    card = ui_iv.card_component(c, {}, syn)
+    rows = {_flat(r).split()[0]: _flat(r) for r in _by_class(card, "iv-feature")}
+    assert "not in ground truth" not in rows["smoke_1"]                # listed: a 0.00 bar
+    assert _flat(_by_class(card, "iv-same-gt")) == (
+        "ground truth says: brush_1 and fire_1 are the same hazard · the model says the same")
+    # the two disagree, each way
+    card = ui_iv.card_component(c, {}, {**syn, "gt_same_hazards": []})
+    assert _flat(_by_class(card, "iv-same-gt")) == (
+        "ground truth does not call brush_1 and fire_1 the same hazard")
+    card = ui_iv.card_component({**c, "same_hazards": []}, {}, syn)
+    assert _flat(_by_class(card, "iv-same-gt")).endswith("the model does not say so")
+    # an older file, or nonsense: no line, no crash
+    for bad in (None, "x", [None, 3, ["a"]]):
+        card = ui_iv.card_component(c, {}, {**syn, "gt_same_hazards": bad, "gt_listed": bad})
+        assert card is not None
+    assert _by_class(ui_iv.card_component(c, {}, {**syn, "gt_same_hazards": None}),
+                     "iv-same-gt") == []
