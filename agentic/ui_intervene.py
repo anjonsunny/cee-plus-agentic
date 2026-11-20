@@ -666,11 +666,12 @@ _GT_SHORT = {
                                              "so that try's shift is not its own; remove it "
                                              "by itself to test it"),
 }
-VICTIMS_NOTE = "what can be harmed"
-VICTIMS_TIP = ("danger needs two ends, and taking away either one lowers it. Each row is "
-               "weighed like a hazard, from the other end of the arrow: the danger a graph "
-               "loses when it is taken out. Shares are among these rows; they are not counted "
-               "in the scores above.")
+KIND_TIP = {
+    "hazard": "something that harms; its shares are among the hazards",
+    "victim": "something that can be harmed. Danger needs two ends, and taking away either "
+              "one lowers it. Weighed like a hazard, from the other end of the arrow; its "
+              "shares are among the victims, and it is not counted in the scores above",
+}
 ONE_TRY = "removed in one try, counted once: "
 ONE_TRY_TIP = ("one try took these out together, so each row shows that try's share; "
                "the score counts the try once")
@@ -864,10 +865,64 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
             cmp, gt_d, core, syn.get("gt_listed"), syn.get("gt_same_hazards"))}
     feats = [r for r in (cmp.get("hazards") if isinstance(cmp.get("hazards"), list) else [])
              if isinstance(r, dict)]
+    # the victims: the other end of the danger, in the SAME table, each row
+    # labelled (Sunny, 2026-11-20: "we can use the same table but just show
+    # small label"). Their shares are among the victims.
+    vrows = [r for r in (cmp.get("victims") if isinstance(cmp.get("victims"), list) else [])
+             if isinstance(r, dict)]
+    v_gt: dict[str, dict] = {}
+    if gt_on and own and vrows:
+        v_gt = {g["object_id"]: g for g in declared4.against_ground_truth(
+            {"hazards": vrows}, own.get("victims_should") or {},
+            own.get("core_victims") or [], own.get("victims") or [], [])}
+
+    def kind(word: str) -> Any:
+        return html.Span(" " + word, className="iv-kind", title=KIND_TIP.get(word, ""),
+                         style={"fontSize": "9.5px", "fontWeight": "700",
+                                "letterSpacing": ".04em", "color": "#94a3b8"})
+
+    def victim_trs() -> list:
+        quiet = {"color": "#94a3b8", "fontSize": "10.5px"}
+        out = []
+        for k, r in enumerate(vrows):
+            oid, state = str(r.get("object_id")), str(r.get("state") or "")
+            sh = r.get("shift")
+            way = ("" if not isinstance(sh, (int, float)) or isinstance(sh, bool) else
+                   "eased" if sh > 0 else "escalated" if sh < 0 else "unchanged")
+            td = {**_TD, "borderTop": "2px solid #cbd5e1"} if k == 0 else _TD
+            tds = [html.Td([ent_chip(oid, "#f97316"), kind("victim")]
+                           + ([html.Span(" \u00b7 " + state, className="iv-state",
+                                         style={"color": "#64748b"})] if state else []),
+                           style=td),
+                   html.Td(_bar(r.get("says_advice"), "#64748b"), style=td),
+                   html.Td(_bar(r.get("says"), "#334155"), style=td),
+                   html.Td(_bar(r.get("does"), "#16a34a") if r.get("does") is not None
+                           else html.Span("not removed yet", style=quiet), style=td)]
+            g = v_gt.get(oid) or {}
+            if gt_on:
+                tds.append(html.Td(_bar(g.get("should"), "#7c3aed") if g.get("listed")
+                                   else html.Span("not in ground truth", style=quiet),
+                                   style=td))
+            tds.append(html.Td(
+                SHIFTS if way in ("eased", "escalated") else NO_SHIFT if way else "",
+                className="iv-role", **{"data-way": way},
+                style={**td, "fontWeight": "700",
+                       "color": {"eased": "#16a34a", "escalated": "#b91c1c"}.get(way, "#94a3b8")}))
+            if gt_on:
+                word = str(g.get("word") or "")
+                short, why = _GT_SHORT.get(word, (word, ""))
+                tds.append(html.Td(short, className="iv-gt-word", title=why,
+                                   **{"data-word": word},
+                                   style={**td, "fontWeight": "800",
+                                          "color": "#16a34a" if short == "core" else
+                                          "#94a3b8" if short == "not removed yet"
+                                          else "#b91c1c"}))
+            out.append(html.Tr(tds, className="iv-victim"))
+        return out
     known = {str(r.get("object_id")) for r in feats}
     feats += [{"object_id": h, "says": 0.0, "does": None, "role": "not declared by the model"}
               for h in gt_rows if h not in known]
-    if feats:
+    if feats or vrows:
         head = ["FEATURE", A_COL, B_COL, "MECHANISTIC"] + (["SHOULD MATTER"] if gt_on else []) \
             + [""] + (["BY GROUND TRUTH"] if gt_on else [])
         quiet = {"color": "#94a3b8", "fontSize": "10.5px"}
@@ -882,7 +937,7 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
             alone = [str(x) for x in (r.get("alone_of") or [])]
             same = [str(x) for x in (r.get("same_as") or [])]
             state = str(r.get("state") or "")
-            tds = [html.Td([ent_chip(oid, "#ef4444")]
+            tds = [html.Td([ent_chip(oid, "#ef4444"), kind("hazard")]
                            + ([html.Span(" \u00b7 " + state, className="iv-state",
                                          style={"color": "#64748b"})] if state else [])
                            + ([html.Div("removed alone; the model calls it the same hazard as "
@@ -948,66 +1003,12 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
                                                                  "not tested alone")
                                           else "#b91c1c"}))
             body.append(html.Tr(tds, className="iv-feature"))
+        body += victim_trs()
         rows.append(html.Table(
             [html.Thead(html.Tr([html.Th(x, style=_TH, title=_HEAD_TIP.get(x, ""))
                                  for x in head])), html.Tbody(body)],
             className="iv-features",
             style={"borderCollapse": "collapse", "width": "100%", "marginTop": "4px"}))
-    # ── VICTIMS: the other end of the danger, weighed the same way
-    vrows = [r for r in (cmp.get("victims") if isinstance(cmp.get("victims"), list) else [])
-             if isinstance(r, dict)]
-    if vrows:
-        v_gt: dict[str, dict] = {}
-        if gt_on and own:
-            v_gt = {g["object_id"]: g for g in declared4.against_ground_truth(
-                {"hazards": vrows}, own.get("victims_should") or {},
-                own.get("core_victims") or [], own.get("victims") or [], [])
-                if g["object_id"] in {str(r.get("object_id")) for r in vrows}}
-        quiet = {"color": "#94a3b8", "fontSize": "10.5px"}
-        head = ["VICTIM", A_COL, B_COL, "MECHANISTIC"] + (["SHOULD MATTER"] if v_gt else []) \
-            + [""] + (["BY GROUND TRUTH"] if v_gt else [])
-        body = []
-        for r in vrows:
-            oid, state = str(r.get("object_id")), str(r.get("state") or "")
-            sh = r.get("shift")
-            way = ("" if not isinstance(sh, (int, float)) else
-                   "eased" if sh > 0 else "escalated" if sh < 0 else "unchanged")
-            tds = [html.Td([ent_chip(oid, "#f97316")]
-                           + ([html.Span(" \u00b7 " + state, className="iv-state",
-                                         style={"color": "#64748b"})] if state else []),
-                           style=_TD),
-                   html.Td(_bar(r.get("says_advice"), "#64748b"), style=_TD),
-                   html.Td(_bar(r.get("says"), "#334155"), style=_TD),
-                   html.Td(_bar(r.get("does"), "#16a34a") if r.get("does") is not None
-                           else html.Span("not removed yet", style=quiet), style=_TD)]
-            g = v_gt.get(oid) or {}
-            if v_gt:
-                tds.append(html.Td(_bar(g.get("should"), "#7c3aed") if g.get("listed")
-                                   else html.Span("not in ground truth", style=quiet),
-                                   style=_TD))
-            tds.append(html.Td(
-                SHIFTS if way in ("eased", "escalated") else NO_SHIFT if way else "",
-                className="iv-role", **{"data-way": way},
-                style={**_TD, "fontWeight": "700",
-                       "color": {"eased": "#16a34a", "escalated": "#b91c1c"}.get(way, "#94a3b8")}))
-            if v_gt:
-                word = str(g.get("word") or "")
-                short, why = _GT_SHORT.get(word, (word, ""))
-                tds.append(html.Td(short, className="iv-gt-word", title=why,
-                                   **{"data-word": word},
-                                   style={**_TD, "fontWeight": "800",
-                                          "color": "#16a34a" if short == "core" else
-                                          "#94a3b8" if short == "not removed yet"
-                                          else "#b91c1c"}))
-            body.append(html.Tr(tds, className="iv-victim"))
-        rows.append(html.Div(VICTIMS_NOTE, className="iv-victims-note", title=VICTIMS_TIP,
-                             style={"fontSize": "11px", "color": "#64748b",
-                                    "margin": "10px 0 0"}))
-        rows.append(html.Table(
-            [html.Thead(html.Tr([html.Th(x, style=_TH, title=_HEAD_TIP.get(x, ""))
-                                 for x in head])), html.Tbody(body)],
-            className="iv-victims",
-            style={"borderCollapse": "collapse", "width": "100%", "marginTop": "2px"}))
     foot = "one ask per try"
     if gt_on:
         gt = syn.get("gt") if isinstance(syn.get("gt"), dict) else {}

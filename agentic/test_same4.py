@@ -736,7 +736,13 @@ def test_a_try_that_took_out_a_victim_is_its_own_test_and_touches_no_hazard_scor
     rows = {_flat(r).split()[0]: _flat(r) for r in _by_class(card, "iv-victim")}
     assert set(rows) == {"man_1", "car_1", "dog_1"}
     assert "shifts emergency responses" in rows["man_1"] and "not removed yet" in rows["car_1"]
-    assert _flat(_by_class(card, "iv-victims-note")) == "what can be harmed"
+    # one table: the victim rows are in the feature table, each row labelled
+    assert len(_by_class(card, "iv-features")) == 1 and _by_class(card, "iv-victims") == []
+    table = _by_class(card, "iv-features")[0]
+    assert len(_by_class(table, "iv-victim")) == 3 and len(_by_class(table, "iv-feature")) == 2
+    assert rows["man_1"].split()[1] == "victim"
+    feats = [_flat(r).split()[:2] for r in _by_class(card, "iv-feature")]
+    assert sorted(feats) == [["fire_1", "hazard"], ["spill_1", "hazard"]]
     assert "man_1" not in {_flat(r).split()[0] for r in _by_class(card, "iv-feature")}
     # no victims, or nonsense: no block, no crash
     assert _by_class(ui_iv.card_component({**c, "victims": []}, {}), "iv-victim") == []
