@@ -1026,6 +1026,8 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
 
 # The two titles of the causal groundedness panel: large, bold, coloured
 # (Sunny, 2026-11-17). One per fold: by feature, and by recommendation.
+TITLE_FINDINGS = "FINDINGS"
+TITLE_NEW_TRY = "NEW TRY"
 TITLE_FEATURES = "CAUSAL GROUNDEDNESS (FEATURES)"
 TITLE_RECS = "CAUSAL GROUNDEDNESS: RECOMMENDATIONS"
 TITLE_STYLE = {"fontSize": "17px", "fontWeight": "800", "letterSpacing": ".05em",

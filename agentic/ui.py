@@ -6048,16 +6048,14 @@ app.index_string = """<!DOCTYPE html>
      wrap div to "wrap mode-clean" / "wrap mode-detailed". */
   .mode-clean .only-detailed { display:none; }
   /* the intervention panel (CAUSAL GROUNDEDNESS) */
-  .iv-new-try { font-size:11.5px; font-weight:800; color:#1d4ed8; cursor:pointer;
-                margin-top:8px; padding:6px 10px; border:1px solid #bfdbfe;
-                border-radius:8px; background:#eff6ff; }
+  .iv-new-try { cursor:pointer; }
   .iv-fold-head { font-size:11px; font-weight:700; color:#334155; cursor:pointer;
                   margin-top:6px; padding:6px 10px; border-radius:6px;
                   background:#f1f5f9; }
   .iv-next { font-size:10.5px; font-weight:700; color:#1d4ed8; cursor:pointer;
              border:1px solid #bfdbfe; border-radius:6px; background:#eff6ff;
              padding:2px 8px; }
-  .iv-next:hover, .iv-new-try:hover { background:#dbeafe; }
+  .iv-next:hover { background:#dbeafe; }
   .iv-note { font-size:10px; color:#94a3b8; margin:4px 0; }
   .iv-lbl { font-size:10px; font-weight:800; letter-spacing:.06em;
             text-transform:uppercase; color:#64748b; width:58px; flex:none; }
@@ -6396,7 +6394,8 @@ app.layout = html.Div([
                "borderRadius": "8px"}),
     html.Div(id="instruments"),
     html.Div([
-        html.Div([html.Div(id="scene", className="scene"),
+        html.Div([html.Div(id="run-progress"),
+                  html.Div(id="scene", className="scene"),
                   # clean view draws only the threats and the at-risk; this
                   # box brings back every box and the pins on the image
                   dcc.Checklist(id="scene-all", value=[],
@@ -6428,19 +6427,27 @@ app.layout = html.Div([
                   # trust, the chain, pathology tickets, and the box reserved
                   # for causal groundedness. Clean view only; the detailed
                   # view keeps these in the Stage 4 card.
-                  html.Details([
-                      html.Summary([html.Span("FINDINGS", className="phase-title"),
-                                    html.Span("trust · chain · pathology · "
-                                              "causal groundedness",
-                                              className="agent-sub",
-                                              style={"marginLeft": "10px"}),
-                                    html.Span("▾", className="station-chev")],
-                                   className="phase-head"),
-                      html.Div(id="findings-body"),
+                  html.Div([
+                      # FINDINGS folds like the two panels under it, with the
+                      # same large title (Sunny, 2026-11-20: "so everything
+                      # is consistent"); it folds only its own content
+                      html.Details([
+                          html.Summary([ui_intervene.TITLE_FINDINGS,
+                                        html.Span("trust · chain · pathology",
+                                                  className="agent-sub",
+                                                  style={"marginLeft": "10px",
+                                                         "letterSpacing": "0",
+                                                         "fontWeight": "400"})],
+                                       className="iv-title",
+                                       style={**ui_intervene.TITLE_STYLE,
+                                              "margin": "0 0 4px"}),
+                          html.Div(id="findings-body"),
+                      ], id="findings-fold", open=True),
                       # CAUSAL GROUNDEDNESS, step 2 (2026-11-13): pick a hazard
                       # of the OPEN run, give the edited scene, run only the
                       # after side (agentic/ui_intervene.py).
                       html.Div([
+                        html.Div(id="iv-progress"),
                         # the feature half of the panel folds as one piece
                         # under its own large title (Sunny, 2026-11-17)
                         html.Details([
@@ -6461,7 +6468,9 @@ app.layout = html.Div([
                           html.Div(id="iv-status"),
                         ], id="iv-features-fold", open=True),
                           html.Details([
-                              html.Summary("new try", className="iv-new-try"),
+                              html.Summary(ui_intervene.TITLE_NEW_TRY, className="iv-new-try",
+                                           style={**ui_intervene.TITLE_STYLE,
+                                                  "margin": "10px 0 4px"}),
                               html.Div(id="iv-note", className="iv-note"),
                               html.Div([
                                   html.Span("remove", className="iv-lbl"),
@@ -6512,8 +6521,7 @@ app.layout = html.Div([
                           html.Div(id="iv-evidence"),
                           dcc.Store(id="iv-key"),
                       ], id="iv-panel", className="iv-panel"),
-                  ], className="phase-card only-clean", open=True,
-                      id="findings-card")]),
+                  ], className="phase-card only-clean", id="findings-card")]),
         # Phase cards stack CHRONOLOGICALLY, pipeline order top-down (the
         # rail reads like the pipeline diagram; feeds scroll, flight plans
         # don't reorder). A finished phase auto-collapses once the next
@@ -6802,6 +6810,41 @@ def iv_poll(base_name: str) -> dict | None:
     ui_intervene.save_try(Path(pending["base_dir"]), one)
     IV_ACTIVE.pop(base_name, None)
     return None
+
+
+def run_progress_component(run_id: Any, what: str = "") -> list:
+    """The progress bar of one LIVE run: [] for a replay, an unknown run,
+    or a run that has ended."""
+    from agentic import progress4
+    run = RUNS.get(str(run_id or ""))
+    if not isinstance(run, dict) or run.get("done"):
+        return []
+    events = list(run.get("events") or [])
+    ref = progress4.reference(UI_RUNS_DIR, progress4.settings_of(events),
+                              exclude=(str(run.get("record_name") or ""),))
+    return [progress4.component(progress4.estimate(events, ref), what)]
+
+
+@app.callback(Output("run-progress", "children"),
+              Input("tick", "n_intervals"), State("run-id", "data"),
+              State("run-progress", "children"))
+def run_progress(_n, run_id, shown):
+    """The bar above the picture while the run on screen is live."""
+    out = run_progress_component(run_id)
+    return dash.no_update if not out and not shown else out
+
+
+@app.callback(Output("iv-progress", "children"),
+              Input("tick", "n_intervals"), State("run-id", "data"),
+              State("iv-progress", "children"))
+def iv_progress(_n, run_id, shown):
+    """The bar of the edited scene that is running for the run on screen."""
+    d = _iv_base_dir(run_id)
+    pending = IV_ACTIVE.get(d.name) if d is not None else None
+    out = (run_progress_component(pending.get("after_run_id"),
+                                  f"edited scene: removed {pending.get('target')}")
+           if isinstance(pending, dict) else [])
+    return dash.no_update if not out and not shown else out
 
 
 @app.callback(Output("iv-status", "children"), Output("iv-evidence", "children"),
