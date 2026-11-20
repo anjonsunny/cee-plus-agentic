@@ -29,7 +29,37 @@ from dash import html
 
 from agentic import intervention4 as iv4
 
-MODE = "retrospective"          # "the hazard never happened" — the only mode for now
+MODE = "retrospective"          # "the hazard never happened": the mode of a "removed" try
+
+# Two kinds of try (Sunny, 2026-11-20: "emergency crew cannot remove the
+# pool. So, the intervention needs to be realistic"):
+#   removed      the thing is not there, as if it never was. A clean test,
+#                but often not something a crew could bring about.
+#   dealt with   a real action just worked and the thing STAYS: the fire is
+#                out and the brush is charred, the leak is capped and the
+#                puddle is still there, the man has been moved to safety.
+# A try saved before this existed has no kind and is a "removed" try.
+REMOVED, DEALT_WITH = "removed", "dealt with"
+KINDS = (REMOVED, DEALT_WITH)
+KIND_MODE = {REMOVED: "retrospective", DEALT_WITH: "prospective"}   # the frozen arm's names
+KIND_HELP = {
+    REMOVED: "the thing is not there, as if it never was",
+    DEALT_WITH: "a real action just worked and the thing stays: the fire is out, the leak is "
+                "capped, the person has been moved to safety",
+}
+
+
+def kind_of(x: Any) -> str:
+    """The kind of a try, a pending try or a table column: "dealt with"
+    only when it says so; anything else (an older record, nonsense) is
+    "removed"."""
+    k = x.get("kind") if isinstance(x, dict) else x
+    return DEALT_WITH if k == DEALT_WITH else REMOVED
+
+
+def kind_phrase(kind: Any, what: Any) -> str:
+    """'removed fire_1' / 'fire_1 dealt with'."""
+    return f"{what} dealt with" if kind_of(kind) == DEALT_WITH else f"removed {what}"
 TRIES_FILE = "interventions.json"
 _IMG_EXT = (".png", ".jpg", ".jpeg", ".webp")
 MODALITY_LABEL = {"caption": "caption only", "image": "image only", "both": "both"}
@@ -136,9 +166,15 @@ def victim_instructions(label: str, others: list[str]) -> tuple[str, str]:
     return cap, img
 
 
-def instructions(info: dict | None, target: str) -> tuple[str, str]:
-    """(caption instruction, image instruction) for removing `target`, in
-    the frozen arm's words. ("", "") when the target is not a candidate."""
+def instructions(info: dict | None, target: str, kind: Any = REMOVED) -> tuple[str, str]:
+    """(caption instruction, image instruction) for `target`, in the frozen
+    arm's words. ("", "") when the target is not a candidate.
+
+    kind "removed": the thing was never there (a victim is out of the
+    picture). kind "dealt with": a real action just worked and the thing
+    stays, with what it left behind (the frozen arm's "prospective" words;
+    a victim has been brought to safety and is still in the picture)."""
+    kind = kind_of(kind)
     from agentic import same4
     cands = {str(c.get("object_id")): c for c in (info or {}).get("candidates") or []
              if isinstance(c, dict)}
@@ -155,13 +191,13 @@ def instructions(info: dict | None, target: str) -> tuple[str, str]:
     caps, imgs = [], []
     for oid in unit:
         c = cands[oid]
-        if c.get("variable_role") == "victim":
+        if c.get("variable_role") == "victim" and kind == REMOVED:
             cap, img = victim_instructions(str(c.get("label") or ""), others)
             caps.append(cap)
             imgs.append(img)
             continue
         cap, img = build_intervention_edit_texts(
-            str(c.get("label") or ""), str(c.get("state") or ""), MODE,
+            str(c.get("label") or ""), str(c.get("state") or ""), KIND_MODE[kind],
             other_labels=others,
             variable_role="victim" if c.get("variable_role") == "victim" else "hazard")
         caps.append(cap)
@@ -262,7 +298,8 @@ def finish_try(base_dir: Path, after_dir: Path | None, pending: dict,
     record to save. A failed after run is recorded too, with its reason."""
     one = {
         "at": _dt.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
-        "target": pending.get("target"), "mode": MODE,
+        "target": pending.get("target"),
+        "kind": kind_of(pending), "mode": KIND_MODE[kind_of(pending)],
         "modality": pending.get("modality"),
         "edit_source": pending.get("edit_source", "hand"),
         "caption_changed": bool(pending.get("caption_changed")),
@@ -469,7 +506,11 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
             ([html.Img(src=img, style={"width": "84px", "borderRadius": "4px",
                                        "display": "block", "marginBottom": "2px"})]
              if img else [])
-            + [html.Span(f"#{c.get('index')} removed "), ent_chip(str(c.get("target")), "#0f172a")]
+            + ([html.Span(f"#{c.get('index')} "), ent_chip(str(c.get("target")), "#0f172a"),
+                html.Span(" dealt with", className="iv-kind-col", title=KIND_HELP[DEALT_WITH])]
+               if kind_of(c) == DEALT_WITH else
+               [html.Span(f"#{c.get('index')} removed "),
+                ent_chip(str(c.get("target")), "#0f172a")])
             + ([html.Span(" \u00b7 victim", className="iv-victim-col",
                           title="this try took out something that can be harmed, not a hazard; "
                                 "every hazard stayed",
@@ -599,7 +640,9 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
         new = [n for n in (c.get("new") or []) if isinstance(n, dict)]
         if new:
             out.append(html.Div(
-                [html.Span(f"new recommendations after removing {c.get('target')}: ",
+                [html.Span("new recommendations after "
+                           + (f"{c.get('target')} was dealt with: " if kind_of(c) == DEALT_WITH
+                              else f"removing {c.get('target')}: "),
                            style={"fontWeight": "700", "color": "#64748b"})]
                 + [html.Div("• " + str(n.get("action") or ""), style={"paddingLeft": "8px"})
                    for n in new],
@@ -1262,13 +1305,22 @@ def summary_line(sm: Any) -> str:
 
 
 def removed_words(columns: Any) -> str:
-    """'3 removed hazards and 1 removed victim' for the tries of a table."""
+    """'3 removed hazards and 1 removed victim' for the tries of a table;
+    a try of the other kind reads '1 hazard dealt with'."""
     cols = [c for c in (columns if isinstance(columns, list) else []) if isinstance(c, dict)]
-    n_v = sum(1 for c in cols if c.get("victim"))
-    n_h = len(cols) - n_v
-    bits = ([f"{n_h} removed hazard{'s' if n_h != 1 else ''}"] if n_h or not n_v else []) \
-        + ([f"{n_v} removed victim{'s' if n_v != 1 else ''}"] if n_v else [])
-    return " and ".join(bits)
+    n = {(k, v): 0 for k in KINDS for v in (False, True)}
+    for c in cols:
+        n[(kind_of(c), bool(c.get("victim")))] += 1
+    bits = []
+    for k in KINDS:
+        for v, word in ((False, "hazard"), (True, "victim")):
+            m = n[(k, v)]
+            if m:
+                w = word + ("s" if m != 1 else "")
+                bits.append(f"{m} removed {w}" if k == REMOVED else f"{m} {w} dealt with")
+    if not bits:
+        return "0 removed hazards"
+    return bits[0] if len(bits) == 1 else ", ".join(bits[:-1]) + " and " + bits[-1]
 
 
 def try_line(t: dict, signed: dict | None = None) -> str:
@@ -1276,7 +1328,7 @@ def try_line(t: dict, signed: dict | None = None) -> str:
     worked out for the table) it gives that reading; the frozen arm's own
     shift is not shown (C_tanker ui_22840b13 try 3 read "MOVED (shift 0.56)"
     here and "+0.18 eased" in the table)."""
-    head = f"#{t.get('index', '?')} removed {t.get('target')} ({MODALITY_LABEL.get(str(t.get('modality')), t.get('modality'))})"
+    head = f"#{t.get('index', '?')} {kind_phrase(t, t.get('target'))} ({MODALITY_LABEL.get(str(t.get('modality')), t.get('modality'))})"
     if t.get("status") != "measured":
         return f"{head}: not measured — {t.get('why') or 'unknown reason'}"
     s = t.get("summary") or {}
@@ -1321,7 +1373,7 @@ def status_component(tries: list[dict], active: dict | None,
                                    "fontWeight": "600", "margin": "2px 0"}))
     if active:
         out.append(html.Div(
-            f"running the edited scene: removed {active.get('target')} · "
+            f"running the edited scene: {kind_phrase(active, active.get('target'))} · "
             f"{active.get('progress') or 'starting'}",
             className="iv-active",
             style={"fontSize": "11.5px", "color": "#b45309", "fontWeight": "700",

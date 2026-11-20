@@ -978,3 +978,105 @@ def test_the_summary_line_names_a_redirected_victim_too():
     line = _flat(_by_class(ui_iv.card_component(c, {}), "iv-explain"))
     assert line == "Redirected when removed: man_1."
     assert declared4.compare(b, [])["explain"] == []
+
+
+# ── two kinds of try: removed, and dealt with (the action worked, it stays) ──
+
+def _kind_info():
+    b, _ = _victim_scene()
+    return {"result": b, "picked_by": {}, "candidates": [
+        {"object_id": "fire_1", "label": "fire", "state": "spreading"},
+        {"object_id": "tanker_1", "label": "tanker", "state": "leaking"},
+        {"object_id": "man_1", "label": "man", "state": "standing", "variable_role": "victim"}]}
+
+
+def test_dealt_with_keeps_the_thing_and_removed_takes_it_out():
+    """Sunny, 2026-11-20: "emergency crew cannot remove the pool. So, the
+    intervention needs to be realistic"."""
+    info = _kind_info()
+    # an object with a hazardous state: it stays, its danger just ended, the marks remain
+    cap, img = ui_iv.instructions(info, "tanker_1", ui_iv.DEALT_WITH)
+    assert "no longer leaking" in cap and "aftermath" in cap and "Keep the tanker in the scene" in cap
+    old_cap, _ = ui_iv.instructions(info, "tanker_1", ui_iv.REMOVED)
+    assert "was never leaking" in old_cap and old_cap != cap
+    # a fire: brought under control, what it left is still visible
+    cap, _ = ui_iv.instructions(info, "fire_1", ui_iv.DEALT_WITH)
+    assert "brought under control" in cap and "residue" in cap
+    # a victim: brought to safety and still in the picture, against out of the picture
+    cap, img = ui_iv.instructions(info, "man_1", ui_iv.DEALT_WITH)
+    assert "brought to safety" in cap and "not in the scene at all" not in cap
+    assert "not in the scene at all" in ui_iv.instructions(info, "man_1", ui_iv.REMOVED)[0]
+    # no kind, an older record, nonsense: a "removed" try
+    assert ui_iv.instructions(info, "man_1") == ui_iv.instructions(info, "man_1", ui_iv.REMOVED)
+    for bad in (None, "", "banana", 3, {"kind": "x"}, {}):
+        assert ui_iv.kind_of(bad) == ui_iv.REMOVED
+        assert ui_iv.instructions(info, "man_1", bad) == ui_iv.instructions(info, "man_1")
+    assert ui_iv.kind_of({"kind": "dealt with"}) == ui_iv.kind_of("dealt with") == ui_iv.DEALT_WITH
+    assert ui_iv.kind_phrase("dealt with", "man_1") == "man_1 dealt with"
+    assert ui_iv.kind_phrase(None, "man_1") == "removed man_1"
+    assert ui_iv.KIND_MODE == {"removed": "retrospective", "dealt with": "prospective"}
+
+
+def test_the_kind_is_saved_with_the_try_and_said_wherever_the_try_is_named(tmp_path):
+    from agentic import grounding4 as g, ui
+    from agentic.test_ui_views import _find
+    b, objs = _victim_scene()
+    # the man was moved to safety: he is still in the picture
+    safe = {**_after(objs, (), ["fire_1", "spill_1"]),
+            "recommendations": [_rec(1, "fire_1", ["car_1"], "Keep man_1 at the safe point."),
+                                _rec(2, "spill_1", ["dog_1"], "Contain spill_1.")]}
+    t = g.table(b, [({"index": 1, "target": "man_1", "kind": "dealt with"}, safe)])
+    col, cell = t["columns"][0], t["rows"][0]["cells"][0]
+    assert col["kind"] == "dealt with" and col["victim"] is True
+    # naming him in an action is fine now; he is no longer what it protects
+    assert cell["still_names"] is False and cell["label"] == "grounded"
+    # the same answer after he was REMOVED would be a masquerade
+    t2 = g.table(b, [({"index": 1, "target": "man_1"}, safe)])
+    assert t2["columns"][0]["kind"] == "removed"
+    assert t2["rows"][0]["cells"][0]["label"] == "masquerade"
+    # still protecting him after he was dealt with: a masquerade
+    still = {**safe, "recommendations": [_rec(1, "fire_1", ["man_1"], "Move man_1 away.")]}
+    t3 = g.table(b, [({"index": 1, "target": "man_1", "kind": "dealt with"}, still)])
+    assert t3["rows"][0]["cells"][0]["label"] == "masquerade"
+    # said in the column head, the title, the try line, the new-recommendations line
+    comp = ui_iv.table_component({**t, "columns": [{**col, "new": [{"action": "Wet down car_1."}]}]})
+    assert "#1 man_1 dealt with" in _flat(comp) and "removed man_1" not in _flat(comp)
+    assert "new recommendations after man_1 was dealt with:" in _flat(comp)
+    assert ui_iv.removed_words(t["columns"]) == "1 victim dealt with"
+    assert ui_iv.removed_words([{}, {}, {"victim": True}, {"kind": "dealt with"},
+                                {"kind": "dealt with", "victim": True}]) == (
+        "2 removed hazards, 1 removed victim, 1 hazard dealt with and 1 victim dealt with")
+    line = ui_iv.try_line({"index": 2, "target": "man_1", "kind": "dealt with",
+                           "modality": "both", "status": "failed", "why": "x"})
+    assert line.startswith("#2 man_1 dealt with (")
+    assert "man_1 dealt with" in _flat(ui_iv.status_component(
+        [], {"target": "man_1", "kind": "dealt with", "progress": "starting"}))
+    # the form asks, and "dealt with" is the default
+    radio, _ = _find(ui.app.layout, "iv-kind")
+    assert radio.value == "dealt with"
+    assert [o["value"] for o in radio.options] == ["dealt with", "removed"]
+
+
+def test_a_finished_try_records_its_kind_and_the_run_list_says_it(tmp_path, monkeypatch):
+    import json as _json, os as _os
+    from agentic import ui
+    one = ui_iv.finish_try(tmp_path, None, {"target": "man_1", "kind": "dealt with"}, error="x")
+    assert one["kind"] == "dealt with" and one["mode"] == "prospective"
+    old = ui_iv.finish_try(tmp_path, None, {"target": "man_1"}, error="x")
+    assert old["kind"] == "removed" and old["mode"] == "retrospective"
+    for name, t, origin in (("ui_base", 1000.0, None),
+                            ("ui_e1", 2000.0, {"before_run": "ui_base", "target": "man_1",
+                                               "kind": "dealt with"}),
+                            ("ui_e2", 3000.0, {"before_run": "ui_base", "target": "fire_1"})):
+        d = tmp_path / name
+        d.mkdir()
+        (d / "events.jsonl").write_text(_json.dumps(
+            {"t": t, "type": "run_started", "image_name": "B_pool.jpg"}) + "\n")
+        _os.utime(d / "events.jsonl", (t, t))
+        if origin:
+            (d / "after_of.json").write_text(_json.dumps(origin))
+    monkeypatch.setattr(ui, "UI_RUNS_DIR", tmp_path)
+    monkeypatch.setattr(ui, "PERCEPTION_DIR", tmp_path / "none")
+    text = [ui.option_text(o) for o in ui.saved_records()]
+    assert text[1].startswith(ui.EDIT_MARK + "removed fire_1 \u00b7 ")
+    assert text[2].startswith(ui.EDIT_MARK + "man_1 dealt with \u00b7 ")

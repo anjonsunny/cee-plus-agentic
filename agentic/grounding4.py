@@ -121,7 +121,7 @@ def _mentions(rec: Any, ids: set[str], labels: set[str]) -> bool:
 
 
 def _victim_cells(cells: list[dict], base: list[dict], victims: set[str],
-                  labels: set[str]) -> None:
+                  labels: set[str], stays: bool = False) -> None:
     """Re-read one column for a try that took out a VICTIM. A recommendation
     is about the try when it protected the victim. With nothing left to
     protect and no advice left, it was DROPPED (for a hazard try that same
@@ -131,8 +131,15 @@ def _victim_cells(cells: list[dict], base: list[dict], victims: set[str],
         c["named_removed"] = bool(_quad(rec)[2] & victims)
         if c["state"] == TARGET_REMOVED:
             c["state"] = GONE
-        c["still_names"] = bool(c["named_removed"] and c.get("after") is not None
-                                and _mentions(c["after"], victims, labels))
+        after = c.get("after")
+        if stays:
+            # "dealt with": the victim was moved to safety and is still in
+            # the picture, so naming it in an action is fine. It is only a
+            # masquerade when the recommendation still PROTECTS it.
+            names = isinstance(after, dict) and bool(_quad(after)[2] & victims)
+        else:
+            names = after is not None and _mentions(after, victims, labels)
+        c["still_names"] = bool(c["named_removed"] and names)
 
 
 def _match_column(base: list[dict], after_recs: list[dict], removed: set[str],
@@ -362,7 +369,8 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
             # only when that label is the victim's alone ("the man" with two men says nothing)
             lab = {x for x in lab if x and sum(1 for o in before["detected_objects"]
                                                if str(o.get("label") or "") == x) == 1}
-            _victim_cells(col_cells, base, {target}, lab)
+            _victim_cells(col_cells, base, {target}, lab,
+                          stays=one.get("kind") == "dealt with")
         n_recs = max(len(base), len(after_recs))
         for i, c in enumerate(col_cells):
             c["label"] = cell_label(c)
@@ -376,6 +384,7 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
         columns.append({
             "index": one.get("index"), "target": one.get("target"),
             "victim": is_victim,
+            "kind": "dealt with" if one.get("kind") == "dealt with" else "removed",
             "also_removed": [x for x in removed if x != str(one.get("target") or "")],
             "left_behind": left_behind,
             "after_run": one.get("after_run"),

@@ -957,7 +957,9 @@ def saved_records() -> list[dict[str, Any]]:
         if r["origin"] is not None:
             # the after side of a try whose own run is no longer here
             what = str(r["origin"].get("target") or "")
-            opts.append({"label": f"edit of {img} · " + (f"removed {what} · " if what else "")
+            opts.append({"label": f"edit of {img} · "
+                                  + (ui_intervene.kind_phrase(r["origin"], what) + " · "
+                                     if what else "")
                                   + f"{r['when']} · {r['name']}", "value": str(r["path"])})
             continue
         edits = sorted(under.get(r["name"], []), key=lambda x: x["t"], reverse=True)
@@ -968,7 +970,7 @@ def saved_records() -> list[dict[str, Any]]:
                               + f" · {r['name']}", "value": str(r["path"])})
         for e in edits:
             what = str(e["origin"].get("target") or "") or "something"
-            text = (f"{EDIT_MARK}removed {what} · {e['when']}"
+            text = (f"{EDIT_MARK}{ui_intervene.kind_phrase(e['origin'], what)} · {e['when']}"
                     + ("" if e["name"] in done else
                        " · running" if running(e["name"]) else " · not measured"))
             opts.append({"label": html.Span(text, className="replay-edit",
@@ -6473,12 +6475,25 @@ app.layout = html.Div([
                                                   "margin": "10px 0 4px"}),
                               html.Div(id="iv-note", className="iv-note"),
                               html.Div([
-                                  html.Span("remove", className="iv-lbl"),
+                                  html.Span("what", className="iv-lbl"),
                                   dcc.Dropdown(id="iv-target", options=[], value=None,
                                                clearable=False, searchable=False,
                                                className="iv-target",
                                                style={"flex": "1", "fontSize": "11.5px",
                                                       "color": "#111"}),
+                              ], className="iv-row-form"),
+                              html.Div([
+                                  html.Span("how", className="iv-lbl"),
+                                  # realistic by default: a crew cannot make a
+                                  # pool or a tanker vanish (Sunny, 2026-11-20)
+                                  dcc.RadioItems(
+                                      id="iv-kind", value=ui_intervene.DEALT_WITH, inline=True,
+                                      options=[
+                                          {"label": " dealt with (the action worked, it stays)",
+                                           "value": ui_intervene.DEALT_WITH},
+                                          {"label": " removed (as if it never was)",
+                                           "value": ui_intervene.REMOVED}],
+                                      className="ctl-toggle"),
                               ], className="iv-row-form"),
                               html.Div([
                                   html.Span("changed", className="iv-lbl"),
@@ -6682,13 +6697,16 @@ def iv_setup(run_id, _n, current, value):
 
 
 @app.callback(Output("iv-instructions", "children"), Output("iv-caption", "value"),
-              Input("iv-target", "value"), State("run-id", "data"))
-def iv_instructions(target, run_id):
-    """The two edit instructions for the picked hazard (the frozen arm's
-    words), and the original caption put in the box, ready to be edited."""
+              Input("iv-target", "value"), Input("iv-kind", "value"),
+              State("run-id", "data"))
+def iv_instructions(target, kind, run_id):
+    """The two edit instructions for the picked hazard or victim and the
+    kind of try (the frozen arm's words), and the original caption put in
+    the box, ready to be edited."""
     from agentic import ui_intervene
     info = _iv_info(run_id)
-    cap, img = ui_intervene.instructions(info, target) if info and target else ("", "")
+    cap, img = (ui_intervene.instructions(info, target, kind)
+                if info and target else ("", ""))
     if not cap:
         return [], ""
     box = {"fontSize": "11px", "color": "#334155", "background": "#f1f5f9",
@@ -6728,7 +6746,8 @@ def iv_show_channel(modality):
 
 
 def iv_start(run_id: str | None, target: str | None, modality: str | None,
-             caption: str | None, upload: str | None, filename: str | None) -> str:
+             caption: str | None, upload: str | None, filename: str | None,
+             kind: str | None = None) -> str:
     """Start the after run for one try. Returns "" on success or a plain
     reason. No model is called when the try is not valid."""
     from agentic import ui_intervene
@@ -6759,8 +6778,9 @@ def iv_start(run_id: str | None, target: str | None, modality: str | None,
         set_retrieval(S["retrieval"])
     image_bytes = edited if plan["use_edited_image"] else Path(info["image"]).read_bytes()
     name = Path(info["image"]).name if info.get("image") else (filename or "scene.jpg")
+    kind = ui_intervene.kind_of(kind)
     origin = {"before_run": info["run"], "target": str(target), "modality": modality,
-              "mode": ui_intervene.MODE, "edit_source": "hand"}
+              "kind": kind, "mode": ui_intervene.KIND_MODE[kind], "edit_source": "hand"}
     after_id = start_live_run(image_bytes, name, plan["caption"],
                               settings=S, after_of=origin)
     IV_ACTIVE[info["run"]] = {
@@ -6776,11 +6796,12 @@ def iv_start(run_id: str | None, target: str | None, modality: str | None,
               State("run-id", "data"), State("iv-target", "value"),
               State("iv-modality", "value"), State("iv-caption", "value"),
               State("iv-upload", "contents"), State("iv-upload", "filename"),
+              State("iv-kind", "value"),
               prevent_initial_call=True)
-def iv_run(n, run_id, target, modality, caption, upload, filename):
+def iv_run(n, run_id, target, modality, caption, upload, filename, kind=None):
     if not n:
         return dash.no_update, dash.no_update
-    why = iv_start(run_id, target, modality, caption, upload, filename)
+    why = iv_start(run_id, target, modality, caption, upload, filename, kind)
     # started: the form folds away and the running line shows on top
     return why, (dash.no_update if why else False)
 
@@ -6842,7 +6863,8 @@ def iv_progress(_n, run_id, shown):
     d = _iv_base_dir(run_id)
     pending = IV_ACTIVE.get(d.name) if d is not None else None
     out = (run_progress_component(pending.get("after_run_id"),
-                                  f"edited scene: removed {pending.get('target')}")
+                                  "edited scene: " + ui_intervene.kind_phrase(
+                                      pending, pending.get("target")))
            if isinstance(pending, dict) else [])
     return dash.no_update if not out and not shown else out
 

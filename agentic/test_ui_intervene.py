@@ -245,12 +245,12 @@ def test_the_panel_lists_hazards_for_the_open_run_and_hides_otherwise(page):
 
 
 def test_picking_a_hazard_shows_both_instructions_and_the_original_caption(page):
-    kids, caption = ui.iv_instructions("fire_1", "base")
+    kids, caption = ui.iv_instructions("fire_1", None, "base")
     text = _flat(kids)
     assert "for the caption" in text and "for the image tool" in text
     assert "was never present" in text and caption == RECORD["caption"]
-    assert ui.iv_instructions(None, "base") == ([], "")
-    assert ui.iv_instructions("nope_9", "base") == ([], "")
+    assert ui.iv_instructions(None, None, "base") == ([], "")
+    assert ui.iv_instructions("nope_9", None, "base") == ([], "")
 
 
 def test_run_starts_only_the_after_side_on_the_edited_input(page):
@@ -260,8 +260,8 @@ def test_run_starts_only_the_after_side_on_the_edited_input(page):
     assert call["image"] == EDITED and call["caption"] == "a tanker leaks on a road"
     assert call["filename"] == "C_tanker_fire.jpg"          # same scene name
     assert call["after_of"] == {"before_run": "ui_base", "target": "fire_1",
-                                "modality": "both", "mode": "retrospective",
-                                "edit_source": "hand"}
+                                "modality": "both", "kind": "removed",
+                                "mode": "retrospective", "edit_source": "hand"}
     S = call["settings"]
     assert S["subject"] == "subj" and S["env"] is False and S["env_conditions"] == []
     assert ui.IV_ACTIVE["ui_base"]["after_run_id"] == "after"
@@ -393,7 +393,7 @@ def test_the_form_folds_away_when_a_try_starts_and_stays_open_on_a_refusal(page)
 def test_the_instructions_carry_a_copy_button_each(page):
     from dash import dcc
     from agentic.test_ui_views import _walk
-    kids, _caption = ui.iv_instructions("fire_1", "base")
+    kids, _caption = ui.iv_instructions("fire_1", None, "base")
     clips = [n for n in _walk(kids) if isinstance(n, dcc.Clipboard)]
     assert sorted(c.target_id for c in clips) == ["iv-instr-caption", "iv-instr-image"]
 
