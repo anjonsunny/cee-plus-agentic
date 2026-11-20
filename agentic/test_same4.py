@@ -789,3 +789,25 @@ def test_ground_truth_weighs_victims_the_same_way(tmp_path):
     assert m["core_victims"] == ["man_1"]
     for bad in (None, "x", {"graph": 3}):
         assert declared4.victims_should(bad) == {}
+
+
+def test_a_victim_the_ground_truth_file_lists_without_arrows_is_not_called_missing(tmp_path):
+    """C_tanker: road_1 is listed (spurious, no arrow) and read "not in
+    ground truth" beside a victim the file really does not have."""
+    from agentic import intervention4 as iv4
+    b, objs = _gt_scene(tmp_path)
+    b = {**b, "graph_b": {"nodes": b["graph_b"]["nodes"], "edges": b["graph_b"]["edges"] + [
+        {"source": "fire_1", "target": "odd_1", "effect": "may_spread_to"},
+        {"source": "fire_1", "target": "shed_1", "effect": "may_spread_to"}]},
+         "detected_objects": b["detected_objects"] + [{"object_id": "tree_1", "label": "tree"}]}
+    b["graph_b"]["edges"].append({"source": "fire_1", "target": "tree_1",
+                                  "effect": "may_spread_to"})
+    extra = iv4.gt_objects(b)
+    syn = {"available": True, "distribution": {}, "gt": {}, "gt_extra": extra,
+           "gt_listed": extra["listed"], "gt_same_hazards": extra["same_hazards"]}
+    rows = {_flat(r).split()[0]: _flat(r) for r in
+            _by_class(ui_iv.card_component(declared4.compare(b, []), {}, syn), "iv-victim")}
+    assert "not in ground truth" not in rows["odd_1"]                  # listed, no arrow: 0.00
+    assert "not in ground truth" in rows["tree_1"]                     # the file does not have it
+    for bad in (None, "x", [None, 3]):
+        assert ui_iv.card_component(declared4.compare(b, []), {}, {**syn, "gt_listed": bad})

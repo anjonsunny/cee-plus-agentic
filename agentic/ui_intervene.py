@@ -874,7 +874,11 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
     if gt_on and own and vrows:
         v_gt = {g["object_id"]: g for g in declared4.against_ground_truth(
             {"hazards": vrows}, own.get("victims_should") or {},
-            own.get("core_victims") or [], own.get("victims") or [], [])}
+            own.get("core_victims") or [],
+            # listed = every thing the ground-truth file lists, arrows or not
+            list(own.get("victims") or []) + [x for x in (
+                syn.get("gt_listed") if isinstance(syn.get("gt_listed"), list) else [])
+                if isinstance(x, str)], [])}
 
     def kind(word: str) -> Any:
         return html.Span(" " + word, className="iv-kind", title=KIND_TIP.get(word, ""),
