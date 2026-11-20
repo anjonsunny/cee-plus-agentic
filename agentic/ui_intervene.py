@@ -555,6 +555,12 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
                                 "every hazard stayed",
                           style={"fontWeight": "400", "color": "#64748b"})]
                if c.get("victim") else [])
+            + ([html.Div("who is who: " + ("all sure" if not c.get("unsure") else
+                                           f"{len(c['unsure'])} not sure"),
+                         className="iv-who",
+                         style={"fontWeight": "400",
+                                "color": "#16a34a" if not c.get("unsure") else "#b45309"})]
+               if c.get("tracked") else [])
             + ([html.Div(align_note, className="iv-renamed",
                          title="each run names its objects by itself; the same object is "
                                "recognised by where it is in the picture, and the edited run "
@@ -639,6 +645,14 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
                                   style={"color": _VERDICT["masquerade"], "fontWeight": "700"})]
             else:
                 kids = [html.Span(short, className="iv-cell-word", style={"color": "#94a3b8"})]
+            if c.get("unsure"):
+                # which object this is in the edited picture is a guess
+                kids = list(kids) + [html.Div(
+                    "not sure which is " + ", ".join(str(x) for x in c["unsure"]),
+                    className="iv-unsure",
+                    title="the framework could not match this object between the two "
+                          "pictures with certainty; see WHO IS WHO",
+                    style={"fontSize": "10px", "color": "#b45309"})]
             tds.append(html.Td(kids, className=f"iv-cell {state.split()[0]}"
                                + ("" if imp or lab == "masquerade" else " quiet"),
                                title=tip, **{"data-label": lab}, style=_TD))
@@ -1253,6 +1267,12 @@ def result_parts(base_dir: Path | None, runs_dir: Path | None,
             syn = iv4.synthesis(before, pairs) if with_gt else None
             top += card_component(cmp, tbl, syn, next_id=next_id)
             n_r, n_c = len(tbl["rows"]), len(tbl["columns"])
+            # who is who, just above the table that depends on it
+            try:
+                from agentic import ui_who
+                bottom += ui_who.component(before, pairs, TITLE_STYLE)
+            except Exception:
+                pass                            # the table still stands without the strip
             bottom.append(_fold(
                 [html.Span(TITLE_RECS, className="iv-title", style=TITLE_STYLE),
                  html.Span(f" · {n_r} recommendation{'s' if n_r != 1 else ''} by "

@@ -405,7 +405,12 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
             _victim_cells(col_cells, base, {target}, lab,
                           stays=one.get("kind") == "dealt with")
         n_recs = max(len(base), len(after_recs))
+        # objects whose match between the two runs is a guess (align4): a
+        # recommendation that names one is read with that doubt
+        unsure = {str(x) for x in (after.get("unsure") or []) if isinstance(x, str)}
         for i, c in enumerate(col_cells):
+            t_i, _e_i, aff_i = _quad(base[i])
+            c["unsure"] = sorted(({t_i} | set(aff_i)) & unsure)
             c["label"] = cell_label(c)
             det = impact_detail(base[i], c, n_recs)
             c["impact"], c["why"] = det["value"], [r["text"] for r in det["reasons"]]
@@ -422,6 +427,8 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
             "renamed": after.get("renamed") if isinstance(after.get("renamed"), dict) else {},
             "renamed_new": (after.get("renamed_new")
                             if isinstance(after.get("renamed_new"), dict) else {}),
+            "unsure": sorted(unsure),
+            "tracked": isinstance(after.get("tracks"), dict),
             "kind": "dealt with" if one.get("kind") == "dealt with" else "removed",
             "also_removed": [x for x in removed if x != str(one.get("target") or "")],
             "left_behind": left_behind,

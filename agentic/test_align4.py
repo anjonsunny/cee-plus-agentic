@@ -59,7 +59,11 @@ def test_objects_in_the_same_place_are_the_same_object_whatever_they_are_called(
 
 def test_names_that_already_agree_and_things_that_cannot_be_matched_are_left_alone():
     assert align4.same_place(BEFORE, BEFORE) == {}
-    assert align4.aligned(BEFORE, BEFORE) is BEFORE
+    same = align4.aligned(BEFORE, BEFORE)
+    assert same is not BEFORE and "renamed" not in same and same["unsure"] == []   # a copy
+    assert same["detected_objects"] == BEFORE["detected_objects"]
+    assert align4.summary(same["tracks"]) == {"same place": 3, "by looks": 0, "not sure": 0,
+                                              "new": 0, "gone": 0}
     # a REMOVED child: one child left, the floating one, named child_1 by the edited run
     removed = {**AFTER, "detected_objects": [AFTER["detected_objects"][0],
                                              AFTER["detected_objects"][2]]}
@@ -93,7 +97,8 @@ def test_malformed_runs_never_break_the_matching():
                                       {"object_id": "c_1", "bbox": [5, 5, 1, 1]},
                                       {"object_id": "d_1", "bbox": ["a", 1, 2, 3]}]}):
         assert align4.same_place(bad, AFTER) == {} and align4.same_place(BEFORE, bad) == {}
-        assert align4.aligned(BEFORE, bad) is bad and align4.aligned(bad, AFTER) is AFTER
+        assert "renamed" not in (align4.aligned(BEFORE, bad) or {})
+        assert "renamed" not in (align4.aligned(bad, AFTER) or {})
     odd = {"detected_objects": AFTER["detected_objects"], "threats": [None, "x", {"k": 1}],
            "recommendations": [None, {"action": 5, "structured_reasoning": "q"},
                                {"structured_reasoning": {"affected_objects": "child_1"}}],
@@ -180,3 +185,92 @@ def test_a_try_measured_before_its_names_were_matched_is_measured_again(tmp_path
 
 
 from pathlib import Path  # noqa: E402  (used by the last test)
+
+
+# ── tracking: place, then looks, then a marked guess (Sunny, 2026-11-20:
+#    "it's tracking... object tracking"; the model never sees any of it) ──
+
+def _fam(oid, box, family, label=None):
+    return {**_o(oid, box, label), "family": family}
+
+
+def test_a_person_called_a_man_in_the_other_run_is_the_same_person_in_the_same_place():
+    """H ui_4a253340: the porch person was person_1, then man_2."""
+    b = {"detected_objects": [_fam("person_1", [267, 615, 315, 664], "person"),
+                              _fam("man_1", [956, 660, 1054, 962], "person")]}
+    a = {"detected_objects": [_fam("man_1", [955, 660, 1054, 962], "person"),
+                              _fam("man_2", [265, 615, 315, 665], "person")]}
+    t = align4.tracks(b, a)
+    how = {p["before"]: (p["after"], p["how"], p["sure"]) for p in t["pairs"]}
+    assert how == {"man_1": ("man_1", "same place", True),
+                   "person_1": ("man_2", "same place", True)}
+    assert align4.same_place(b, a) == {"man_2": "person_1"}
+    out = align4.aligned(b, a)
+    assert out["unsure"] == [] and out["tracks"]["new"] == [] and out["tracks"]["gone"] == []
+    # the same label wins over another label of the family that overlaps more loosely
+    b = {"detected_objects": [_fam("brush_1", [100, 100, 400, 300], "vegetation")]}
+    a = {"detected_objects": [_fam("tree_1", [130, 100, 400, 300], "vegetation"),     # 0.9
+                              _fam("brush_1", [100, 100, 330, 300], "vegetation")]}    # 0.77
+    t = align4.tracks(b, a)
+    assert [(p["before"], p["after"]) for p in t["pairs"]] == [("brush_1", "brush_1")]
+    assert t["new"] == ["tree_1"]
+    # another label is taken only when the boxes are nearly the same
+    a = {"detected_objects": [_fam("tree_1", [100, 100, 330, 300], "vegetation")]}     # 0.77
+    assert align4.tracks(b, a)["pairs"] == []
+    # another family is never the same object, wherever it is
+    a = {"detected_objects": [_fam("rock_1", [100, 100, 400, 300], "terrain")]}
+    assert align4.tracks(b, a)["pairs"] == []
+
+
+def test_the_only_smoke_is_the_same_smoke_though_its_shape_changed():
+    b = {"detected_objects": [_fam("smoke_1", [0, 0, 500, 200], "hazard_media"),
+                              _fam("man_1", [600, 600, 700, 900], "person")]}
+    a = {"detected_objects": [_fam("smoke_1", [500, 300, 900, 500], "hazard_media"),
+                              _fam("man_1", [600, 600, 700, 900], "person")]}
+    t = align4.tracks(b, a)
+    smoke = [p for p in t["pairs"] if p["before"] == "smoke_1"][0]
+    assert smoke["how"] == "the only one of its kind" and smoke["sure"] is True
+    assert t["new"] == [] and t["gone"] == []
+    # two smokes: no such shortcut
+    b2 = {"detected_objects": b["detected_objects"] + [_fam("smoke_2", [0, 700, 90, 800],
+                                                           "hazard_media")]}
+    assert "smoke_1" in align4.tracks(b2, a)["gone"]
+
+
+def test_a_moved_object_is_matched_by_looks_and_a_changed_one_is_a_marked_guess(tmp_path):
+    from PIL import Image
+    def scene(name, boxes):
+        d = tmp_path / name
+        d.mkdir()
+        img = Image.new("RGB", (400, 200), (40, 90, 200))                # water
+        for box, colour in boxes:
+            img.paste(colour, tuple(box))
+        img.save(d / "s.png")
+        return str(d)
+    red, green, white = (220, 30, 30), (30, 200, 60), (240, 240, 240)
+    b = {"run_dir": scene("b", [([20, 20, 80, 80], red), ([300, 20, 360, 80], green)]),
+         "scene_image": "s.png",
+         "detected_objects": [_fam("child_1", [20, 20, 80, 80], "person", "child"),
+                              _fam("child_2", [300, 20, 360, 80], "person", "child")]}
+    # the red child moved; it still looks the same
+    a = {"run_dir": scene("a1", [([150, 120, 210, 180], red), ([300, 20, 360, 80], green)]),
+         "scene_image": "s.png",
+         "detected_objects": [_fam("child_1", [300, 20, 360, 80], "person", "child"),
+                              _fam("child_2", [150, 120, 210, 180], "person", "child")]}
+    how = {p["before"]: (p["after"], p["how"], p["sure"]) for p in align4.tracks(b, a)["pairs"]}
+    assert how["child_2"] == ("child_1", "same place", True)
+    assert how["child_1"] == ("child_2", "by looks", True)
+    # the moved child is wrapped in a white towel: it no longer looks the same
+    a2 = {**a, "run_dir": scene("a2", [([150, 120, 210, 180], white),
+                                       ([300, 20, 360, 80], green)])}
+    how = {p["before"]: (p["after"], p["how"], p["sure"]) for p in align4.tracks(b, a2)["pairs"]}
+    assert how["child_1"] == ("child_2", "the only one left", False)
+    assert align4.aligned(b, a2)["unsure"] == ["child_1"]
+    assert align4.summary(align4.tracks(b, a2)) == {"same place": 1, "by looks": 0,
+                                                    "not sure": 1, "new": 0, "gone": 0}
+    # a picture that cannot be read: looks say nothing, nothing breaks
+    assert align4._looks({"run_dir": str(tmp_path / "nope"), "scene_image": "s.png"},
+                         b["detected_objects"][0]) is None
+    assert align4._looks({}, {}) is None and align4._alike(None, None) == 0.0
+    for bad in (None, "x", {"pairs": "zz"}, {"pairs": [None, 3], "new": 5}):
+        assert align4.summary(bad)["not sure"] == 0

@@ -192,6 +192,7 @@ def result_from_run_dir(run_dir: Path, *, gt_verified: Path | None = None,
                   if "__" not in f.name), None)
     gt = gt_lookup(image, verified=gt_verified, candidates_dir=gt_candidates, pools=gt_pools)
     result["scene_image"] = result["image_filename"]
+    result["run_dir"] = str(run_dir)             # where its picture and outlines are
     result["gt"] = gt
     if gt["status"] != "none":
         result["image_filename"] = gt["image_filename"]   # the name the frozen lookup uses
