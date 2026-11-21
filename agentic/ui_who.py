@@ -13,8 +13,8 @@ that is done.
                   all sure                  1 not sure
 
 Colour means IDENTITY here and nothing else (on the main picture it means
-threat / at risk; the two are kept apart). Only what matters is coloured:
-hazards, victims, anything a recommendation names, and the things tried.
+threat / at risk; the two are kept apart). Only the threats and those at
+risk are shown, plus whatever a try was aimed at.
 A match that is a guess has a dashed outline; a new object is tagged "new".
 
 Pure drawing: no model call. The pictures are made once and kept in memory.
@@ -45,29 +45,33 @@ def _rgb(hex_colour: str) -> tuple[int, int, int]:
     return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
 
 
+def _matter(result: Any) -> set[str]:
+    """The threats and the at-risk of ONE run (Sunny, 2026-11-20: "for
+    picture... only show threats and risks/victims"): what harms (its
+    threats and the hazard each recommendation names) and who or what the
+    assessment put at risk. A run with no at-risk list falls back to the
+    things its arrows end at."""
+    r = iv4.clean_result(result)
+    out = set(iv4.hazards_of(r))
+    risk = {str(x.get("object_id") or "") for x in (r.get("at_risk") or [])
+            if isinstance(x, dict)}
+    if not risk and not isinstance((result or {}).get("at_risk"), list):
+        risk = {v["object_id"] for v in iv4.victims_of(r)}
+    return {x for x in out | risk if x}
+
+
 def important(before: Any, pairs: Any) -> list[str]:
-    """The objects that get a colour, in a fixed order: hazards, victims,
-    what a recommendation names, what was tried."""
-    out: list[str] = []
+    """The objects that get a colour, in the order the run lists them: its
+    threats, its at-risk, and whatever a try was aimed at."""
     try:
         r = iv4.clean_result(before)
         ids = [str(o.get("object_id") or "") for o in r["detected_objects"]]
-        haz = iv4.hazards_of(r)
-        vic = {v["object_id"] for v in iv4.victims_of(r)}
-        named: set[str] = set()
-        for rec in r["recommendations"]:
-            q = rec.get("structured_reasoning")
-            if isinstance(q, dict):
-                named.add(str(q.get("threat") or ""))
-                aff = q.get("affected_objects")
-                named |= {str(x) for x in (aff if isinstance(aff, list) else [])}
         tried = {str((t if isinstance(t, dict) else {}).get("target") or "")
-                 for t, _a in (pairs or []) if True}
-        want = haz | vic | named | tried
-        out = [i for i in ids if i and i in want]
+                 for t, _a in (pairs or [])}
+        want = _matter(before) | tried
+        return [i for i in ids if i and i in want]
     except Exception:
-        pass
-    return out
+        return []
 
 
 def colours(before: Any, pairs: Any) -> dict[str, str]:
@@ -201,7 +205,13 @@ def component(before: Any, pairs: Any, title_style: dict | None = None) -> list:
         found = after.get("tracks") if isinstance(after.get("tracks"), dict) else {}
         s = align4.summary(found)
         unsure = set(after.get("unsure") or [])
-        new = [x for x in (found.get("new") or []) if isinstance(x, str)]
+        # a new object is shown only when the edited run calls it a threat
+        # or puts it at risk; a new tree or handrail is left out
+        try:
+            matter_after = _matter(after)
+        except Exception:
+            matter_after = set()
+        new = [x for x in (found.get("new") or []) if isinstance(x, str) and x in matter_after]
         gone = [x for x in (found.get("gone") or []) if isinstance(x, str) and x in col]
         names = _its_names(after)
         foot: list = [html.Span(says(after), className="who-sure",
@@ -231,8 +241,8 @@ def component(before: Any, pairs: Any, title_style: dict | None = None) -> list:
                                 style={"fontWeight": "700", "fontSize": "12px",
                                        "color": "#16a34a" if not n else "#b45309"})],
                      className="iv-fold-head"),
-        html.Div("the same object has the same colour in every picture; only hazards, victims "
-                 "and what the recommendations name are coloured",
+        html.Div("the same object has the same colour in every picture; only the threats and "
+                 "those at risk are shown",
                  className="who-key", style={"fontSize": "10.5px", "color": "#94a3b8",
                                              "margin": "2px 0 6px"}),
         html.Div(cards, className="who-strip",

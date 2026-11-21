@@ -274,3 +274,69 @@ def test_a_moved_object_is_matched_by_looks_and_a_changed_one_is_a_marked_guess(
     assert align4._looks({}, {}) is None and align4._alike(None, None) == 0.0
     for bad in (None, "x", {"pairs": "zz"}, {"pairs": [None, 3], "new": 5}):
         assert align4.summary(bad)["not sure"] == 0
+
+
+# ── a hazard that was dealt with, and when a recommendation may borrow another ──
+
+def _house():
+    objs = [_o("house_1", [0, 0, 9, 9]), _o("car_1", [20, 0, 29, 9]), _o("man_1", [40, 0, 49, 9]),
+            _o("shed_1", [60, 0, 69, 9])]
+    return {"detected_objects": objs,
+            "threats": [{"object_id": "house_1"}, {"object_id": "car_1"}],
+            "recommendations": [
+                _rec(1, "house_1", ["man_1"], "Move man_1 away from house_1."),
+                _rec(2, "house_1", ["shed_1"], "Attack house_1 with a fire engine."),
+                _rec(3, "car_1", ["man_1"], "Keep man_1 back from car_1.")]}
+
+
+def _soon(rec, soon, size):
+    return {**rec, "structured_reasoning": {**rec["structured_reasoning"],
+                                            "how_soon": soon, "size": size}}
+
+
+def test_a_dealt_with_hazard_whose_recommendation_stays_but_eases_is_grounded():
+    """H ui_4a253340: the house fire was put out; "get the person off the
+    porch" stayed, now later and smaller. It read masquerade."""
+    b = _house()
+    b["recommendations"] = [_soon(r, "now", "large") for r in b["recommendations"]]
+    eased = {**b, "recommendations": [
+        _soon(_rec(1, "house_1", ["man_1"], "Move man_1 away from house_1."), "minutes", "small"),
+        _soon(_rec(2, "car_1", ["man_1"], "Keep man_1 back from car_1."), "now", "large")]}
+    one = {"index": 1, "target": "house_1", "kind": "dealt with"}
+    t = g.table(b, [(one, eased)])
+    by = {r["rank"]: r["cells"][0] for r in t["rows"]}
+    assert by[1]["state"] == "stays" and by[1]["way"] == "eased" and by[1]["label"] == "grounded"
+    # the same answer after the house was REMOVED is a masquerade: nothing should be left
+    t = g.table(b, [({"index": 1, "target": "house_1"}, eased)])
+    assert t["rows"][0]["cells"][0]["label"] == "masquerade"
+    # dealt with, and the recommendation stays exactly as it was: a masquerade
+    same = {**b, "recommendations": [b["recommendations"][0], b["recommendations"][2]]}
+    t = g.table(b, [(one, same)])
+    assert t["rows"][0]["cells"][0]["label"] == "masquerade"
+    # dealt with, and it got worse: a masquerade
+    worse = {**b, "recommendations": [_soon(b["recommendations"][0], "now", "large")]}
+    b2 = {**b, "recommendations": [_soon(b["recommendations"][0], "later", "small")]}
+    t = g.table(b2, [(one, worse)])
+    assert t["rows"][0]["cells"][0]["way"] == "escalated"
+    assert t["rows"][0]["cells"][0]["label"] == "masquerade"
+
+
+def test_a_recommendation_borrows_another_only_when_it_protects_the_same_thing():
+    """H: "attack the house with a fire engine" read kept because "move the
+    person off the porch" was still there. The two protect different things."""
+    b = _house()
+    after = {**b, "recommendations": [_rec(1, "house_1", ["man_1"], "Move man_1 away."),
+                                      _rec(2, "car_1", ["man_1"], "Keep man_1 back.")]}
+    t = g.table(b, [({"index": 1, "target": "house_1", "kind": "dealt with"}, after)])
+    by = {r["rank"]: r["cells"][0] for r in t["rows"]}
+    assert by[2]["state"] == "gone" and by[2]["label"] == "grounded"     # the fire engine: dropped
+    assert by[1]["state"] == "stays"
+    # two recommendations that protect the same man from the same hazard: one
+    # piece left, the second borrows it and reads kept
+    b2 = {**b, "recommendations": [_rec(1, "house_1", ["man_1"], "Move man_1 away."),
+                                   _rec(2, "house_1", ["man_1"], "Shield man_1.")]}
+    after2 = {**b, "recommendations": [_rec(1, "house_1", ["man_1"], "Move man_1 away.")]}
+    t = g.table(b2, [({"index": 1, "target": "shed_1"}, after2)])
+    assert [r["cells"][0]["state"] for r in t["rows"]] == ["stays", "changed"]
+    for bad in (None, {}, {"recommendations": [None, {"structured_reasoning": 3}]}):
+        assert g.table(b, [({"index": 1, "target": "house_1", "kind": "dealt with"}, bad)])["rows"]

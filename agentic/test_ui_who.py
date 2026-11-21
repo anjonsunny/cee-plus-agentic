@@ -52,7 +52,7 @@ def test_only_what_matters_gets_a_colour_and_the_same_one_in_every_picture(tmp_p
     before, after = _pair(tmp_path)
     pairs = [({"index": 1, "target": "child_1", "kind": "dealt with"}, after)]
     col = ui_who.colours(before, pairs)
-    assert list(col) == ["child_1", "child_2", "pool_1"]          # the fence is not named anywhere
+    assert list(col) == ["child_1", "child_2", "pool_1"]          # the fence is no threat, not at risk
     assert len(set(col.values())) == 3
     url_b = ui_who.draw(before, col)
     url_a = ui_who.draw(after, col, after["unsure"], after["tracks"]["new"],
@@ -74,7 +74,7 @@ def test_the_strip_has_the_original_then_one_picture_per_try_and_says_how_sure(t
     assert fold.open is True and _flat(_by_class(fold, "who-head")) == "· 1 not sure"
     assert _flat(_by_class(cards[1], "who-sure")) == "1 not sure"
     assert "child_1" in _flat(_by_class(cards[1], "who-unsure"))
-    assert _flat(_by_class(cards[1], "who-new")) == "new: handrail_1"
+    assert _by_class(cards[1], "who-new") == []           # a new handrail is no threat: left out
     assert "child_1 is child_2" in _flat(_by_class(cards[1], "who-names"))
     assert ui_who.not_sure([(one, after)]) == 1 and ui_who.says(after) == "1 not sure"
     # every match sure: closed, "all sure"
@@ -120,3 +120,30 @@ def test_the_table_marks_the_recommendations_that_lean_on_a_guess(tmp_path):
                           {k: v for k, v in after.items() if k not in ("tracks", "unsure")})])
     assert t["columns"][0]["tracked"] is False
     assert _by_class(ui_iv.table_component(t), "iv-who") == []
+
+
+def test_only_threats_and_the_at_risk_are_shown(tmp_path):
+    """Sunny, 2026-11-20: "for picture... only show threats and risks/victims"."""
+    objs = [("house_1", (0, 0, 100, 100), "structure"), ("car_1", (120, 0, 200, 60), "vehicle"),
+            ("man_1", (220, 0, 260, 100), "person"), ("tree_1", (300, 0, 340, 100), "vegetation"),
+            ("house_2", (350, 0, 399, 100), "structure")]
+    # the recommendation also protects a tree and a second house: not shown
+    b = _scene(tmp_path, "b", objs, threats=["house_1", "car_1"],
+               recs=[_rec(1, "house_1", ["man_1", "tree_1", "house_2"])])
+    b["at_risk"] = [{"object_id": "man_1", "kind": "proximity"}, None, "x"]
+    assert ui_who.important(b, []) == ["house_1", "car_1", "man_1"]
+    # what a try was aimed at is always shown
+    assert ui_who.important(b, [({"target": "tree_1"}, {})]) == ["house_1", "car_1", "man_1",
+                                                                  "tree_1"]
+    # a run that carries no at-risk list at all: the things its arrows end at
+    old = {k: v for k, v in b.items() if k != "at_risk"}
+    assert set(ui_who.important(old, [])) == {"house_1", "car_1", "man_1", "tree_1", "house_2"}
+    # a new object is shown only when the edited run calls it a threat or at risk
+    after = _scene(tmp_path, "a", objs + [("fire_9", (0, 150, 60, 199), "hazard_media"),
+                                          ("pole_1", (380, 150, 399, 199), "object")],
+                   threats=["house_1", "car_1", "fire_9"])
+    after["at_risk"] = b["at_risk"]
+    al = align4.aligned(b, after)
+    (fold,) = ui_who.component(b, [({"index": 1, "target": "car_1"}, al)])
+    assert _flat(_by_class(fold, "who-new")) == "new: fire_9"
+    assert "only the threats and those at risk are shown" in _flat(_by_class(fold, "who-key"))

@@ -155,6 +155,8 @@ def frozen_result(record: Any, assessment: Any, stage4: Any,
         "detected_objects": [o for o in _list(rec.get("detected_objects"))
                              if isinstance(o, dict)],
         "threats": [t for t in _list(a.get("threats")) if isinstance(t, dict)],
+        # who or what the assessment put at risk (for the WHO IS WHO pictures)
+        "at_risk": [x for x in _list(a.get("at_risk")) if isinstance(x, dict)],
         "recommendations": [r for r in _list(s4.get("recommendations"))
                             if isinstance(r, dict)],
         "causal_graph": _dict(s4.get("graph_a")) or None,

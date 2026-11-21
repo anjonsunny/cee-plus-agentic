@@ -54,7 +54,15 @@ def cell_label(cell: dict) -> str:
             return MASQUERADE if cell.get("still_names") else GROUNDED
         return SPURIOUS if state == GONE else IGNORED
     if cell.get("named_removed"):
-        return GROUNDED if state == GONE else MASQUERADE
+        if state == GONE:
+            return GROUNDED
+        # A hazard that was DEALT WITH is still in the picture (a burnt
+        # house can still be unsafe), so its recommendation need not go:
+        # staying but easing (later, smaller) is the grounded answer.
+        # Staying as it was, or escalating, is the masquerade.
+        if cell.get("dealt") and cell.get("way") == EASED:
+            return GROUNDED
+        return MASQUERADE
     return SPURIOUS if state == GONE else IGNORED
 
 
@@ -232,7 +240,20 @@ def _match_column(base: list[dict], after_recs: list[dict], removed: set[str],
         if cells[i] is not None:
             continue
         threat, _effect, affected = quads[i]
-        shared = next((a for a in after_recs if a["quad"][0] == threat), None)
+        # Its hazard still has a recommendation, but none is free. It may
+        # BORROW one only when that one protects something this one
+        # protected: it is then the same recommendation, said once. (H
+        # ui_4a253340, Sunny, 2026-11-20: "fire engine on the house" read
+        # kept because "move the person off the porch" was still there.
+        # The frozen arm's word for the kind of action cannot tell the two
+        # apart, it calls both "assist"; what each protects can.)
+        # (When everything this one protected was itself removed, it has
+        # nothing of its own left to compare by, and the older rule stands:
+        # its hazard still has a recommendation, so it reads kept, adjusted.)
+        nothing_left = bool(affected) and not (affected - removed)
+        shared = next((a for a in after_recs
+                       if a["quad"][0] == threat
+                       and (nothing_left or (a["quad"][2] & affected))), None)
         if shared is not None:                  # its hazard still has advice
             cells[i] = {"state": STAYS if threat in removed else CHANGED,
                         "named_removed": threat in removed, "after": shared["rec"]}
@@ -411,10 +432,11 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
         for i, c in enumerate(col_cells):
             t_i, _e_i, aff_i = _quad(base[i])
             c["unsure"] = sorted(({t_i} | set(aff_i)) & unsure)
-            c["label"] = cell_label(c)
+            c["dealt"] = one.get("kind") == "dealt with"
             det = impact_detail(base[i], c, n_recs)
             c["impact"], c["why"] = det["value"], [r["text"] for r in det["reasons"]]
             c["way"], c["reasons"] = det["way"], det["reasons"]
+            c["label"] = cell_label(c)            # after the way: a dealt-with hazard reads it
             cells_by_row[i].append(c)
         counted = [c for c in col_cells if c["state"] != TARGET_REMOVED]
         moved = sum(1 for c in counted if c["state"] in (GONE, CHANGED))
