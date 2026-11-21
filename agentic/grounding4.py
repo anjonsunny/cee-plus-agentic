@@ -91,7 +91,12 @@ def _intent(action: Any) -> str:
 
 def renames(before: dict, after: dict) -> dict[str, str]:
     """{after id: before id} for the same object under a new id, by the
-    frozen arm's own rule."""
+    frozen arm's own rule. An edited run that was already tracked
+    (agentic/align4.py) is in the before run's names, and the frozen rule
+    must not undo that: it pairs by label alone and would call the car's
+    smoke the house's smoke again."""
+    if isinstance(after, dict) and isinstance(after.get("tracks"), dict):
+        return {}
     try:
         return dict(iv4._frozen().resolve_object_renames(
             before.get("detected_objects"), after.get("detected_objects")))
@@ -346,6 +351,14 @@ def _verdict(cells: list[dict]) -> str:
     return UNTESTED
 
 
+def _place_flags(result: Any) -> list[dict]:
+    try:
+        from agentic import place4
+        return place4.mismatches(result)
+    except Exception:
+        return []
+
+
 def shift_summary(rows: Any) -> dict:
     """How much the recommendations changed, over the whole table, in two
     numbers (Sunny, 2026-11-20: "the total shift considering all the recs
@@ -451,6 +464,9 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
                             if isinstance(after.get("renamed_new"), dict) else {}),
             "unsure": sorted(unsure),
             "tracked": isinstance(after.get("tracks"), dict),
+            # a flag only: its words put someone where the picture does not
+            # have them (agentic/place4.py)
+            "place_flags": _place_flags(after),
             "kind": "dealt with" if one.get("kind") == "dealt with" else "removed",
             "also_removed": [x for x in removed if x != str(one.get("target") or "")],
             "left_behind": left_behind,
@@ -468,4 +484,5 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
                      "same_as": [m for m in grp.get(threat, ()) if m != threat],
                      "cells": cells, "verdict": _verdict(cells)})
     return {"rows": rows, "columns": columns, "shift": shift_summary(rows),
+            "place_flags": _place_flags(before),
             "same_hazards": sorted({grp[h] for h in grp})}

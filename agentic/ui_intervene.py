@@ -525,6 +525,11 @@ def signed_cell(sg: Any) -> list:
         style={"fontWeight": "800", "color": _DIR_COL.get(word, "#64748b")})]
 
 
+PLACE_TIP = ("a flag only, nothing is changed: the recommendation says someone is at a thing "
+             "(off, out of, from the ... of), and in the picture their box does not touch it "
+             "while another of the same kind is there")
+
+
 def _align_note(mapping: Any, new: Any = None) -> str:
     from agentic import align4
     return align4.note(mapping, new)
@@ -561,6 +566,10 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
                          style={"fontWeight": "400",
                                 "color": "#16a34a" if not c.get("unsure") else "#b45309"})]
                if c.get("tracked") else [])
+            + [html.Div("flag \u00b7 #" + str(f.get("rank")) + ": " + str(f.get("text")),
+                        className="iv-place-flag", title=PLACE_TIP,
+                        style={"fontWeight": "400", "color": "#b91c1c"})
+               for f in (c.get("place_flags") or []) if isinstance(f, dict)]
             + ([html.Div(align_note, className="iv-renamed",
                          title="each run names its objects by itself; the same object is "
                                "recognised by where it is in the picture, and the edited run "
@@ -691,7 +700,13 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
         foot_rows.append(html.Tr(row, className="iv-signed"))
     out: list = [html.Div(TABLE_KEY, className="iv-key",
                           style={"fontSize": "10.5px", "color": "#94a3b8",
-                                 "margin": "2px 0 4px"}),
+                                 "margin": "2px 0 4px"})]
+    # the same flag for the run itself, before any edit
+    out += [html.Div("flag \u00b7 this run, #" + str(f.get("rank")) + ": " + str(f.get("text")),
+                     className="iv-place-flag", title=PLACE_TIP,
+                     style={"fontSize": "11px", "color": "#b91c1c", "margin": "0 0 4px"})
+            for f in (tbl.get("place_flags") or []) if isinstance(f, dict)]
+    out += [
                  html.Table([html.Thead(html.Tr(head)), html.Tbody(body + foot_rows)],
                             className="iv-table",
                             style={"borderCollapse": "collapse", "width": "100%"})]

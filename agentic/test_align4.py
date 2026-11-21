@@ -222,19 +222,44 @@ def test_a_person_called_a_man_in_the_other_run_is_the_same_person_in_the_same_p
     assert align4.tracks(b, a)["pairs"] == []
 
 
-def test_the_only_smoke_is_the_same_smoke_though_its_shape_changed():
-    b = {"detected_objects": [_fam("smoke_1", [0, 0, 500, 200], "hazard_media"),
-                              _fam("man_1", [600, 600, 700, 900], "person")]}
-    a = {"detected_objects": [_fam("smoke_1", [500, 300, 900, 500], "hazard_media"),
-                              _fam("man_1", [600, 600, 700, 900], "person")]}
+def _haz(oid, box, family, label=None):
+    return {**_fam(oid, box, family, label), "state_kind": "hazard_bearing"}
+
+
+def test_a_smoke_is_the_same_smoke_only_when_it_comes_from_the_same_thing():
+    """H ui_4a253340 (Sunny, 2026-11-20: "Smoke got shifted. Car's was not
+    detected before... now it does"): the house's smoke and, after the
+    house fire was put out, the car's smoke were both "smoke_1"."""
+    house, car = [0, 200, 540, 800], [500, 680, 850, 890]
+    b = {"detected_objects": [_haz("house_1", house, "structure"), _haz("car_1", car, "vehicle"),
+                              _haz("smoke_1", [2, 1, 481, 467], "hazard_media")]}
+    assert align4.source_of(b["detected_objects"][2], b["detected_objects"]) == "house_1"
+    # the edited run: the house no longer burns, its smoke is gone; the car's is found
+    a = {"detected_objects": [_fam("house_1", house, "structure"), _haz("car_1", car, "vehicle"),
+                              _haz("smoke_1", [447, 1, 920, 756], "hazard_media")]}
+    assert align4.source_of(a["detected_objects"][2], a["detected_objects"]) == "car_1"
     t = align4.tracks(b, a)
-    smoke = [p for p in t["pairs"] if p["before"] == "smoke_1"][0]
-    assert smoke["how"] == "the only one of its kind" and smoke["sure"] is True
-    assert t["new"] == [] and t["gone"] == []
-    # two smokes: no such shortcut
-    b2 = {"detected_objects": b["detected_objects"] + [_fam("smoke_2", [0, 700, 90, 800],
-                                                           "hazard_media")]}
-    assert "smoke_1" in align4.tracks(b2, a)["gone"]
+    assert t["gone"] == ["smoke_1"] and t["new"] == ["smoke_1"]         # two different smokes
+    out = align4.aligned(b, a)
+    assert out["renamed"] == {"smoke_1": "smoke_2"} and out["renamed_new"] == {"smoke_1": "smoke_2"}
+    assert out["tracks"]["new"] == ["smoke_2"] and out["unsure"] == []
+    # the same source, another shape: the same smoke, and sure
+    a2 = {"detected_objects": [_haz("house_1", house, "structure"), _haz("car_1", car, "vehicle"),
+                               _haz("smoke_7", [100, 1, 400, 300], "hazard_media", "smoke")]}
+    (p,) = [x for x in align4.tracks(b, a2)["pairs"] if x["before"] == "smoke_1"]
+    assert (p["after"], p["how"], p["sure"], p["source"]) == ("smoke_7", "the same source",
+                                                               True, "house_1")
+    # nothing near to come from: taken as the same by its name, as a guess
+    lone_b = {"detected_objects": [_fam("smoke_1", [0, 0, 500, 200], "hazard_media")]}
+    lone_a = {"detected_objects": [_fam("smoke_1", [500, 300, 900, 500], "hazard_media")]}
+    (p,) = align4.tracks(lone_b, lone_a)["pairs"]
+    assert p["how"] == "the same name" and p["sure"] is False
+    assert align4.aligned(lone_b, lone_a)["unsure"] == ["smoke_1"]
+    # in the same place it needs no source at all
+    (p,) = align4.tracks(lone_b, lone_b)["pairs"]
+    assert p["how"] == "same place" and p["sure"] is True
+    assert align4.source_of({}, []) is None
+    assert align4.source_of(lone_b["detected_objects"][0], [None] if False else []) is None
 
 
 def test_a_moved_object_is_matched_by_looks_and_a_changed_one_is_a_marked_guess(tmp_path):
@@ -340,3 +365,24 @@ def test_a_recommendation_borrows_another_only_when_it_protects_the_same_thing()
     assert [r["cells"][0]["state"] for r in t["rows"]] == ["stays", "changed"]
     for bad in (None, {}, {"recommendations": [None, {"structured_reasoning": 3}]}):
         assert g.table(b, [({"index": 1, "target": "house_1", "kind": "dealt with"}, bad)])["rows"]
+
+
+def test_the_older_renaming_does_not_undo_the_tracking():
+    """H: with the house fire out, its smoke is gone and the car's smoke is
+    another one. The frozen rule pairs by label and glued them together."""
+    house, car = [0, 200, 540, 800], [500, 680, 850, 890]
+    b = {"detected_objects": [_haz("house_1", house, "structure"), _haz("car_1", car, "vehicle"),
+                              _haz("smoke_1", [2, 1, 481, 467], "hazard_media")],
+         "threats": [{"object_id": x} for x in ("house_1", "car_1", "smoke_1")],
+         "recommendations": [_rec(1, "house_1", ["car_1"]), _rec(2, "smoke_1", ["car_1"])]}
+    a = {"detected_objects": [_fam("house_1", house, "structure"), _haz("car_1", car, "vehicle"),
+                              _haz("smoke_1", [447, 1, 920, 756], "hazard_media")],
+         "threats": [{"object_id": "car_1"}, {"object_id": "smoke_1"}],
+         "recommendations": [_rec(1, "smoke_1", ["car_1"])]}
+    al = align4.aligned(b, a)
+    assert g.renames(b, al) == {}
+    t = g.table(b, [({"index": 1, "target": "house_1", "kind": "dealt with"}, al)])
+    assert t["columns"][0]["also_removed"] == ["smoke_1"]              # went with the house fire
+    # the recommendation about the house's smoke is gone; the one about the car's is new
+    assert t["rows"][1]["cells"][0]["state"] == "gone"
+    assert [n["structured_reasoning"]["threat"] for n in t["columns"][0]["new"]] == ["smoke_2"]

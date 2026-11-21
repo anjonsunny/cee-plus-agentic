@@ -75,6 +75,8 @@ def _objects(result: Any) -> list[dict]:
 
 SAME_PLACE, BY_LOOKS, ONE_LEFT = "same place", "by looks", "the only one left"
 ONLY_ONE = "the only one of its kind"
+SAME_SOURCE, SAME_NAME = "the same source", "the same name"
+FLUID = "hazard_media"      # smoke, fire, a spill: no fixed shape, it belongs to what makes it
 LOOKS_SAME = 0.6            # shared part of two colour histograms, 0..1
 IOU_OTHER_LABEL = 0.8       # two labels of one family (person / man): only when nearly the same box
 
@@ -129,6 +131,39 @@ def _alike(h1: Any, h2: Any) -> float:
         return 0.0
 
 
+def source_of(o: dict, objs: list[dict], size: Any = None) -> Any:
+    """What a smoke, a fire or a spill comes from: the hazard-bearing thing
+    its foot stands in (the middle of the box's lower edge; the smallest
+    such box when several hold it), else the nearest one within a tenth of
+    the picture. None when nothing is near (H ui_4a253340, Sunny,
+    2026-11-20: the house's smoke and the car's smoke were both "smoke_1"
+    and read as one smoke)."""
+    box = _box(o, size)
+    if not box:
+        return None
+    px, py = (box[0] + box[2]) / 2.0, box[3]
+    best_in, best_near = None, None
+    span = 1.0 if size else max(
+        [max((_box(x) or [0, 0, 0, 0])[2:]) for x in objs if isinstance(x, dict)] or [1.0]) or 1.0
+    for c in objs:
+        if c is o or _kind(c) == FLUID or c.get("state_kind") != "hazard_bearing":
+            continue
+        b = _box(c, size)
+        if not b:
+            continue
+        if b[0] <= px <= b[2] and b[1] <= py <= b[3]:
+            area = (b[2] - b[0]) * (b[3] - b[1])
+            if best_in is None or area < best_in[0]:
+                best_in = (area, c["object_id"])
+        else:
+            dx = max(b[0] - px, 0.0, px - b[2])
+            dy = max(b[1] - py, 0.0, py - b[3])
+            d = (dx * dx + dy * dy) ** 0.5
+            if d <= 0.1 * span and (best_near is None or d < best_near[0]):
+                best_near = (d, c["object_id"])
+    return (best_in or best_near or (None, None))[1]
+
+
 def tracks(before: Any, after: Any) -> dict:
     """Which object of the edited run is which object of the before run.
 
@@ -155,6 +190,7 @@ def tracks(before: Any, after: Any) -> dict:
         b_size = a_size = None                  # compare raw pixels, both or neither
     used_a: set[str] = set()
     used_b: set[str] = set()
+    fluids: list[tuple[list, list]] = []
     for kind in sorted({_kind(o) for o in a_objs}):
         bs = [o for o in b_objs if _kind(o) == kind]
         as_ = [o for o in a_objs if _kind(o) == kind]
@@ -181,9 +217,11 @@ def tracks(before: Any, after: Any) -> dict:
                 placed += 1
                 out["pairs"].append({"before": b_id, "after": a_id, "how": SAME_PLACE,
                                      "sure": True, "score": round(sc, 3)})
+        if kind == FLUID:
+            fluids.append((as_, bs))             # by its source, once the rest is matched
+            continue
         # one thing of a label in each run, under the same name: the same
-        # thing, though its box changed (smoke, a fire, burning brush never
-        # keep their shape)
+        # thing, though its box changed (burning brush does not keep its shape)
         for lab in sorted({str(o.get("label") or "") for o in as_}):
             la = [o for o in as_ if str(o.get("label") or "") == lab]
             lb = [o for o in bs if str(o.get("label") or "") == lab]
@@ -217,6 +255,40 @@ def tracks(before: Any, after: Any) -> dict:
             used_b.add(b_id)
             out["pairs"].append({"before": b_id, "after": a_id, "how": ONE_LEFT,
                                  "sure": False, "score": None})
+    # ── smoke, fire, a spill: the same one when it comes from the same thing
+    to_before = {p["after"]: p["before"] for p in out["pairs"]}
+    differ: set[str] = set()                    # after ids known to be ANOTHER one
+    for as_, bs in fluids:
+        left_a = [o for o in as_ if o["object_id"] not in used_a]
+        left_b = [o for o in bs if o["object_id"] not in used_b]
+        for x in left_a:
+            sa = source_of(x, a_objs, a_size)
+            sa = to_before.get(sa, sa) if sa else None
+            for y in left_b:
+                if y["object_id"] in used_b or x.get("label") != y.get("label"):
+                    continue
+                sb = source_of(y, b_objs, b_size)
+                if sa and sb and sa == sb:
+                    used_a.add(x["object_id"])
+                    used_b.add(y["object_id"])
+                    out["pairs"].append({"before": y["object_id"], "after": x["object_id"],
+                                         "how": SAME_SOURCE, "sure": True, "score": None,
+                                         "source": sb})
+                    break
+                if sa and sb and sa != sb and x["object_id"] == y["object_id"]:
+                    differ.add(x["object_id"])   # the same name, another source
+    # ── what is left under the same name and of the same kind: taken as the
+    #    same thing, but as a guess (nothing shows it, nothing denies it)
+    for x in a_objs:
+        if x["object_id"] in used_a or x["object_id"] in differ:
+            continue
+        y = next((o for o in b_objs if o["object_id"] == x["object_id"]
+                  and o["object_id"] not in used_b and _kind(o) == _kind(x)), None)
+        if y is not None:
+            used_a.add(x["object_id"])
+            used_b.add(y["object_id"])
+            out["pairs"].append({"before": y["object_id"], "after": x["object_id"],
+                                 "how": SAME_NAME, "sure": False, "score": None})
     out["new"] = [o["object_id"] for o in a_objs if o["object_id"] not in used_a]
     out["gone"] = [o["object_id"] for o in b_objs if o["object_id"] not in used_b]
     return out
@@ -231,8 +303,19 @@ def same_place(before: Any, after: Any, found: Any = None) -> dict[str, str]:
     found = found if isinstance(found, dict) else tracks(before, after)
     pairs = {p["after"]: p["before"] for p in found["pairs"]}
     out = {a: b for a, b in pairs.items() if a != b}
-    if not out:
+    before_ids = {o["object_id"] for o in b_objs}
+    # a new object under the name of a before object it is NOT (the car's
+    # smoke called "smoke_1" like the house's): it gets a free name
+    clash = [x for x in (found.get("new") or []) if x in before_ids]
+    if not out and not clash:
         return {}
+    for oid in clash:
+        stem = re.sub(r"_\d+$", "", oid) or oid
+        n = 1
+        while (f"{stem}_{n}" in before_ids or f"{stem}_{n}" in out.values()
+               or f"{stem}_{n}" in {x["object_id"] for x in a_objs}):
+            n += 1
+        out[oid] = f"{stem}_{n}"
     # an object of the edited run that keeps its own name must not end up
     # sharing it with one that was just given that name: it gets a free one
     taken = set(out.values()) | {o["object_id"] for o in b_objs}
@@ -339,7 +422,8 @@ def summary(found: Any) -> dict:
     found = found if isinstance(found, dict) else {}
     pairs = [p for p in (found.get("pairs") if isinstance(found.get("pairs"), list) else [])
              if isinstance(p, dict)]
-    return {"same place": sum(1 for p in pairs if p.get("how") in (SAME_PLACE, ONLY_ONE)),
+    return {"same place": sum(1 for p in pairs
+                              if p.get("how") in (SAME_PLACE, ONLY_ONE, SAME_SOURCE)),
             "by looks": sum(1 for p in pairs if p.get("how") == BY_LOOKS),
             "not sure": sum(1 for p in pairs if not p.get("sure")),
             "new": len(found.get("new") or []) if isinstance(found.get("new"), list) else 0,
