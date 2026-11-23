@@ -120,7 +120,13 @@ def test_the_page_has_a_bar_above_the_picture_and_one_for_a_running_try(tmp_path
     assert anc[-1] is scene_anc[-1]
     kids = anc[-1].children
     assert kids.index(bar) < kids.index(scene)                    # above the picture
-    assert _find(_find(ui.app.layout, "iv-panel")[0], "iv-progress") is not None
+    panel = _find(ui.app.layout, "iv-panel")[0]
+    assert _find(panel, "iv-progress") is not None
+    # the try's bar sits with the NEW TRY form: right under it, above the tables
+    order = [getattr(k, "id", None) for k in panel.children]
+    assert order.index("iv-progress") == order.index("iv-controls") + 1
+    assert order.index("iv-progress") < order.index("iv-evidence")
+    assert order.index("iv-features-fold") < order.index("iv-controls")
     # a live run shows a bar; a finished one, a replay or an unknown run shows none
     monkeypatch.setattr(ui, "UI_RUNS_DIR", tmp_path)
     p4._cache.clear()

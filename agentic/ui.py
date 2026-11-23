@@ -6482,7 +6482,6 @@ app.layout = html.Div([
                       # of the OPEN run, give the edited scene, run only the
                       # after side (agentic/ui_intervene.py).
                       html.Div([
-                        html.Div(id="iv-progress"),
                         # the feature half of the panel folds as one piece
                         # under its own large title (Sunny, 2026-11-17)
                         html.Details([
@@ -6565,6 +6564,10 @@ app.layout = html.Div([
                                        style={"fontSize": "11.5px", "color": "#b91c1c",
                                               "marginTop": "4px"}),
                           ], id="iv-controls", open=False, style={"display": "none"}),
+                          # the running try's bar sits with the NEW TRY form, right
+                          # where the try was started (Sunny, 2026-11-23); the form
+                          # folds away on start, the bar stays on its own line
+                          html.Div(id="iv-progress"),
                           # the proof, under the action: folded, said once
                           html.Div(id="iv-evidence"),
                           dcc.Store(id="iv-key"),
