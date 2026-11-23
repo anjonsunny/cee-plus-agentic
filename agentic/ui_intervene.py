@@ -150,6 +150,96 @@ def target_options(info: dict | None) -> list[dict]:
     return out
 
 
+_SMALL: dict[tuple, str] = {}
+
+
+def small_image(path: Any, width: int = 520) -> str | None:
+    """The picture as a small JPEG data URL (made once, kept in memory), so
+    a form that redraws on every pick does not resend the full picture."""
+    try:
+        import base64
+        import io
+        from PIL import Image
+        path = Path(str(path))
+        key = (str(path), path.stat().st_mtime, width)
+        if key not in _SMALL:
+            img = Image.open(path).convert("RGB")
+            if img.width > width:
+                img = img.resize((width, max(1, round(img.height * width / img.width))))
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=80)
+            _SMALL[key] = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+        return _SMALL[key]
+    except Exception:
+        return None
+
+
+def pick_unit(info: Any, target: Any) -> list[str]:
+    """The things one pick covers: the target, and the hazards the model
+    called the same as it (they are tried together)."""
+    from agentic import same4
+    info = info if isinstance(info, dict) else {}
+    cands = {str(c.get("object_id")) for c in info.get("candidates") or []
+             if isinstance(c, dict)}
+    grp = same4.groups(same4.pairs_of(info.get("result")))
+    target = str(target or "")
+    return [target] + [m for m in grp.get(target, ()) if m != target and m in cands] \
+        if target else []
+
+
+def option_for(info: Any, options: Any, oid: Any) -> str:
+    """The dropdown value a clicked thing belongs to: itself, or the option
+    of its same-hazard pair. '' when it cannot be picked."""
+    values = [str(o.get("value")) for o in (options if isinstance(options, list) else [])
+              if isinstance(o, dict)]
+    oid = str(oid or "")
+    if oid in values:
+        return oid
+    return next((v for v in values if oid and oid in pick_unit(info, v)), "")
+
+
+def picker_component(info: Any, target: Any, box_id: Any = None) -> list:
+    """The picture with every thing that can be picked, boxed: red for a
+    hazard, orange for a victim, the pick (and its same-hazard pair) thick.
+    Small boxes are drawn last, so one inside a big one can still be
+    clicked. `box_id(oid)` gives a box its id (ui.py owns the click). []
+    when the picture or the boxes cannot be read."""
+    info = info if isinstance(info, dict) else {}
+    result = info.get("result") if isinstance(info.get("result"), dict) else {}
+    src = small_image(info.get("image")) if info.get("image") else None
+    size = result.get("image_size")
+    if not src or not (isinstance(size, (list, tuple)) and len(size) == 2
+                       and all(isinstance(v, (int, float)) and v > 0 for v in size)):
+        return []
+    w, h = float(size[0]), float(size[1])
+    objs = {str(o.get("object_id")): o for o in result.get("detected_objects") or []
+            if isinstance(o, dict)}
+    picked = set(pick_unit(info, target))
+    boxes = []
+    for c in info.get("candidates") or []:
+        if not isinstance(c, dict):
+            continue
+        oid = str(c.get("object_id") or "")
+        b = (objs.get(oid) or {}).get("bbox")
+        if not (isinstance(b, (list, tuple)) and len(b) == 4
+                and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in b)):
+            continue
+        x0, y0, x1, y1 = (float(v) for v in b)
+        if x1 <= x0 or y1 <= y0:
+            continue
+        col = "#f97316" if c.get("variable_role") == "victim" else "#ef4444"
+        boxes.append(((x1 - x0) * (y1 - y0), html.Div(
+            html.Span(oid, style={"background": col}),
+            **({"id": box_id(oid)} if box_id is not None else {}), n_clicks=0,
+            className="iv-pick-box" + (" picked" if oid in picked else ""),
+            title=f"pick {oid}", **{"data-pick": oid},
+            style={"left": f"{100 * x0 / w:.2f}%", "top": f"{100 * y0 / h:.2f}%",
+                   "width": f"{100 * (x1 - x0) / w:.2f}%",
+                   "height": f"{100 * (y1 - y0) / h:.2f}%", "borderColor": col})))
+    boxes.sort(key=lambda t: -t[0])               # big first, small on top
+    return [html.Div([html.Img(src=src)] + [b for _a, b in boxes], className="iv-pick-wrap")]
+
+
 def victim_instructions(label: str, others: list[str]) -> tuple[str, str]:
     """(caption instruction, image instruction) for taking a VICTIM out of
     the scene. The victim is not in the picture at all; every hazard stays

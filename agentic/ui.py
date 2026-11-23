@@ -6068,6 +6068,15 @@ app.index_string = """<!DOCTYPE html>
              padding:2px 8px; }
   .iv-next:hover { background:#dbeafe; }
   .iv-note { font-size:10px; color:#94a3b8; margin:4px 0; }
+  .iv-pick-wrap { position:relative; line-height:0; }
+  .iv-pick-wrap img { width:100%; border-radius:6px; display:block; }
+  .iv-pick-box { position:absolute; box-sizing:border-box; border-style:solid;
+                 border-width:2px; cursor:pointer; border-radius:2px; }
+  .iv-pick-box:hover { background:#ffffff33; }
+  .iv-pick-box.picked { border-width:4px; }
+  .iv-pick-box span { position:absolute; left:-2px; top:-12px; font-size:9px;
+                      line-height:11px; padding:0 3px; color:#fff; font-weight:700;
+                      white-space:nowrap; }
   .iv-lbl { font-size:10px; font-weight:800; letter-spacing:.06em;
             text-transform:uppercase; color:#64748b; width:58px; flex:none; }
   .iv-row-form { display:flex; align-items:center; gap:8px; margin:5px 0; }
@@ -6536,36 +6545,50 @@ app.layout = html.Div([
                                            style={**ui_intervene.TITLE_STYLE,
                                                   "margin": "10px 0 4px"}),
                               html.Div(id="iv-note", className="iv-note"),
+                              # WHAT / HOW / CHANGED on the left, and across the three
+                              # rows the picture with every thing that can be picked
+                              # boxed: click a box to pick it (Sunny, 2026-11-23)
                               html.Div([
-                                  html.Span("what", className="iv-lbl"),
-                                  dcc.Dropdown(id="iv-target", options=[], value=None,
-                                               clearable=False, searchable=False,
-                                               className="iv-target",
-                                               style={"flex": "1", "fontSize": "11.5px",
-                                                      "color": "#111"}),
-                              ], className="iv-row-form"),
-                              html.Div([
-                                  html.Span("how", className="iv-lbl"),
-                                  # realistic by default: a crew cannot make a
-                                  # pool or a tanker vanish (Sunny, 2026-11-20)
-                                  dcc.RadioItems(
-                                      id="iv-kind", value=ui_intervene.DEALT_WITH, inline=True,
-                                      options=[
-                                          {"label": " dealt with (the action worked, it stays)",
-                                           "value": ui_intervene.DEALT_WITH},
-                                          {"label": " removed (as if it never was)",
-                                           "value": ui_intervene.REMOVED}],
-                                      className="ctl-toggle"),
-                              ], className="iv-row-form"),
-                              html.Div([
-                                  html.Span("changed", className="iv-lbl"),
-                                  dcc.RadioItems(
-                                      id="iv-modality", value="both", inline=True,
-                                      options=[{"label": " both", "value": "both"},
-                                               {"label": " caption", "value": "caption"},
-                                               {"label": " image", "value": "image"}],
-                                      className="ctl-toggle"),
-                              ], className="iv-row-form"),
+                                  html.Div([
+                                  html.Div([
+                                      html.Span("what", className="iv-lbl"),
+                                      dcc.Dropdown(id="iv-target", options=[], value=None,
+                                                   clearable=False, searchable=False,
+                                                   className="iv-target",
+                                                   style={"flex": "1", "fontSize": "11.5px",
+                                                          "color": "#111"}),
+                                  ], className="iv-row-form"),
+                                  html.Div([
+                                      html.Span("how", className="iv-lbl"),
+                                      # realistic by default: a crew cannot make a
+                                      # pool or a tanker vanish (Sunny, 2026-11-20)
+                                      dcc.RadioItems(
+                                          id="iv-kind", value=ui_intervene.DEALT_WITH, inline=True,
+                                          options=[
+                                              {"label": " dealt with (the action worked, it stays)",
+                                               "value": ui_intervene.DEALT_WITH},
+                                              {"label": " removed (as if it never was)",
+                                               "value": ui_intervene.REMOVED}],
+                                          className="ctl-toggle"),
+                                  ], className="iv-row-form"),
+                                  html.Div([
+                                      html.Span("changed", className="iv-lbl"),
+                                      dcc.RadioItems(
+                                          id="iv-modality", value="both", inline=True,
+                                          options=[{"label": " both", "value": "both"},
+                                                   {"label": " caption", "value": "caption"},
+                                                   {"label": " image", "value": "image"}],
+                                          className="ctl-toggle"),
+                                  ], className="iv-row-form"),
+                                  ], className="iv-form-rows",
+                                      style={"flex": "1", "minWidth": "0", "display": "flex",
+                                             "flexDirection": "column",
+                                             "justifyContent": "space-between"}),
+                                  html.Div(id="iv-picker", className="iv-picker",
+                                           style={"flex": "0 0 260px", "maxWidth": "260px"}),
+                              ], className="iv-form-top",
+                                  style={"display": "flex", "gap": "12px",
+                                         "alignItems": "stretch"}),
                               html.Details([
                                   html.Summary("edit instructions (copy these to make the edit)",
                                                className="iv-instr-head"),
@@ -6761,6 +6784,32 @@ def iv_setup(run_id, _n, current, value):
             "with this run's settings and the pathology probes off")
     note += ui_intervene.same_note(info.get("result"))
     return opts, keep, {"display": "block"}, note
+
+
+@app.callback(Output("iv-picker", "children"),
+              Input("iv-target", "value"), Input("iv-target", "options"),
+              State("run-id", "data"))
+def iv_picker(target, _options, run_id):
+    """The picture beside the form: every thing that can be picked, boxed;
+    the pick drawn thick."""
+    from agentic import ui_intervene
+    info = _iv_info(run_id)
+    return ui_intervene.picker_component(
+        info, target, lambda oid: {"type": "iv-pick", "oid": oid}) if info else []
+
+
+@app.callback(Output("iv-target", "value", allow_duplicate=True),
+              Input({"type": "iv-pick", "oid": ALL}, "n_clicks"),
+              State("iv-target", "options"), State("run-id", "data"),
+              prevent_initial_call=True)
+def iv_pick(clicks, options, run_id):
+    """A click on a box in the picture picks it; the dropdown follows."""
+    from agentic import ui_intervene
+    trig = ctx.triggered_id
+    if not isinstance(trig, dict) or not any(clicks or []):
+        return dash.no_update
+    value = ui_intervene.option_for(_iv_info(run_id), options, trig.get("oid"))
+    return value if value else dash.no_update
 
 
 @app.callback(Output("iv-instructions", "children"), Output("iv-caption", "value"),
