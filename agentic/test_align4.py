@@ -712,3 +712,76 @@ def test_the_form_asks_for_the_intended_state_and_the_result_is_shown_either_way
     (mark,) = _by_class(ui_iv.table_component(t), "iv-edit-seen")
     assert _flat(mark) == "edit not seen" and mark.style["color"] == "#b91c1c"
     assert ui_iv.state_of(None, "x") == "" and ui_iv.state_options()
+
+
+# ── the feature shift: the graph without the state, and the state by itself ──
+
+def _g3(house_state):
+    return {"nodes": [], "edges": [
+        {"source": f"house_1 · {house_state}", "via_state": house_state,
+         "effect": "may_harm", "target": "person_1"},
+        {"source": "house_1", "via_state": house_state, "effect": "may_spread_to",
+         "target": "house_2 · intact"},
+        {"source": "car_1", "via_state": "burning", "effect": "may_harm", "target": "man_1"}]}
+
+
+def _run3(house_state, car_state="burning"):
+    return {"causal_graph": _g3(house_state),
+            "threats": [{"object_id": "house_1"}, {"object_id": "car_1"}],
+            "at_risk": [{"object_id": "person_1"}],
+            "detected_objects": [
+                {"object_id": "house_1", "label": "house", "state": house_state},
+                {"object_id": "car_1", "label": "car", "state": car_state},
+                {"object_id": "person_1", "label": "person", "state": "standing"},
+                {"object_id": "man_1", "label": "person", "state": "standing"},
+                {"object_id": "house_2", "label": "house", "state": "intact"}]}
+
+
+def test_a_change_of_state_alone_is_not_a_change_of_who_threatens_whom():
+    """Sunny, 2026-11-23, the three-arrow example: the house goes from
+    burning to burnt and nothing else changes. With the state inside the
+    arrow that read 0.80 of the graph changed; nobody threatens anybody
+    differently."""
+    from agentic import declared4
+    b, a = _run3("burning"), _run3("burnt")
+    assert declared4.graph_part(b, a) == 0.0
+    # the state is its own part: one of the three threats-and-at-risk changed
+    assert declared4.state_part(b, a) == pytest.approx(1 / 3, abs=0.001)
+    assert declared4.state_part(b, b) == 0.0 and declared4.graph_part(b, b) == 0.0
+    # a real change of structure does count: one arrow of three is another one
+    a2 = _run3("burning")
+    a2["causal_graph"]["edges"][2] = {"source": "car_1", "effect": "may_harm", "target": "person_1"}
+    assert declared4.graph_part(b, a2) == pytest.approx(1 - 2 / 4)       # A B C against A B D
+    # a thing that is gone counts as changed
+    gone = _run3("burning")
+    gone["detected_objects"] = [o for o in gone["detected_objects"] if o["object_id"] != "car_1"]
+    assert declared4.state_part(b, gone) == pytest.approx(1 / 3, abs=0.001)
+    # no arrows at all, or nothing that is a threat or at risk: no such part
+    assert declared4.graph_part({}, {"causal_graph": {"edges": []}}) is None
+    assert declared4.state_part({"detected_objects": [{"object_id": "x_1", "state": "s"}]}, a) is None
+    for bad in (None, "x", {"causal_graph": "zz", "detected_objects": 3},
+                {"causal_graph": {"edges": [None, {"source": 3}, {"target": "a"}]}}):
+        assert declared4.graph_part(bad, bad) in (None, 0.0)
+        assert declared4.state_part(bad, bad) in (None, 0.0)
+
+
+def test_the_feature_shift_is_four_parts_and_the_state_is_one_of_them():
+    from agentic import declared4
+    b, a = {**_run3("burning"), "disaster_level": 8}, {**_run3("burnt"), "disaster_level": 7}
+    b["recommendations"] = a["recommendations"] = []
+    one = {"target": "house_1", "kind": "dealt with", "signals": {
+        "hazard_shift": 0.1, "graph_shift": 0.8, "recommendation_shift": 0.6,
+        "hazard_level_delta": -1, "rec_direction": "de-escalated",
+        "graph_direction": "de-escalated"}}
+    rd = declared4.try_reading(b, (one, a))
+    parts = {p["name"]: p["signed"] for p in rd["parts"]}
+    assert set(parts) == {"level", "recommendations", "graph", "state"}
+    assert parts["graph"] == 0.0                                        # not the frozen 0.8
+    assert parts["state"] == pytest.approx(1 / 3, abs=0.001)
+    assert rd["size"] == pytest.approx((0.1 + 0.6 + 0.0 + 1 / 3) / 4, abs=0.002)
+    # nothing that is a threat or at risk: three parts, as before
+    bare = {"detected_objects": [], "causal_graph": None, "recommendations": []}
+    rd = declared4.try_reading(bare, (one, bare))
+    assert [p["name"] for p in rd["parts"]] == ["level", "recommendations", "graph"]
+    # (the older graph number has no direction here, so it adds nothing, as before)
+    assert rd["size"] == pytest.approx((0.1 + 0.6 + 0.0) / 3, abs=0.002)

@@ -528,6 +528,59 @@ def direction_and_type(before: Any, pair: Any, cells: list,
     return direction, kind, by
 
 
+def _bare(x: Any) -> str:
+    return str(x or "").split("\u00b7")[0].strip()
+
+
+def graph_part(before: Any, after: Any) -> Any:
+    """How much WHO THREATENS WHOM changed between two runs, 0..1: one
+    minus the share of arrows that are in both, an arrow being (hazard,
+    effect, target). The STATE is left out on purpose (Sunny, 2026-11-23):
+    with it, a house going from burning to burnt made every one of its
+    arrows count as a new arrow, so one change of state was counted once
+    per arrow and the graph read 0.80 changed when nobody threatened anybody
+    differently. The state is its own part (`state_part`). Read off the
+    graph of the recommendations. None when neither run has an arrow."""
+    def arrows(result: Any) -> set:
+        g = result.get("causal_graph") if isinstance(result, dict) else None
+        out = set()
+        for e in (g.get("edges") if isinstance(g, dict) else None) or []:
+            if isinstance(e, dict):
+                a, b = _bare(e.get("source")), _bare(e.get("target"))
+                if a and b:
+                    out.add((a, str(e.get("effect") or "").strip(), b))
+        return out
+    b, a = arrows(before), arrows(after)
+    if not b and not a:
+        return None
+    return round(1.0 - len(b & a) / len(b | a), 3)
+
+
+def state_part(before: Any, after: Any) -> Any:
+    """Of the threats and those at risk in the before run, the share whose
+    STATE is different in the edited run (one that is gone counts as
+    changed). 0..1; None when the before run has none of them. `after` is
+    in the before run's names (agentic/align4.py)."""
+    try:
+        r = iv4.clean_result(before)
+        want = set(iv4.hazards_of(r))
+        risk = {str(x.get("object_id") or "") for x in (r.get("at_risk") or [])
+                if isinstance(x, dict)}
+        if not risk and not isinstance((before or {}).get("at_risk"), list):
+            risk = {v["object_id"] for v in iv4.victims_of(r)}
+        want |= risk
+        was = {str(o.get("object_id") or ""): str(o.get("state") or "").strip().lower()
+               for o in r["detected_objects"]}
+        now = {str(o.get("object_id") or ""): str(o.get("state") or "").strip().lower()
+               for o in iv4.clean_result(after)["detected_objects"]}
+    except Exception:
+        return None
+    ids = [i for i in was if i and i in want]
+    if not ids:
+        return None
+    return round(sum(1 for i in ids if i not in now or now[i] != was[i]) / len(ids), 3)
+
+
 def try_reading(before: Any, pair: Any) -> Any:
     """{"size": how much the responses changed (0..1, no sign), "way":
     eases | escalates | redirects | no change, "counts", "signed": the
@@ -544,6 +597,18 @@ def try_reading(before: Any, pair: Any) -> Any:
                  for p in sg["parts"] if isinstance(p, dict)]
     except Exception:
         return None
+    # the graph part: who threatens whom, WITHOUT the state; and the state
+    # as a part of its own (2026-11-23). A run with no arrows keeps the
+    # older graph number; a run with no threat or at-risk has no state part.
+    try:
+        g_size, s_size = graph_part(before, after), state_part(before, after)
+    except Exception:
+        g_size = s_size = None
+    for p in parts:
+        if p["name"] == "graph" and g_size is not None:
+            p["signed"] = round(g_size * (-1.0 if p["signed"] < 0 else 1.0), 3)
+    if s_size is not None:
+        parts.append({"name": "state", "signed": s_size})
     size = (round(sum(abs(p["signed"]) for p in parts) / len(parts), 3)
             if parts else abs(signed))
     w = way_of_try(before, pair, signed)

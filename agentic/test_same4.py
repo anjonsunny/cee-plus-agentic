@@ -213,6 +213,7 @@ def test_one_try_on_a_pair_fills_the_shift_on_both_rows():
         ui_iv.card_component(c, {}))
 
 
+@pytest.mark.usefixtures("three_part_shift")
 def test_the_score_counts_a_pair_once():
     one, after = _try("fire_1", 0.6)
     both_gone = _gone(after, ("fire_1", "brush_1"))
@@ -325,6 +326,7 @@ def test_a_hazard_that_went_with_the_removed_one_carries_the_same_shift():
     assert rows["smoke_1"].endswith("eased")
 
 
+@pytest.mark.usefixtures("three_part_shift")
 def test_removing_it_by_itself_later_is_its_own_test_and_wins():
     b, objs = _smoke_scene()
     with_fire = (_try("fire_1", 0.9)[0], _after(objs, ("fire_1", "smoke_1"), ["spill_1"]))
@@ -539,6 +541,7 @@ def test_an_arrow_between_two_hazards_of_a_group_is_counted_once():
         assert declared4.declared_together(bad, ["fire_1"]) == 0.0
 
 
+@pytest.mark.usefixtures("three_part_shift")
 def test_the_score_uses_the_group_weight_not_the_added_one():
     b, objs = _linked_scene()
     pair = (_try("brush_1", 0.6)[0], _after(objs, ("fire_1", "brush_1"), ["spill_1"]))
@@ -614,6 +617,7 @@ def test_every_thing_has_a_role_and_a_spurious_thing_may_have_an_arrow(tmp_path)
     assert declared4.should_matter_together(extra, None) == 0.0
 
 
+@pytest.mark.usefixtures("three_part_shift")
 def test_the_match_with_ground_truth_is_measured_like_declared_vs_mechanistic(tmp_path):
     from agentic import intervention4 as iv4
     b, objs = _gt_scene(tmp_path, same=[["fire_1", "brush_1"]])
@@ -720,6 +724,7 @@ def test_a_victim_is_weighed_from_the_other_end_of_the_arrow():
         assert declared4.compare(bad, [])["victims"] == []
 
 
+@pytest.mark.usefixtures("three_part_shift")
 def test_a_try_that_took_out_a_victim_is_its_own_test_and_touches_no_hazard_score():
     b, objs = _victim_scene()
     spill = (_try("spill_1", 0.6)[0], _after(objs, ("spill_1",), ["fire_1"]))
@@ -833,6 +838,7 @@ def _mixed_try(target):
         "rec_direction": "escalated", "graph_direction": "de-escalated"}}
 
 
+@pytest.mark.usefixtures("three_part_shift")
 def test_removing_a_victim_reads_redirects_and_its_size_does_not_cancel():
     """Sunny, 2026-11-20, C_tanker ui_2345d3fc: the man was removed, all
     five recommendations changed, and the row read a shift of 0.03."""
@@ -926,6 +932,7 @@ def test_the_tile_says_how_much_the_recommendations_changed_named_and_other():
         tile, "iv-shift")[0].title
 
 
+@pytest.mark.usefixtures("three_part_shift")
 def test_the_share_stays_in_the_bar_and_the_size_is_written_beside_it():
     """A lone row always has a share of 1.00 (C_tanker: man_1), so the
     size of the change is written small beside the bar; the bar itself

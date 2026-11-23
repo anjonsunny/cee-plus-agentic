@@ -1179,6 +1179,7 @@ def test_the_comparison_needs_no_ground_truth_and_grows_with_each_try():
     assert "gt_dir" not in src and "synthesis(" not in src          # nobody's answer key
 
 
+@pytest.mark.usefixtures("three_part_shift")
 def test_said_more_done_more_and_more_alarmed_are_named():
     from agentic import declared4 as d
     # says the fire matters a lot (5.5 against 7), yet the advice depends
@@ -1538,6 +1539,7 @@ def test_the_card_says_in_which_direction_declared_and_mechanistic_differ():
     assert _by_class(ui_iv.card_component(d.compare(D_BEFORE, []), {}), "iv-explain") == []
 
 
+@pytest.mark.usefixtures("three_part_shift")
 def test_the_feature_row_says_one_phrase_coloured_by_the_direction_of_the_shift():
     """Sunny, 2026-11-17: no separate parts on the card. One phrase,
     "shifts emergency responses", green when the combined shift eased and
