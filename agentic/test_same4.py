@@ -322,7 +322,7 @@ def test_a_hazard_that_went_with_the_removed_one_carries_the_same_shift():
     rows = {_flat(r).split()[0]: _flat(r) for r in
             _by_class(ui_iv.card_component(c, {}), "iv-feature")}
     assert "gone with fire_1" in rows["smoke_1"] and "gone with" not in rows["fire_1"]
-    assert "eases emergency responses" in rows["smoke_1"]
+    assert rows["smoke_1"].endswith("eases")
 
 
 def test_removing_it_by_itself_later_is_its_own_test_and_wins():
@@ -735,7 +735,7 @@ def test_a_try_that_took_out_a_victim_is_its_own_test_and_touches_no_hazard_scor
     card = ui_iv.card_component(c, {})
     rows = {_flat(r).split()[0]: _flat(r) for r in _by_class(card, "iv-victim")}
     assert set(rows) == {"man_1", "car_1", "dog_1"}
-    assert "eases emergency responses" in rows["man_1"] and "not removed yet" in rows["car_1"]
+    assert rows["man_1"].endswith("unchanged \u00b7 drops") and "not removed yet" in rows["car_1"]
     # one table: the victim rows are in the feature table, each row labelled
     assert len(_by_class(card, "iv-features")) == 1 and _by_class(card, "iv-victims") == []
     table = _by_class(card, "iv-features")[0]
@@ -852,8 +852,12 @@ def test_removing_a_victim_reads_redirects_and_its_size_does_not_cancel():
     card = ui_iv.card_component(c, {})
     row = [r for r in _by_class(card, "iv-victim") if _flat(r).startswith("man_1")][0]
     cell = _by_class(row, "iv-role")[0]
-    assert _flat(cell) == "redirects emergency responses" and cell.style["color"] == "#b45309"
-    assert getattr(cell, "data-way") == "redirected" and "3 dropped" in cell.title
+    # two words: the direction (no level in this scene, nothing kept: unchanged)
+    # and the type (all three that named him were dropped)
+    assert (man["direction"], man["type"]) == ("unchanged", "drops")
+    assert _flat(cell) == "unchanged \u00b7 drops"
+    assert getattr(cell, "data-type") == "drops" and "3 dropped" in cell.title
+    assert "type: most recommendations that name it were dropped" in cell.title
 
 
 def test_the_way_is_read_off_the_recommendations_table():
@@ -950,8 +954,8 @@ def test_the_title_counts_hazards_and_victims_apart_and_the_key_names_amber():
     line = ui_iv.try_line({"index": 4, "target": "man_1", "modality": "both",
                            "status": "measured", "summary": {"level_delta": -1}},
                           {"value": 0.03, "direction": "eased",
-                           "reading": {"size": 0.7, "way": "redirects"}})
-    assert line.endswith(": redirects, changed 0.70 \u00b7 danger level -1")
+                           "reading": {"size": 0.7, "direction": "eases", "type": "redirects"}})
+    assert line.endswith(": eases \u00b7 redirects, changed 0.70 \u00b7 danger level -1")
 
 
 def test_a_feature_name_its_label_and_its_state_stay_on_one_line():
@@ -971,10 +975,11 @@ def test_the_summary_line_names_a_redirected_victim_too():
     """C_tanker ui_2345d3fc: "Redirected when removed: tanker_truck_1" left
     out the man, who was redirected as well."""
     b, objs = _recs_scene()
+    # one recommendation protected the man AND the car; with the man gone it
+    # is kept, and protects something else entirely: redirected
+    b = {**b, "recommendations": [_rec(1, "fire_1", ["man_1", "car_1"], "Clear the area.")]}
     after = {**_after(objs, ("man_1",), ["fire_1", "spill_1"]),
-             "recommendations": [_rec(1, "fire_1", ["car_1"], "Tow car_1 away from fire_1."),
-                                 _rec(2, "spill_1", ["car_1"], "Boom around spill_1."),
-                                 _rec(3, "fire_1", ["car_1"], "Wet down car_1.")]}
+             "recommendations": [_rec(1, "fire_1", ["spill_1"], "Keep fire_1 off spill_1.")]}
     c = declared4.compare(b, [(_mixed_try("man_1"), after)])
     assert c["explain"] == ["Redirected when removed: man_1."]         # also before any score
     line = _flat(_by_class(ui_iv.card_component(c, {}), "iv-explain"))
@@ -1082,3 +1087,44 @@ def test_a_finished_try_records_its_kind_and_the_run_list_says_it(tmp_path, monk
     text = [ui.option_text(o) for o in ui.saved_records()]
     assert text[1].startswith(ui.EDIT_MARK + "removed fire_1 \u00b7 ")
     assert text[2].startswith(ui.EDIT_MARK + "man_1 dealt with \u00b7 ")
+
+
+# ── a feature row shows two words: its direction and its type ──
+
+def test_direction_comes_from_the_danger_level_and_type_from_the_recommendations_that_name_it():
+    """Sunny, 2026-11-23: "one is direction... and another is what type"."""
+    b, objs = _recs_scene()          # fire -> man (x2), spill -> man
+    b = {**b, "disaster_level": 8}
+    one = _mixed_try("fire_1")
+    # the fire is gone: both its recommendations are dropped, the level falls
+    gone = {**_after(objs, ("fire_1",), ["spill_1"]), "disaster_level": 5,
+            "recommendations": [_rec(1, "spill_1", ["man_1"], "Keep man_1 clear of spill_1.")]}
+    rd = declared4.try_reading(b, (one, gone))
+    assert (rd["direction"], rd["type"]) == ("eases", "drops")
+    # the level rises: escalates, whatever happened to the recommendations
+    assert declared4.try_reading(b, (one, {**gone, "disaster_level": 9}))["direction"] == "escalates"
+    # the level does not move and nothing kept changed its urgency: unchanged
+    assert declared4.try_reading(b, (one, {**gone, "disaster_level": 8}))["direction"] == "unchanged"
+    # kept, and protecting something else now: redirects
+    turned = {**b, "recommendations": [_rec(1, "fire_1", ["car_1"], "Tow car_1."),
+                                       _rec(2, "spill_1", ["man_1"], "Keep man_1 clear."),
+                                       _rec(3, "fire_1", ["car_1"], "Wet down car_1.")]}
+    one_d = {**one, "kind": "dealt with"}
+    assert declared4.try_reading(b, (one_d, turned))["type"] == "redirects"
+    # kept as they were: keeps
+    assert declared4.try_reading(b, (one_d, b))["type"] == "keeps"
+    # no recommendation names what was dealt with: a direction, no type
+    rd = declared4.try_reading(b, ({**one, "target": "car_1"}, {**b, "disaster_level": 7}))
+    assert (rd["direction"], rd["type"]) == ("eases", "")
+    assert ui_iv.words_of(rd) == "eases" and ui_iv.words_of(None) == ""
+    assert ui_iv.words_of({"direction": "eases", "type": "drops"}) == "eases \u00b7 drops"
+    assert ui_iv.words_of({"direction": "banana", "type": 3}) == ""
+    # on the row
+    c = declared4.compare(b, [(one, gone)])
+    row = [r for r in _by_class(ui_iv.card_component(c, {}), "iv-feature")
+           if _flat(r).startswith("fire_1")][0]
+    cell = _by_class(row, "iv-role")[0]
+    assert _flat(cell) == "eases \u00b7 drops" and cell.style["color"] == "#16a34a"
+    assert getattr(cell, "data-way") == "eased" and getattr(cell, "data-type") == "drops"
+    for bad in (None, "x", (1,), ({"target": 3}, None)):
+        assert declared4.try_reading(b, bad) is None or "direction" in declared4.try_reading(b, bad)

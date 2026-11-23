@@ -501,14 +501,14 @@ def reading_cell(rd: Any) -> list:
     and the three parts."""
     if not isinstance(rd, dict) or not isinstance(rd.get("size"), (int, float)):
         return []
-    phrase, _old, col = WAY_PHRASE.get(str(rd.get("way")), ("", "", "#64748b"))
+    col = DIRECTION.get(str(rd.get("direction")), ("", "#64748b"))[1]
     counts = rd.get("counts") if isinstance(rd.get("counts"), dict) else {}
     said = " \u00b7 ".join(f"{n} {k}" for k, n in counts.items()
                            if isinstance(n, int) and not isinstance(n, bool) and n)
     parts = "; ".join(f"{p.get('name')}: {p.get('signed'):+.2f}"
                       for p in (rd.get("parts") if isinstance(rd.get("parts"), list) else [])
                       if isinstance(p, dict) and isinstance(p.get("signed"), (int, float)))
-    return [html.Div(f"{rd['size']:.2f} \u00b7 {rd.get('way')}", className="iv-signed-value",
+    return [html.Div(f"{rd['size']:.2f} \u00b7 {words_of(rd)}", className="iv-signed-value",
                      title=" \u2014 ".join(x for x in (said, parts) if x),
                      style={"fontWeight": "800", "color": col})]
 
@@ -817,17 +817,43 @@ def mech_cell(r: Any, faded: bool = False) -> Any:
                     style={"opacity": ".45"} if faded else {})
 
 
-def way_cell(r: Any, td: dict) -> Any:
-    """The phrase cell of a feature row, with the counts on hover."""
+DIRECTION = {"eases": ("eased", "#16a34a"), "escalates": ("escalated", "#b91c1c"),
+             "unchanged": ("unchanged", "#94a3b8")}
+DIRECTION_TIP = {
+    "eases": "direction: the danger level went down (or, when it did not move, what was kept "
+             "came later or smaller)",
+    "escalates": "direction: the danger level went up (or what was kept came sooner or bigger)",
+    "unchanged": "direction: the danger level and the urgency of what was kept did not move"}
+TYPE_TIP = {
+    "drops": "type: most recommendations that name it were dropped",
+    "redirects": "type: most recommendations that name it were kept, but protect other things now",
+    "keeps": "type: most recommendations that name it were kept"}
+
+
+def words_of(r: Any) -> str:
+    """'eases · drops' for a feature row or a try ('' when not tried)."""
     r = r if isinstance(r, dict) else {}
-    phrase, old, col = WAY_PHRASE.get(str(r.get("way")), ("", "", "#94a3b8"))
+    d, k = str(r.get("direction") or ""), str(r.get("type") or "")
+    return " \u00b7 ".join(x for x in (d if d in DIRECTION else "", k if k in TYPE_TIP else "") if x)
+
+
+def way_cell(r: Any, td: dict) -> Any:
+    """The two words of a feature row: its direction (coloured) and its
+    type, with the counts on hover."""
+    r = r if isinstance(r, dict) else {}
+    d, k = str(r.get("direction") or ""), str(r.get("type") or "")
+    old, col = DIRECTION.get(d, ("", "#94a3b8"))
     counts = r.get("counts") if isinstance(r.get("counts"), dict) else {}
-    said = " \u00b7 ".join(f"{n} {k}" for k, n in counts.items()
+    said = " \u00b7 ".join(f"{n} {w}" for w, n in counts.items()
                            if isinstance(n, int) and not isinstance(n, bool) and n)
-    tip = WAY_TIP.get(str(r.get("way")), "")
-    return html.Td(phrase, className="iv-role", **{"data-way": old},
-                   title=(tip + (" \u2014 " + said if said else "")) if phrase else "",
-                   style={**td, "fontWeight": "700", "color": col})
+    tip = " | ".join(x for x in (DIRECTION_TIP.get(d, ""), TYPE_TIP.get(k, ""), said) if x)
+    kids = ([html.Span(d, className="iv-direction-word", style={"color": col})]
+            if d in DIRECTION else [])
+    if k in TYPE_TIP:
+        kids += [html.Span(" \u00b7 ", style={"color": "#cbd5e1"}),
+                 html.Span(k, className="iv-type-word", style={"color": "#334155"})]
+    return html.Td(kids, className="iv-role", **{"data-way": old, "data-type": k},
+                   title=tip, style={**td, "fontWeight": "700", "color": col})
 
 
 def _parts_line(parts: Any) -> Any:
@@ -1447,9 +1473,9 @@ def try_line(t: dict, signed: dict | None = None) -> str:
     lvl_txt = f" · danger level {lvl:+d}" if isinstance(lvl, int) and lvl else ""
     sg = signed if isinstance(signed, dict) else t.get("signed_shift")
     rd = sg.get("reading") if isinstance(sg, dict) else None
-    if isinstance(rd, dict) and isinstance(rd.get("size"), (int, float)) and rd.get("way"):
-        # how much and which way, the same reading as the two tables
-        return f"{head}: {rd['way']}, changed {rd['size']:.2f}{lvl_txt}"
+    if isinstance(rd, dict) and isinstance(rd.get("size"), (int, float)) and words_of(rd):
+        # direction and type, the same reading as the two tables
+        return f"{head}: {words_of(rd)}, changed {rd['size']:.2f}{lvl_txt}"
     if isinstance(sg, dict) and isinstance(sg.get("value"), (int, float)):
         return f"{head}: {sg.get('direction')}, {sg['value']:+.2f}{lvl_txt}"
     if s.get("moved") is None:
@@ -1468,8 +1494,8 @@ def status_component(tries: list[dict], active: dict | None,
         rd = sg.get("reading") if isinstance(sg, dict) else None
         if t.get("status") != "measured":
             col = "#64748b"
-        elif isinstance(rd, dict) and str(rd.get("way")) in WAY_PHRASE:
-            col = WAY_PHRASE[str(rd.get("way"))][2]
+        elif isinstance(rd, dict) and str(rd.get("direction")) in DIRECTION:
+            col = DIRECTION[str(rd.get("direction"))][1]
         elif word:
             col = _DIR_COL.get(str(word), "#64748b")
         else:

@@ -468,7 +468,60 @@ def way_of_try(before: Any, pair: Any, signed: float = 0.0) -> dict:
             way = EASES if signed > 0 else ESCALATES
         else:
             way = REDIRECTS if REDIRECTS in best else (EASES if signed >= 0 else ESCALATES)
-    return {"way": way, "counts": counts}
+    d, k = direction_and_type(before, pair, cells, signed)
+    return {"way": way, "counts": counts, "direction": d, "type": k}
+
+
+# The two words a feature row shows (Sunny, 2026-11-23: "one is direction
+# and another is what type"):
+#   direction   eases | escalates | unchanged   did the danger level, and
+#               the urgency of what was kept, go down or up
+#   type        drops | redirects | keeps       what happened to the
+#               recommendations that NAME what was dealt with
+UNCHANGED = "unchanged"
+DROPS, REDIRECTS_T, KEEPS = "drops", "redirects", "keeps"
+
+
+def direction_and_type(before: Any, pair: Any, cells: list, signed: float = 0.0) -> tuple[str, str]:
+    """(direction, type) for one try. The danger level decides the
+    direction; when it did not move, the kept recommendations do (more of
+    them later or smaller: eases; more sooner or bigger: escalates). The
+    type is read off the recommendations that name what was dealt with:
+    most dropped, most kept but protecting other things now, or most kept
+    ('' when none names it). With no recommendations to read, the sign of
+    the combined shift gives the direction. Never raises."""
+    from agentic import grounding4
+
+    def level(r: Any) -> Any:
+        v = r.get("disaster_level") if isinstance(r, dict) else None
+        return v if isinstance(v, int) and not isinstance(v, bool) else None
+    try:
+        b, a = level(before), level(pair[1])
+    except Exception:
+        b = a = None
+    eased = sum(1 for c in cells if c.get("way") == grounding4.EASED)
+    worse = sum(1 for c in cells if c.get("way") == grounding4.ESCALATED)
+    if b is not None and a is not None and a != b:
+        direction = EASES if a < b else ESCALATES
+    elif eased != worse:
+        direction = EASES if eased > worse else ESCALATES
+    elif not cells:
+        direction = EASES if signed > 0 else ESCALATES if signed < 0 else UNCHANGED
+    else:
+        direction = UNCHANGED
+    named = [c for c in cells if c.get("named_removed")]
+    n = {DROPS: 0, REDIRECTS_T: 0, KEEPS: 0}
+    for c in named:
+        shift = c.get("target_shift")
+        if c.get("state") == grounding4.GONE:
+            n[DROPS] += 1
+        elif c.get("state") == grounding4.CHANGED and (
+                not isinstance(shift, (int, float)) or shift > grounding4.REAIMED_FROM):
+            n[REDIRECTS_T] += 1
+        else:
+            n[KEEPS] += 1
+    kind = max(n, key=lambda w: n[w]) if named else ""     # a tie: drops, redirects, keeps
+    return direction, kind
 
 
 def try_reading(before: Any, pair: Any) -> Any:
@@ -491,6 +544,7 @@ def try_reading(before: Any, pair: Any) -> Any:
             if parts else abs(signed))
     w = way_of_try(before, pair, signed)
     return {"size": size, "way": w["way"], "counts": w["counts"],
+            "direction": w["direction"], "type": w["type"],
             "signed": round(signed, 3), "parts": parts}
 
 
@@ -517,7 +571,8 @@ def _best_tries(before: Any, tries: Any) -> dict[str, dict]:
         if rd is None:
             continue
         value, parts = rd["size"], rd["parts"]
-        extra = {"signed": rd["signed"], "way": rd["way"], "counts": rd["counts"]}
+        extra = {"signed": rd["signed"], "way": rd["way"], "counts": rd["counts"],
+                 "direction": rd["direction"], "type": rd["type"]}
         try:
             victim = iv4.is_victim(before, target)
         except Exception:
@@ -642,7 +697,7 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
     for h in sorted(every, key=lambda x: (-says_all.get(x, 0.0), x)):
         if h not in mech:
             reading = role = UNTESTED
-        elif best[h].get("way") == ESCALATES:
+        elif best[h].get("direction") == ESCALATES:
             reading = role = ALARMED
         else:
             gap = says_t.get(h, 0.0) - does.get(h, 0.0)
@@ -664,6 +719,8 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
                      "shift": mech.get(h), "parts": mparts.get(h, []),
                      # how much (shift, no sign) and which way, kept apart
                      "way": best[h].get("way") if h in best else None,
+                     "direction": best[h].get("direction") if h in best else None,
+                     "type": best[h].get("type") if h in best else None,
                      "counts": best[h].get("counts") if h in best else None,
                      "signed": best[h].get("signed") if h in best else None,
                      # removed alone, though the model called it the same
@@ -736,16 +793,18 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
                 "does": round(v_does.get(h, 0.0), 3) if h in v_mech else None,
                 "shift": v_mech.get(h), "parts": v_best[h]["parts"] if h in v_best else [],
                 "way": v_best[h].get("way") if h in v_best else None,
+                "direction": v_best[h].get("direction") if h in v_best else None,
+                "type": v_best[h].get("type") if h in v_best else None,
                 "counts": v_best[h].get("counts") if h in v_best else None,
                 "signed": v_best[h].get("signed") if h in v_best else None,
                 "drives": v_mech.get(h, 0) > 0}
                for h in sorted(v_ids, key=lambda x: (-v_says.get(x, 0.0), x))]
     # which way, for everything removed: hazards first, then victims (the
     # line named only hazards: C_tanker, the man was redirected and not said)
-    turned = [r["object_id"] for r in rows + victims if r.get("way") == REDIRECTS]
+    turned = [r["object_id"] for r in rows + victims if r.get("type") == REDIRECTS_T]
     if turned:
         explain.append("Redirected when removed: " + ", ".join(turned) + ".")
-    v_worse = [v["object_id"] for v in victims if v.get("way") == ESCALATES]
+    v_worse = [v["object_id"] for v in victims if v.get("direction") == ESCALATES]
     if v_worse:
         explain.append("Escalated when removed: " + ", ".join(v_worse) + ".")
     n_tested = len([h for h in tested if h in named])
