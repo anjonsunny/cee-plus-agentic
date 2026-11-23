@@ -437,14 +437,23 @@ def _verdict(cells: list[dict]) -> str:
 # it did instead, in plain words (Sunny, 2026-11-23: "demoting rec 1 to 2
 # when we put out the car fire..." read "correctly ignored").
 UNAFFECTED, DEMOTED, PROMOTED, REAIMED = "unaffected", "demoted", "promoted", "re-aimed"
-NO_CAUSE = "dropped without cause"
+# Dropped in a try that dealt with something it does NOT name. Whether
+# there was a reason is not ours to say (H: "keep the man out of the smoke"
+# was dropped when the CAR fire was put out; the car's smoke was never
+# listed, the recommendation named the house's). What can be said is what
+# is in the picture (Sunny, 2026-11-23).
+STILL_THERE = "dropped, though its hazard and victim are still there"
+HAZARD_THERE = "dropped, though its hazard is still there"
+DROPPED_OTHER = "dropped"            # and what it named is no longer listed in the edited run
+NO_CAUSE = STILL_THERE               # the older name, kept for callers
 REAIMED_FROM = 0.5          # more than half of what it protected is other things now
 
 
 def spill(cell: Any) -> str:
     """'' for a cell the try WAS about (or bookkeeping). Else one of:
     unaffected / demoted (later, smaller) / promoted (sooner, bigger) /
-    re-aimed (now protects other things) / dropped without cause; two can
+    re-aimed (now protects other things) / dropped, though its hazard and
+    victim are still there (or plain "dropped" when they are not); two can
     come together ("re-aimed, demoted"). A change of rank alone is
     unaffected: when a recommendation is dropped, the ones below it all
     move up with no decision behind it. Never raises."""
@@ -453,7 +462,9 @@ def spill(cell: Any) -> str:
     if cell.get("named_removed") or state == TARGET_REMOVED or state is None:
         return ""
     if state == GONE:
-        return NO_CAUSE
+        if cell.get("hazard_there") is False or cell.get("victim_there") is False:
+            return DROPPED_OTHER
+        return STILL_THERE if cell.get("protects") is not False else HAZARD_THERE
     words = []
     shift = cell.get("target_shift")
     if state == CHANGED and (not isinstance(shift, (int, float)) or shift > REAIMED_FROM):
@@ -558,6 +569,8 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
                           stays=one.get("kind") == "dealt with",
                           after_recs=after_recs, name=name, used=used)
         n_recs = max(len(base), len(after_recs))
+        after_ids = {ren.get(i, i) for i in
+                     (str(o.get("object_id") or "") for o in after["detected_objects"])}
         # objects whose match between the two runs is a guess (align4): a
         # recommendation that names one is read with that doubt
         unsure = {str(x) for x in (after.get("unsure") or []) if isinstance(x, str)}
@@ -569,6 +582,10 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
             c["impact"], c["why"] = det["value"], [r["text"] for r in det["reasons"]]
             c["way"], c["reasons"] = det["way"], det["reasons"]
             c["label"] = cell_label(c)            # after the way: a dealt-with hazard reads it
+            # is what it names still in the edited picture? (for a dropped one)
+            c["hazard_there"] = any(m in after_ids for m in (grp.get(t_i) or (t_i,)))
+            c["protects"] = bool(aff_i)
+            c["victim_there"] = (not aff_i) or any(a in after_ids for a in aff_i)
             c["spill"] = spill(c)
             cells_by_row[i].append(c)
         # A possible NAME MIX-UP (Sunny, 2026-11-23: "mark it"): when the
@@ -617,7 +634,8 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
         # without cause in another (H: #5 read "grounded")
         spilled: dict[str, int] = {}
         for c in cells:
-            for w in str(c.get("spill") or "").split(", "):
+            said = str(c.get("spill") or "")
+            for w in ([said] if said.startswith("dropped") else said.split(", ")):
                 if w and w != UNAFFECTED:
                     spilled[w] = spilled.get(w, 0) + 1
         rows.append({"rank": rec.get("rank"), "action": str(rec.get("action") or ""),

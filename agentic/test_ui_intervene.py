@@ -938,7 +938,7 @@ def test_a_cell_says_what_happened_to_the_advice_then_the_label():
     assert by["#2"] == "kept, though its hazard was removed"      # masquerade is not quiet
     # it now protects one thing more: a small change, by how much (not a flat 0.40)
     assert by["#3"] == "0.20 unaffected 1 of 1 targets kept, 1 new"
-    assert by["#4"] == "1.00 dropped without cause"
+    assert by["#4"] == "1.00 dropped, though its hazard and victim are still there"
     assert by["#6"] == "0.60 re-aimed rank 6 \u2192 1"
     labels = {_flat(r).split()[0]: getattr(_by_class(r, "iv-cell")[0], "data-label") for r in rows}
     assert labels == {"#1": "correctly_ignored", "#2": "masquerade", "#3": "correctly_ignored",
@@ -1504,7 +1504,7 @@ def test_gone_spurious_and_target_removed_still_exist_when_the_hazard_has_no_adv
     comp = ui_iv.table_component(t)
     cells = {_flat(r).split()[0]: _flat(_by_class(r, "iv-cell")) for r in _by_class(comp, "iv-row")}
     assert cells["#3"] == "1.00 dropped"                  # the try was about it
-    assert cells["#2"] == "1.00 dropped without cause"    # the try was not
+    assert cells["#2"] == "1.00 dropped, though its hazard and victim are still there"    # the try was not
     # a HAZARD try: advice whose only target was the removed hazard is bookkeeping
     before = _res(["fire_1", "spill_1", "man_1"],
                   [_rec(1, "fire_1", ["man_1"]), _rec(2, "spill_1", ["fire_1"])],

@@ -472,7 +472,7 @@ def test_what_a_try_did_to_a_recommendation_it_was_not_about_has_a_plain_word():
     assert run(other)["rows"][0]["cells"][0]["spill"] == "re-aimed, demoted"
     # gone, though the try was about the car
     t = g.table(b, [(car, {**b, "recommendations": [b["recommendations"][2]]})])
-    assert t["rows"][0]["cells"][0]["spill"] == "dropped without cause"
+    assert t["rows"][0]["cells"][0]["spill"] == "dropped, though its hazard and victim are still there"
     # a change of rank alone is unaffected
     moved = {**r1, "rank": 2}
     assert run(moved)["rows"][0]["cells"][0]["spill"] == "unaffected"
@@ -492,14 +492,14 @@ def test_the_reading_no_longer_hides_what_another_try_did():
     gone2 = {**b, "recommendations": b["recommendations"][2:]}       # #1 and #2 are gone
     t = g.table(b, [(house, gone1), (car, gone2)])
     row = t["rows"][0]
-    assert row["verdict"] == "grounded" and row["spill"] == {"dropped without cause": 1}
+    assert row["verdict"] == "grounded" and row["spill"] == {"dropped, though its hazard and victim are still there": 1}
     comp = ui_iv.table_component(t)
     reading = _by_class(_by_class(comp, "iv-row")[0], "iv-verdict")[0]
-    assert _flat(reading) == "grounded 1 dropped without cause"
+    assert _flat(reading) == "grounded 1 dropped, though its hazard and victim are still there"
     assert _flat(_by_class(_by_class(comp, "iv-row")[2], "iv-verdict")[0]) == "grounded"
     # the cell itself says it, in red, and never "correctly ignored" or "spurious"
     text = _flat(comp)
-    assert "dropped without cause" in text
+    assert "dropped, though its hazard and victim are still there" in text
     assert "correctly ignored" not in text and "spurious" not in text
 
 
@@ -556,3 +556,33 @@ def test_a_dealt_with_victim_still_protected_but_eased_is_grounded_and_not_liste
     t = g.table(b2, [(one, after)])
     states = sorted(r["cells"][0]["state"] for r in t["rows"] if r["threat"] == "car_1")
     assert states == ["stays", "stays"] and t["columns"][0]["new"] == []
+
+
+def test_a_dropped_recommendation_says_what_is_still_in_the_picture_not_why():
+    """Sunny, 2026-11-23: "how do you determine if there is a cause or not".
+    We cannot. H: "keep the man out of the smoke" (the house's smoke, on
+    paper) was dropped when the car fire was put out; the house still smokes."""
+    b = _two_fires()
+    car = {"index": 1, "target": "car_1", "kind": "dealt with"}
+    # #1 (house_1 -> person_1) is gone; the house and the person are both still there
+    after = {**b, "recommendations": b["recommendations"][2:]}
+    cell = g.table(b, [(car, after)])["rows"][0]["cells"][0]
+    assert cell["spill"] == "dropped, though its hazard and victim are still there"
+    assert cell["hazard_there"] is True and cell["victim_there"] is True
+    # what it protected is no longer listed in the edited run: plain "dropped"
+    fewer = {**after, "detected_objects": [o for o in b["detected_objects"]
+                                           if o["object_id"] != "person_1"]}
+    assert g.table(b, [(car, fewer)])["rows"][0]["cells"][0]["spill"] == "dropped"
+    # it protected nothing by name: only the hazard can be said
+    b2 = {**b, "recommendations": [_rec(1, "house_1", [], "Vent house_1.")] + b["recommendations"][1:]}
+    cell = g.table(b2, [(car, {**b2, "recommendations": b2["recommendations"][2:]})])["rows"][0]["cells"][0]
+    assert cell["spill"] == "dropped, though its hazard is still there"
+    # on the screen: the long form in the cell, and never "without cause"
+    from agentic import ui_intervene as ui_iv
+    t = g.table(b, [(car, after)])
+    text = _flat(ui_iv.table_component(t))
+    assert "dropped, though its hazard and victim are still there" in text
+    assert "without cause" not in text and "spurious" not in text
+    assert t["rows"][0]["spill"] == {"dropped, though its hazard and victim are still there": 1}
+    for bad in ({"state": "gone"}, {"state": "gone", "named_removed": True}, None):
+        assert isinstance(g.spill(bad), str)

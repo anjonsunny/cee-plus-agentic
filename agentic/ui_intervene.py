@@ -432,11 +432,13 @@ SAME_TIP = ("the model was asked which hazards are one and the same physical haz
             "its answer is followed here, so the two count as one hazard")
 _WAY_COL = {"eased": "#16a34a", "escalated": "#b91c1c", "mixed": "#b45309"}
 # a recommendation the try was not about (agentic/grounding4.py `spill`)
-_SPILL_COL = {"unaffected": "#94a3b8", "dropped without cause": "#b91c1c"}
+_SPILL_COL = {"unaffected": "#94a3b8", "dropped": "#0f172a",
+              "dropped, though its hazard and victim are still there": "#b91c1c",
+              "dropped, though its hazard is still there": "#b91c1c"}
 SPILL_TIP = ("this try was not about this recommendation, so it should be unaffected. "
              "demoted = later or smaller; promoted = sooner or bigger; re-aimed = it now "
              "protects other things; a change of rank alone is unaffected")
-_READING = {"spurious": "dropped without cause"}
+_READING = {"spurious": "dropped, though still there"}
 _CELL_MEANS = {
     "stays": "the same recommendation is still in the answer to the edited scene",
     "gone": "this recommendation is no longer in the answer to the edited scene",
@@ -631,7 +633,8 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
             tip += ("  |  " + lab.replace("_", " ") + ": " + _MEANS.get(lab, "")) if lab else ""
             # a recommendation this try was NOT about: one plain word for
             # what happened to it anyway (unaffected / demoted / promoted /
-            # re-aimed / dropped without cause), never green
+            # re-aimed / dropped, though its hazard and victim are still
+            # there), never green
             spilled = str(c.get("spill") or "")
             if spilled:
                 tip += "  |  " + SPILL_TIP
