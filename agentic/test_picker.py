@@ -101,3 +101,24 @@ def test_the_three_rows_are_on_one_side_and_the_picture_across_them():
         assert ui.iv_pick([1], opts, "base") is ui.dash.no_update       # not an option
     with patch.object(ui, "_iv_info", lambda r: None):
         assert ui.iv_picker("car_1", opts, "nope") == []
+
+
+def test_the_pick_has_its_own_colour_and_the_upload_sits_under_the_caption():
+    """Sunny, 2026-11-23: "thicker bbox not working. Make the color of the
+    picked one different", and "make the upload edited image button below
+    caption... so the picker picture can be bigger"."""
+    page = ui.app.index_string
+    assert ".iv-pick-box.picked { border-width:4px; border-color:#facc15 !important;" in page
+    assert ".iv-pick-box.picked span { background:#facc15 !important;" in page
+    left = [a for a in _find(ui.app.layout, "iv-target")[1]
+            if getattr(a, "className", "") == "iv-form-rows"][0]
+    ids = [getattr(k, "id", None) for k in left.children]
+    assert ids.index("iv-caption-wrap") + 1 == ids.index("iv-upload-wrap")   # stacked, upload below
+    assert _find(left, "iv-instructions") is not None
+    picker, _ = _find(ui.app.layout, "iv-picker")
+    assert picker.style["flex"] == "0 0 46%"                                # a large picture
+    # the channel switch still hides the box that is not needed
+    cap, img = ui.iv_show_channel("caption")
+    assert cap["display"] == "block" and img["display"] == "none"
+    cap, img = ui.iv_show_channel("image")
+    assert cap["display"] == "none" and img["display"] == "block"

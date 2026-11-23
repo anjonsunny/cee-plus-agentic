@@ -6073,7 +6073,11 @@ app.index_string = """<!DOCTYPE html>
   .iv-pick-box { position:absolute; box-sizing:border-box; border-style:solid;
                  border-width:2px; cursor:pointer; border-radius:2px; }
   .iv-pick-box:hover { background:#ffffff33; }
-  .iv-pick-box.picked { border-width:4px; }
+  /* the pick: its own colour, not just a thicker line (a thicker line of
+     the same red did not stand out) */
+  .iv-pick-box.picked { border-width:4px; border-color:#facc15 !important;
+                        box-shadow:0 0 0 2px #000a; z-index:2; }
+  .iv-pick-box.picked span { background:#facc15 !important; color:#422006; }
   .iv-pick-box span { position:absolute; left:-2px; top:-12px; font-size:9px;
                       line-height:11px; padding:0 3px; color:#fff; font-weight:700;
                       white-space:nowrap; }
@@ -6580,36 +6584,36 @@ app.layout = html.Div([
                                                    {"label": " image", "value": "image"}],
                                           className="ctl-toggle"),
                                   ], className="iv-row-form"),
+                                      html.Details([
+                                          html.Summary(
+                                              "edit instructions (copy these to make the edit)",
+                                              className="iv-instr-head"),
+                                          html.Div(id="iv-instructions"),
+                                      ]),
+                                      # the caption, and UNDER it the upload, so the
+                                      # picture beside them can be large
+                                      html.Div(dcc.Textarea(
+                                          id="iv-caption", value="",
+                                          placeholder="the edited caption",
+                                          style={"width": "100%", "height": "64px",
+                                                 "fontSize": "11.5px"}),
+                                          id="iv-caption-wrap"),
+                                      html.Div(dcc.Upload(
+                                          id="iv-upload", multiple=False,
+                                          children=html.Div(
+                                              [html.Div("⬆", style={"fontSize": "16px"}),
+                                               html.Div("upload edited image")],
+                                              id="iv-upload-name"),
+                                          className="iv-upload"),
+                                          id="iv-upload-wrap"),
                                   ], className="iv-form-rows",
                                       style={"flex": "1", "minWidth": "0", "display": "flex",
-                                             "flexDirection": "column",
-                                             "justifyContent": "space-between"}),
+                                             "flexDirection": "column", "gap": "8px"}),
                                   html.Div(id="iv-picker", className="iv-picker",
-                                           style={"flex": "0 0 260px", "maxWidth": "260px"}),
+                                           style={"flex": "0 0 46%", "maxWidth": "46%"}),
                               ], className="iv-form-top",
                                   style={"display": "flex", "gap": "12px",
-                                         "alignItems": "stretch"}),
-                              html.Details([
-                                  html.Summary("edit instructions (copy these to make the edit)",
-                                               className="iv-instr-head"),
-                                  html.Div(id="iv-instructions"),
-                              ]),
-                              html.Div([
-                                  html.Div(dcc.Textarea(
-                                      id="iv-caption", value="",
-                                      placeholder="the edited caption",
-                                      style={"width": "100%", "height": "64px",
-                                             "fontSize": "11.5px"}),
-                                      id="iv-caption-wrap", style={"flex": "3"}),
-                                  html.Div(dcc.Upload(
-                                      id="iv-upload", multiple=False,
-                                      children=html.Div(
-                                          [html.Div("⬆", style={"fontSize": "16px"}),
-                                           html.Div("upload edited image")],
-                                          id="iv-upload-name"),
-                                      className="iv-upload"),
-                                      id="iv-upload-wrap", style={"flex": "2"}),
-                              ], className="iv-row-form", style={"alignItems": "stretch"}),
+                                         "alignItems": "flex-start"}),
                               html.Button("RUN THE EDITED SCENE", id="iv-run",
                                           className="go", n_clicks=0,
                                           style={"marginTop": "6px"}),
@@ -6857,8 +6861,8 @@ def iv_show_upload(contents, filename):
               Input("iv-modality", "value"))
 def iv_show_channel(modality):
     """Only the boxes the chosen channel needs."""
-    return ({"flex": "3", "display": "none" if modality == "image" else "block"},
-            {"flex": "2", "display": "none" if modality == "caption" else "block"})
+    return ({"display": "none" if modality == "image" else "block"},
+            {"display": "none" if modality == "caption" else "block"})
 
 
 def iv_start(run_id: str | None, target: str | None, modality: str | None,
