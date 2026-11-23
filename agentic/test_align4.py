@@ -796,6 +796,9 @@ def test_hovering_the_mechanistic_cell_shows_the_parts_of_the_shift():
     want = "level: +0.10; recommendations: -0.87; graph: -0.50; state: +0.40"
     cell = ui_iv.mech_cell(r)
     assert cell.title == want and getattr(cell, "data-parts") == want
+    # the bar and the "changed" text show the same numbers, not pop-ups of their own
+    assert _by_class(cell, "iv-changed")[0].title == want
+    assert cell.children[0].children[0].title == want
     # a row that repeats another's try keeps both: the parts and why it is faded
     faded = ui_iv.mech_cell(r, True)
     assert faded.title.startswith(want + "  |  ") and "counts the try once" in faded.title

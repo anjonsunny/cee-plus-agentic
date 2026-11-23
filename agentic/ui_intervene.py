@@ -985,11 +985,21 @@ def mech_cell(r: Any, faded: bool = False) -> Any:
     row always has a share of 1.00)."""
     r = r if isinstance(r, dict) else {}
     sh = r.get("shift")
-    kids = [_bar(r.get("does"), "#16a34a")]
+    numbers = parts_text(r.get("parts"))
+    bar = _bar(r.get("does"), "#16a34a")
+    # the bar and the "changed" text had pop-ups of their own (a bare number,
+    # and a sentence with no numbers), which hid the parts: every piece of
+    # the cell now shows the same numbers
+    if numbers:
+        try:
+            bar.children[0].title = numbers
+        except Exception:
+            pass
+    kids = [bar]
     if isinstance(sh, (int, float)) and not isinstance(sh, bool):
         kids.append(html.Span(f" \u00b7 changed {sh:.2f}", className="iv-changed",
-                              title="how much the emergency responses changed when it was "
-                                    "removed, 0 to 1 (level, recommendations, graph)",
+                              title=numbers or ("how much the emergency responses changed "
+                                                "when it was removed, 0 to 1"),
                               style={"fontSize": "10px", "color": "#94a3b8",
                                      "whiteSpace": "nowrap"}))
     # hovering the mechanistic cell shows the parts the shift is the average
