@@ -36,8 +36,13 @@ def test_every_thing_that_can_be_picked_is_boxed_and_the_pick_is_thick(tmp_path)
     assert by["house_1"].style["borderColor"] == by["person_1"].style["borderColor"] == "#facc15"
     assert by["house_1"].title == "pick house_1 (hazard)"
     assert by["person_1"].title == "pick person_1 (victim)"
-    assert by["car_1"].style == {"left": "55.00%", "top": "50.00%", "width": "25.00%",
-                                 "height": "30.00%", "borderColor": "#facc15"}
+    # the pick is green ON THE BOX ITSELF, so it shows without a page reload
+    assert by["car_1"].style["borderColor"] == "#22c55e"
+    assert by["car_1"].style["borderWidth"] == "4px"
+    assert by["car_1"].children.style["background"] == "#22c55e"
+    assert by["house_1"].children.style["background"] == "#facc15"
+    assert {k: by["car_1"].style[k] for k in ("left", "top", "width", "height")} == {
+        "left": "55.00%", "top": "50.00%", "width": "25.00%", "height": "30.00%"}
     assert by["car_1"].id == {"type": "iv-pick", "oid": "car_1"}
     # a small box inside a big one is drawn after it, so it can be clicked
     order = [getattr(b, "data-pick") for b in boxes]

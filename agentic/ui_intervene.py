@@ -232,16 +232,23 @@ def picker_component(info: Any, target: Any, box_id: Any = None) -> list:
             continue
         # every box yellow, the pick green (Sunny, 2026-11-23); hazard or
         # victim is said in the dropdown and on hover
-        col = PICK_OTHER
+        # the colour is set on the box itself, not left to the page's style
+        # sheet: an open page keeps its old style sheet until a full reload,
+        # and the pick then showed in the same yellow as the rest
+        on = oid in picked
+        col = PICK_PICKED if on else PICK_OTHER
         role = "victim" if c.get("variable_role") == "victim" else "hazard"
         boxes.append(((x1 - x0) * (y1 - y0), html.Div(
-            html.Span(oid, style={"background": col, "color": "#422006"}),
+            html.Span(oid, style={"background": col,
+                                  "color": "#052e16" if on else "#422006"}),
             **({"id": box_id(oid)} if box_id is not None else {}), n_clicks=0,
             className="iv-pick-box" + (" picked" if oid in picked else ""),
             title=f"pick {oid} ({role})", **{"data-pick": oid},
             style={"left": f"{100 * x0 / w:.2f}%", "top": f"{100 * y0 / h:.2f}%",
                    "width": f"{100 * (x1 - x0) / w:.2f}%",
-                   "height": f"{100 * (y1 - y0) / h:.2f}%", "borderColor": col})))
+                   "height": f"{100 * (y1 - y0) / h:.2f}%", "borderColor": col,
+                   **({"borderWidth": "4px", "zIndex": 2,
+                       "boxShadow": "0 0 0 2px #000a"} if on else {})})))
     boxes.sort(key=lambda t: -t[0])               # big first, small on top
     return [html.Div([html.Img(src=src)] + [b for _a, b in boxes], className="iv-pick-wrap")]
 
