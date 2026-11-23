@@ -765,6 +765,11 @@ def test_scene_boxes_carry_the_id_and_mark_the_minor_ones():
 
 def test_the_page_ships_the_spotlight_script_and_the_show_every_box_toggle():
     page = ui.app.index_string
+    # the pop-up is the WHOLE picture with coloured boxes, not a zoomed-in cut
+    assert "function thumb(chip)" in page and "function zoom(" not in page
+    assert "backgroundSize = '100% 100%'" in page and "spot-thumb-box" in page
+    assert "big enough to see" not in page                 # large objects get it too
+    assert "chip.closest('td')" in page                    # the names beside it are marked as well
     for needle in ("spot-on", "data-oid", "spot-zoom", "mouseover",
                    ".mode-clean .scene:not(.show-all) .scene-box.minor",
                    ".mode-clean .scene:not(.show-all) .s4-map-pin"):

@@ -6089,7 +6089,11 @@ app.index_string = """<!DOCTYPE html>
   .ent-chip:hover { background:#fef9c3; }
   #spot-zoom { position:fixed; z-index:9999; display:none; border:3px solid #facc15;
       border-radius:8px; box-shadow:0 6px 24px #0006; background-repeat:no-repeat;
-      background-color:#0f172a; pointer-events:none; }
+      background-color:#0f172a; pointer-events:none; overflow:hidden; }
+  #spot-zoom .spot-thumb-box { position:absolute; border-style:solid; box-sizing:border-box;
+      border-radius:2px; }
+  #spot-zoom .spot-thumb-box span { position:absolute; left:-2px; top:-13px; font-size:9px;
+      line-height:12px; padding:0 3px; color:#fff; font-weight:700; white-space:nowrap; }
   .scene-all { font-size:11px; color:#64748b; margin:6px 2px 0; }
   .scene-all label { cursor:pointer; }
   /* clean view: the agent dock is one input line; the transcript opens
@@ -6101,8 +6105,8 @@ app.index_string = """<!DOCTYPE html>
 <body>{%app_entry%}<footer>{%config%}{%scripts%}{%renderer%}</footer>
 <script>
 /* Hover spotlight (2026-11-11). Any element with data-oid outside the scene
-   lights the scene box with the same data-oid; a small box also gets a
-   zoomed crop beside the pointer. Pure display: no callback, no state. */
+   lights the scene box with the same data-oid, and a thumbnail of the whole
+   picture appears beside the pointer. Pure display: no callback, no state. */
 (function () {
   function scene() { return document.getElementById('scene'); }
   function zoomEl() {
@@ -6116,22 +6120,47 @@ app.index_string = """<!DOCTYPE html>
     sc.querySelectorAll('.spot-on').forEach(function (b) { b.classList.remove('spot-on'); });
     var z = document.getElementById('spot-zoom'); if (z) z.style.display = 'none';
   }
-  function zoom(box, chip) {
+  /* The pop-up (Sunny, 2026-11-23: "show the whole picture in a thumbnail
+     and then just mark the hazard and target in colorful bbox"): the WHOLE
+     picture, small, with a box around the name under the pointer and around
+     the names beside it in the same cell (a recommendation's hazard and what
+     it protects), each in its own chip's colour. */
+  function thumb(chip) {
     var sc = scene(), img = sc && sc.querySelector('img.scene-img');
     if (!img || !img.naturalWidth) return;
-    var w = parseFloat(box.style.width), h = parseFloat(box.style.height);
-    if (!(w > 0 && h > 0) || (w >= 14 && h >= 14)) return;   /* big enough to see */
-    var l = parseFloat(box.style.left), t = parseFloat(box.style.top);
-    var pad = 0.6, cw = Math.min(100, w * (1 + 2 * pad)), ch = Math.min(100, h * (1 + 2 * pad));
-    var cl = Math.max(0, Math.min(100 - cw, l - w * pad)), ct = Math.max(0, Math.min(100 - ch, t - h * pad));
-    var ratio = img.naturalHeight / img.naturalWidth;
-    var zw = 220, bgw = zw * 100 / cw, bgh = bgw * ratio, zh = Math.min(240, bgh * ch / 100);
+    var cell = chip.closest('td') || chip.parentElement || chip;
+    var chips = [chip];
+    cell.querySelectorAll('[data-oid]').forEach(function (c) {
+      if (c !== chip && !c.classList.contains('scene-box')) chips.push(c);
+    });
+    var zw = 300, zh = Math.round(zw * img.naturalHeight / img.naturalWidth);
     var z = zoomEl(), r = chip.getBoundingClientRect();
+    z.innerHTML = '';
     z.style.width = zw + 'px'; z.style.height = zh + 'px';
     z.style.backgroundImage = 'url("' + img.src + '")';
-    z.style.backgroundSize = bgw + 'px ' + bgh + 'px';
-    z.style.backgroundPosition = (-cl / 100 * bgw) + 'px ' + (-ct / 100 * bgh) + 'px';
-    var left = Math.max(8, r.left - zw - 14), top = Math.max(8, Math.min(window.innerHeight - zh - 8, r.top - zh / 2));
+    z.style.backgroundSize = '100% 100%'; z.style.backgroundPosition = '0 0';
+    var seen = {};
+    chips.forEach(function (c, k) {
+      var oid = c.getAttribute('data-oid');
+      if (seen[oid]) return; seen[oid] = true;
+      var box = null;
+      sc.querySelectorAll('.scene-box[data-oid]').forEach(function (b) {
+        if (b.getAttribute('data-oid') === oid) box = b;
+      });
+      if (!box) return;                       /* not in this run's picture: no box */
+      var col = c.style.color || '#facc15';
+      var d = document.createElement('div');
+      d.className = 'spot-thumb-box';
+      d.style.left = box.style.left; d.style.top = box.style.top;
+      d.style.width = box.style.width; d.style.height = box.style.height;
+      d.style.borderColor = col; d.style.borderWidth = (k === 0 ? 3 : 2) + 'px';
+      var t = document.createElement('span');
+      t.textContent = oid; t.style.background = col;
+      d.appendChild(t); z.appendChild(d);
+    });
+    var left = r.left - zw - 14;
+    if (left < 8) left = Math.min(window.innerWidth - zw - 8, r.right + 14);
+    var top = Math.max(8, Math.min(window.innerHeight - zh - 8, r.top - zh / 2));
     z.style.left = left + 'px'; z.style.top = top + 'px'; z.style.display = 'block';
   }
   document.addEventListener('mouseover', function (e) {
@@ -6143,7 +6172,8 @@ app.index_string = """<!DOCTYPE html>
       var on = b.getAttribute('data-oid') === oid;
       b.classList.toggle('spot-on', on); if (on) hit = b;
     });
-    if (hit) { sc.classList.add('spot'); zoom(hit, chip); } else { clear(); }
+    if (hit) { sc.classList.add('spot'); } else { clear(); }
+    thumb(chip);
   });
   document.addEventListener('mouseout', function (e) {
     var chip = e.target.closest ? e.target.closest('[data-oid]') : null;
