@@ -785,3 +785,18 @@ def test_the_feature_shift_is_four_parts_and_the_state_is_one_of_them():
     assert [p["name"] for p in rd["parts"]] == ["level", "recommendations", "graph"]
     # (the older graph number has no direction here, so it adds nothing, as before)
     assert rd["size"] == pytest.approx((0.1 + 0.6 + 0.0) / 3, abs=0.002)
+
+
+def test_hovering_the_mechanistic_cell_shows_the_parts_of_the_shift():
+    from agentic import ui_intervene as ui_iv
+    r = {"does": 0.5, "shift": 0.47, "parts": [
+        {"name": "level", "signed": 0.1}, {"name": "recommendations", "signed": -0.867},
+        {"name": "graph", "signed": -0.5}, {"name": "state", "signed": 0.4}, None,
+        {"name": "x", "signed": "big"}]}
+    want = "level: +0.10; recommendations: -0.87; graph: -0.50; state: +0.40"
+    cell = ui_iv.mech_cell(r)
+    assert cell.title == want and getattr(cell, "data-parts") == want
+    # a row that repeats another's try keeps both: the parts and why it is faded
+    faded = ui_iv.mech_cell(r, True)
+    assert faded.title.startswith(want + "  |  ") and "counts the try once" in faded.title
+    assert ui_iv.mech_cell({"does": 0.5}).title == "" and ui_iv.parts_text("x") == ""

@@ -970,6 +970,14 @@ WAY_TIP = {"eases": "removing it eased the emergency responses: recommendations 
            "no change": "removing it did not shift the emergency responses"}
 
 
+def parts_text(parts: Any) -> str:
+    """'level: +0.10; recommendations: -0.87; graph: -0.50; state: +0.40'."""
+    return "; ".join(f"{p.get('name')}: {p.get('signed'):+.2f}"
+                     for p in (parts if isinstance(parts, list) else [])
+                     if isinstance(p, dict) and isinstance(p.get("signed"), (int, float))
+                     and not isinstance(p.get("signed"), bool))
+
+
 def mech_cell(r: Any, faded: bool = False) -> Any:
     """The mechanistic cell of a feature row: the SHARE as the bar (the
     same kind of number as the declared columns, so they can be compared),
@@ -984,8 +992,13 @@ def mech_cell(r: Any, faded: bool = False) -> Any:
                                     "removed, 0 to 1 (level, recommendations, graph)",
                               style={"fontSize": "10px", "color": "#94a3b8",
                                      "whiteSpace": "nowrap"}))
-    return html.Div(kids, className="iv-again" if faded else "iv-own",
-                    title=ONE_TRY_TIP if faded else "",
+    # hovering the mechanistic cell shows the parts the shift is the average
+    # of (Sunny, 2026-11-23)
+    tip = parts_text(r.get("parts"))
+    if faded:
+        tip = (tip + "  |  " if tip else "") + ONE_TRY_TIP
+    return html.Div(kids, className="iv-again" if faded else "iv-own", title=tip,
+                    **{"data-parts": parts_text(r.get("parts"))},
                     style={"opacity": ".45"} if faded else {})
 
 
