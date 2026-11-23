@@ -6075,9 +6075,9 @@ app.index_string = """<!DOCTYPE html>
   .iv-pick-box:hover { background:#ffffff33; }
   /* the pick: its own colour, not just a thicker line (a thicker line of
      the same red did not stand out) */
-  .iv-pick-box.picked { border-width:4px; border-color:#facc15 !important;
+  .iv-pick-box.picked { border-width:4px; border-color:#22c55e !important;
                         box-shadow:0 0 0 2px #000a; z-index:2; }
-  .iv-pick-box.picked span { background:#facc15 !important; color:#422006; }
+  .iv-pick-box.picked span { background:#22c55e !important; color:#052e16 !important; }
   .iv-pick-box span { position:absolute; left:-2px; top:-12px; font-size:9px;
                       line-height:11px; padding:0 3px; color:#fff; font-weight:700;
                       white-space:nowrap; }

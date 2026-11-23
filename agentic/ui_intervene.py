@@ -174,6 +174,9 @@ def small_image(path: Any, width: int = 520) -> str | None:
         return None
 
 
+PICK_OTHER, PICK_PICKED = "#facc15", "#22c55e"      # yellow: can be picked; green: the pick
+
+
 def pick_unit(info: Any, target: Any) -> list[str]:
     """The things one pick covers: the target, and the hazards the model
     called the same as it (they are tried together)."""
@@ -199,8 +202,8 @@ def option_for(info: Any, options: Any, oid: Any) -> str:
 
 
 def picker_component(info: Any, target: Any, box_id: Any = None) -> list:
-    """The picture with every thing that can be picked, boxed: red for a
-    hazard, orange for a victim, the pick (and its same-hazard pair) thick.
+    """The picture with every thing that can be picked, boxed in yellow; the
+    pick (and its same-hazard pair) in green.
     Small boxes are drawn last, so one inside a big one can still be
     clicked. `box_id(oid)` gives a box its id (ui.py owns the click). []
     when the picture or the boxes cannot be read."""
@@ -227,12 +230,15 @@ def picker_component(info: Any, target: Any, box_id: Any = None) -> list:
         x0, y0, x1, y1 = (float(v) for v in b)
         if x1 <= x0 or y1 <= y0:
             continue
-        col = "#f97316" if c.get("variable_role") == "victim" else "#ef4444"
+        # every box yellow, the pick green (Sunny, 2026-11-23); hazard or
+        # victim is said in the dropdown and on hover
+        col = PICK_OTHER
+        role = "victim" if c.get("variable_role") == "victim" else "hazard"
         boxes.append(((x1 - x0) * (y1 - y0), html.Div(
-            html.Span(oid, style={"background": col}),
+            html.Span(oid, style={"background": col, "color": "#422006"}),
             **({"id": box_id(oid)} if box_id is not None else {}), n_clicks=0,
             className="iv-pick-box" + (" picked" if oid in picked else ""),
-            title=f"pick {oid}", **{"data-pick": oid},
+            title=f"pick {oid} ({role})", **{"data-pick": oid},
             style={"left": f"{100 * x0 / w:.2f}%", "top": f"{100 * y0 / h:.2f}%",
                    "width": f"{100 * (x1 - x0) / w:.2f}%",
                    "height": f"{100 * (y1 - y0) / h:.2f}%", "borderColor": col})))

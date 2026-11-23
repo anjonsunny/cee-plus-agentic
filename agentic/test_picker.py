@@ -32,10 +32,12 @@ def test_every_thing_that_can_be_picked_is_boxed_and_the_pick_is_thick(tmp_path)
     by = {getattr(b, "data-pick"): b for b in boxes}
     assert set(by) == {"house_1", "fire_1", "car_1", "person_1"}     # not the tree, not a ghost
     assert "picked" in by["car_1"].className and "picked" not in by["house_1"].className
-    assert by["house_1"].style["borderColor"] == "#ef4444"           # a hazard
-    assert by["person_1"].style["borderColor"] == "#f97316"          # a victim
+    # every box yellow; the pick is turned green by its class
+    assert by["house_1"].style["borderColor"] == by["person_1"].style["borderColor"] == "#facc15"
+    assert by["house_1"].title == "pick house_1 (hazard)"
+    assert by["person_1"].title == "pick person_1 (victim)"
     assert by["car_1"].style == {"left": "55.00%", "top": "50.00%", "width": "25.00%",
-                                 "height": "30.00%", "borderColor": "#ef4444"}
+                                 "height": "30.00%", "borderColor": "#facc15"}
     assert by["car_1"].id == {"type": "iv-pick", "oid": "car_1"}
     # a small box inside a big one is drawn after it, so it can be clicked
     order = [getattr(b, "data-pick") for b in boxes]
@@ -108,8 +110,9 @@ def test_the_pick_has_its_own_colour_and_the_upload_sits_under_the_caption():
     picked one different", and "make the upload edited image button below
     caption... so the picker picture can be bigger"."""
     page = ui.app.index_string
-    assert ".iv-pick-box.picked { border-width:4px; border-color:#facc15 !important;" in page
-    assert ".iv-pick-box.picked span { background:#facc15 !important;" in page
+    assert ".iv-pick-box.picked { border-width:4px; border-color:#22c55e !important;" in page
+    assert ".iv-pick-box.picked span { background:#22c55e !important;" in page
+    assert (ui_iv.PICK_OTHER, ui_iv.PICK_PICKED) == ("#facc15", "#22c55e")
     left = [a for a in _find(ui.app.layout, "iv-target")[1]
             if getattr(a, "className", "") == "iv-form-rows"][0]
     ids = [getattr(k, "id", None) for k in left.children]
