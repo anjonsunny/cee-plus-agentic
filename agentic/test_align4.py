@@ -586,3 +586,24 @@ def test_a_dropped_recommendation_says_what_is_still_in_the_picture_not_why():
     assert t["rows"][0]["spill"] == {"dropped, though its hazard and victim are still there": 1}
     for bad in ({"state": "gone"}, {"state": "gone", "named_removed": True}, None):
         assert isinstance(g.spill(bad), str)
+
+
+def test_nothing_but_the_try_is_under_a_column_picture_and_the_notes_are_folded_below():
+    """Sunny, 2026-11-23: "Remove the huge texts you have underneath the
+    images for a column", and the column's chip was black, so its box could
+    not be seen on the thumbnail."""
+    from agentic import ui_intervene as ui_iv
+    one = {"index": 1, "target": "child_1", "kind": "dealt with"}
+    t = g.table(BEFORE, [(one, align4.aligned(BEFORE, AFTER))])
+    comp = ui_iv.table_component(t)
+    ths = _by_class(comp, "iv-table")[0].children[0].children.children
+    assert _flat(ths[2]) == "#1 child_1 dealt with \u00b7 victim"          # the try, nothing else
+    (notes,) = _by_class(comp, "iv-notes")
+    assert notes.open is False and "matched by its place in the picture" in _flat(notes)
+    assert _flat(_by_class(notes, "iv-renamed")).startswith("#1 child_1: matched by")
+    # the chip carries the colour of its kind: orange for a victim, red for a hazard
+    assert ui_iv.chip_col({"victim": True}) == "#f97316" and ui_iv.chip_col({}) == "#ef4444"
+    assert ui_iv.chip_col(None) == "#ef4444"
+    # a try with nothing to say: no fold at all
+    assert ui_iv.column_notes([{"index": 1, "target": "x"}, None, "y"]) == []
+    assert ui_iv.column_notes(None) == []

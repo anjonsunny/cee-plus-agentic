@@ -112,7 +112,7 @@ def test_the_table_marks_the_recommendations_that_lean_on_a_guess(tmp_path):
     by = {r["rank"]: r["cells"][0] for r in t["rows"]}
     assert by[1]["unsure"] == ["child_1"] and by[2]["unsure"] == []
     comp = ui_iv.table_component(t)
-    assert _flat(_by_class(comp, "iv-who")) == "who is who: 1 not sure"
+    assert _flat(_by_class(comp, "iv-who")) == "#1 child_1: who is who: 1 not sure"
     marks = _by_class(comp, "iv-unsure")
     assert len(marks) == 1 and _flat(marks[0]) == "not sure which is child_1"
     # a run that was never tracked (an older caller) says nothing

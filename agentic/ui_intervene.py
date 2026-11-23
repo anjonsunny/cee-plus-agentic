@@ -543,6 +543,55 @@ PLACE_TIP = ("a flag only, nothing is changed: the recommendation says someone i
              "while another of the same kind is there")
 
 
+def chip_col(c: Any) -> str:
+    """A try's own chip: red for a hazard, orange for a victim, like the
+    chips in the rows."""
+    return "#f97316" if isinstance(c, dict) and c.get("victim") else "#ef4444"
+
+
+def column_notes(cols: Any) -> list:
+    """The notes of each try, said once UNDER the table (Sunny, 2026-11-23:
+    "remove the huge texts you have underneath the images"): a match that
+    is a guess, a flag, names that were matched, what else went, a pair the
+    edit separated. Nothing when a try has nothing to say."""
+    out: list = []
+    small = {"fontSize": "11px", "margin": "2px 0 0"}
+    for c in cols if isinstance(cols, list) else []:
+        if not isinstance(c, dict):
+            continue
+        who = f"#{c.get('index')} {c.get('target')}: "
+        if c.get("unsure"):
+            out.append(html.Div(who + f"who is who: {len(c['unsure'])} not sure",
+                                className="iv-who", style={**small, "color": "#b45309"}))
+        for f in (c.get("place_flags") or []):
+            if isinstance(f, dict):
+                out.append(html.Div(who + "flag \u00b7 #" + str(f.get("rank")) + ": "
+                                    + str(f.get("text")), className="iv-place-flag",
+                                    title=PLACE_TIP, style={**small, "color": "#b91c1c"}))
+        note = _align_note(c.get("renamed"), c.get("renamed_new"))
+        if note:
+            out.append(html.Div(
+                who + note, className="iv-renamed",
+                title="each run names its objects by itself; the same object is recognised "
+                      "by where it is in the picture, and the edited run is shown in this "
+                      "run's names", style={**small, "color": "#b45309"}))
+        also = [str(x) for x in (c.get("also_removed") or [])]
+        if also:
+            out.append(html.Div(who + "also missing from the edited picture: " + ", ".join(also),
+                                className="iv-also", style={**small, "color": "#94a3b8"}))
+        stay = [str(x) for x in (c.get("left_behind") or [])]
+        if stay:
+            out.append(html.Div(who + "the model calls it the same hazard as " + ", ".join(stay)
+                                + "; still in the edited picture", className="iv-left-behind",
+                                style={**small, "color": "#b45309"}))
+    if not out:
+        return []
+    return [html.Details([html.Summary("notes on the tries", className="iv-notes-head",
+                                       style={"fontSize": "11px", "fontWeight": "700",
+                                              "color": "#64748b", "cursor": "pointer"})] + out,
+                         className="iv-notes", open=False, style={"margin": "6px 0 0"})]
+
+
 def _align_note(mapping: Any, new: Any = None) -> str:
     from agentic import align4
     return align4.note(mapping, new)
@@ -563,40 +612,18 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
             ([html.Img(src=img, style={"width": "84px", "borderRadius": "4px",
                                        "display": "block", "marginBottom": "2px"})]
              if img else [])
-            + ([html.Span(f"#{c.get('index')} "), ent_chip(str(c.get("target")), "#0f172a"),
+            # the chip in the colour of its kind, so its box shows on the
+            # thumbnail (it was black); nothing else under the picture
+            + ([html.Span(f"#{c.get('index')} "), ent_chip(str(c.get("target")), chip_col(c)),
                 html.Span(" dealt with", className="iv-kind-col", title=KIND_HELP[DEALT_WITH])]
                if kind_of(c) == DEALT_WITH else
                [html.Span(f"#{c.get('index')} removed "),
-                ent_chip(str(c.get("target")), "#0f172a")])
+                ent_chip(str(c.get("target")), chip_col(c))])
             + ([html.Span(" \u00b7 victim", className="iv-victim-col",
                           title="this try took out something that can be harmed, not a hazard; "
                                 "every hazard stayed",
                           style={"fontWeight": "400", "color": "#64748b"})]
-               if c.get("victim") else [])
-            + ([html.Div("who is who: " + ("all sure" if not c.get("unsure") else
-                                           f"{len(c['unsure'])} not sure"),
-                         className="iv-who",
-                         style={"fontWeight": "400",
-                                "color": "#16a34a" if not c.get("unsure") else "#b45309"})]
-               if c.get("tracked") else [])
-            + [html.Div("flag \u00b7 #" + str(f.get("rank")) + ": " + str(f.get("text")),
-                        className="iv-place-flag", title=PLACE_TIP,
-                        style={"fontWeight": "400", "color": "#b91c1c"})
-               for f in (c.get("place_flags") or []) if isinstance(f, dict)]
-            + ([html.Div(align_note, className="iv-renamed",
-                         title="each run names its objects by itself; the same object is "
-                               "recognised by where it is in the picture, and the edited run "
-                               "is shown in this run's names",
-                         style={"fontWeight": "400", "color": "#b45309"})]
-               if (align_note := _align_note(c.get("renamed"), c.get("renamed_new"))) else [])
-            + ([html.Div("also missing from the edited picture: " + ", ".join(also),
-                         style={"fontWeight": "400", "color": "#94a3b8"})] if also else [])
-            # the model called these one hazard; the edit took one and left the other
-            + ([html.Div("the model calls it the same hazard as " + ", ".join(stay)
-                         + "; still in the edited picture",
-                         className="iv-left-behind",
-                         style={"fontWeight": "400", "color": "#b45309"})]
-               if (stay := [str(x) for x in (c.get("left_behind") or [])]) else []),
+               if c.get("victim") else []),
             style=_TH))
     head.append(html.Th("READING (ONE ASK)", style=_TH))
     body = []
@@ -746,6 +773,7 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
                  html.Table([html.Thead(html.Tr(head)), html.Tbody(body + foot_rows)],
                             className="iv-table",
                             style={"borderCollapse": "collapse", "width": "100%"})]
+    out += column_notes(cols)
     for c in cols:
         new = [n for n in (c.get("new") or []) if isinstance(n, dict)]
         if new:

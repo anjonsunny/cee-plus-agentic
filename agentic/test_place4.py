@@ -74,7 +74,7 @@ def test_the_table_carries_the_flag_for_the_run_and_for_each_edited_run():
     assert t["place_flags"] == [] and len(t["columns"][0]["place_flags"]) == 1
     comp = ui_iv.table_component(t)
     (flag,) = _by_class(comp, "iv-place-flag")
-    assert _flat(flag).startswith("flag · #1: its words put person_1 at house_1")
+    assert _flat(flag).startswith("#1 car_1: flag · #1: its words put person_1 at house_1")
     assert "a flag only" in flag.title
     # the run itself can carry one too, said above the table
     t = g.table(after, [({"index": 1, "target": "car_1"}, before)])
