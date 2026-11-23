@@ -964,11 +964,35 @@ TYPE_TIP = {
     "keeps": "type: most recommendations that name it were kept"}
 
 
-def words_of(r: Any) -> str:
-    """'eases · drops' for a feature row or a try ('' when not tried)."""
+# The two words, written out (Sunny, 2026-11-23: "keeps alone is vague";
+# "level?"): what eased, and whose recommendations were kept.
+_PAST = {"eases": "eased", "escalates": "escalated", "unchanged": "unchanged"}
+TYPE_PHRASE = {"drops": "its recommendations dropped", "keeps": "its recommendations kept",
+               "redirects": "its recommendations redirected"}
+
+
+def direction_phrase(r: Any) -> str:
+    """'danger level eased' when the danger level moved (or is known and did
+    not); 'urgency eased' when the level stood still and what was kept came
+    later or smaller; just 'eased' when neither can be read."""
     r = r if isinstance(r, dict) else {}
-    d, k = str(r.get("direction") or ""), str(r.get("type") or "")
-    return " \u00b7 ".join(x for x in (d if d in DIRECTION else "", k if k in TYPE_TIP else "") if x)
+    d = str(r.get("direction") or "")
+    if d not in _PAST:
+        return ""
+    by = r.get("direction_by")
+    lead = "danger level " if by == "level" else "urgency " if by == "urgency" else ""
+    return lead + _PAST[d]
+
+
+def type_phrase(r: Any) -> str:
+    r = r if isinstance(r, dict) else {}
+    return TYPE_PHRASE.get(str(r.get("type") or ""), "")
+
+
+def words_of(r: Any) -> str:
+    """'danger level eased · its recommendations kept' for a feature row or
+    a try ('' when not tried)."""
+    return " \u00b7 ".join(x for x in (direction_phrase(r), type_phrase(r)) if x)
 
 
 def way_cell(r: Any, td: dict) -> Any:
@@ -981,11 +1005,12 @@ def way_cell(r: Any, td: dict) -> Any:
     said = " \u00b7 ".join(f"{n} {w}" for w, n in counts.items()
                            if isinstance(n, int) and not isinstance(n, bool) and n)
     tip = " | ".join(x for x in (DIRECTION_TIP.get(d, ""), TYPE_TIP.get(k, ""), said) if x)
-    kids = ([html.Span(d, className="iv-direction-word", style={"color": col})]
-            if d in DIRECTION else [])
+    kids = ([html.Span(direction_phrase(r), className="iv-direction-word",
+                       style={"color": col})] if d in DIRECTION else [])
     if k in TYPE_TIP:
         kids += [html.Span(" \u00b7 ", style={"color": "#cbd5e1"}),
-                 html.Span(k, className="iv-type-word", style={"color": "#334155"})]
+                 html.Span(type_phrase(r), className="iv-type-word",
+                           style={"color": "#334155"})]
     return html.Td(kids, className="iv-role", **{"data-way": old, "data-type": k},
                    title=tip, style={**td, "fontWeight": "700", "color": col})
 

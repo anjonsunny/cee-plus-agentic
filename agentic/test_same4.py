@@ -322,7 +322,7 @@ def test_a_hazard_that_went_with_the_removed_one_carries_the_same_shift():
     rows = {_flat(r).split()[0]: _flat(r) for r in
             _by_class(ui_iv.card_component(c, {}), "iv-feature")}
     assert "gone with fire_1" in rows["smoke_1"] and "gone with" not in rows["fire_1"]
-    assert rows["smoke_1"].endswith("eases")
+    assert rows["smoke_1"].endswith("eased")
 
 
 def test_removing_it_by_itself_later_is_its_own_test_and_wins():
@@ -735,7 +735,7 @@ def test_a_try_that_took_out_a_victim_is_its_own_test_and_touches_no_hazard_scor
     card = ui_iv.card_component(c, {})
     rows = {_flat(r).split()[0]: _flat(r) for r in _by_class(card, "iv-victim")}
     assert set(rows) == {"man_1", "car_1", "dog_1"}
-    assert rows["man_1"].endswith("unchanged \u00b7 drops") and "not removed yet" in rows["car_1"]
+    assert rows["man_1"].endswith("unchanged \u00b7 its recommendations dropped") and "not removed yet" in rows["car_1"]
     # one table: the victim rows are in the feature table, each row labelled
     assert len(_by_class(card, "iv-features")) == 1 and _by_class(card, "iv-victims") == []
     table = _by_class(card, "iv-features")[0]
@@ -855,7 +855,7 @@ def test_removing_a_victim_reads_redirects_and_its_size_does_not_cancel():
     # two words: the direction (no level in this scene, nothing kept: unchanged)
     # and the type (all three that named him were dropped)
     assert (man["direction"], man["type"]) == ("unchanged", "drops")
-    assert _flat(cell) == "unchanged \u00b7 drops"
+    assert _flat(cell) == "unchanged \u00b7 its recommendations dropped"
     assert getattr(cell, "data-type") == "drops" and "3 dropped" in cell.title
     assert "type: most recommendations that name it were dropped" in cell.title
 
@@ -955,7 +955,7 @@ def test_the_title_counts_hazards_and_victims_apart_and_the_key_names_amber():
                            "status": "measured", "summary": {"level_delta": -1}},
                           {"value": 0.03, "direction": "eased",
                            "reading": {"size": 0.7, "direction": "eases", "type": "redirects"}})
-    assert line.endswith(": eases \u00b7 redirects, changed 0.70 \u00b7 danger level -1")
+    assert line.endswith(": eased \u00b7 its recommendations redirected, changed 0.70 \u00b7 danger level -1")
 
 
 def test_a_feature_name_its_label_and_its_state_stay_on_one_line():
@@ -1116,15 +1116,22 @@ def test_direction_comes_from_the_danger_level_and_type_from_the_recommendations
     # no recommendation names what was dealt with: a direction, no type
     rd = declared4.try_reading(b, ({**one, "target": "car_1"}, {**b, "disaster_level": 7}))
     assert (rd["direction"], rd["type"]) == ("eases", "")
-    assert ui_iv.words_of(rd) == "eases" and ui_iv.words_of(None) == ""
-    assert ui_iv.words_of({"direction": "eases", "type": "drops"}) == "eases \u00b7 drops"
+    assert ui_iv.words_of(rd) == "danger level eased" and ui_iv.words_of(None) == ""
+    assert ui_iv.words_of({"direction": "eases", "type": "drops"}) == "eased \u00b7 its recommendations dropped"
+    assert ui_iv.words_of({"direction": "eases", "type": "keeps", "direction_by": "level"}) == (
+        "danger level eased \u00b7 its recommendations kept")
+    # the level stood still and what was kept came later: said as urgency, not as the level
+    assert ui_iv.words_of({"direction": "eases", "direction_by": "urgency"}) == "urgency eased"
+    assert ui_iv.words_of({"direction": "unchanged", "direction_by": "level"}) == (
+        "danger level unchanged")
     assert ui_iv.words_of({"direction": "banana", "type": 3}) == ""
     # on the row
     c = declared4.compare(b, [(one, gone)])
     row = [r for r in _by_class(ui_iv.card_component(c, {}), "iv-feature")
            if _flat(r).startswith("fire_1")][0]
     cell = _by_class(row, "iv-role")[0]
-    assert _flat(cell) == "eases \u00b7 drops" and cell.style["color"] == "#16a34a"
+    assert _flat(cell) == "danger level eased \u00b7 its recommendations dropped"
+    assert cell.style["color"] == "#16a34a"
     assert getattr(cell, "data-way") == "eased" and getattr(cell, "data-type") == "drops"
     for bad in (None, "x", (1,), ({"target": 3}, None)):
         assert declared4.try_reading(b, bad) is None or "direction" in declared4.try_reading(b, bad)

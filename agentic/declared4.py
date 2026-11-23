@@ -468,8 +468,8 @@ def way_of_try(before: Any, pair: Any, signed: float = 0.0) -> dict:
             way = EASES if signed > 0 else ESCALATES
         else:
             way = REDIRECTS if REDIRECTS in best else (EASES if signed >= 0 else ESCALATES)
-    d, k = direction_and_type(before, pair, cells, signed)
-    return {"way": way, "counts": counts, "direction": d, "type": k}
+    d, k, by = direction_and_type(before, pair, cells, signed)
+    return {"way": way, "counts": counts, "direction": d, "type": k, "direction_by": by}
 
 
 # The two words a feature row shows (Sunny, 2026-11-23: "one is direction
@@ -482,8 +482,10 @@ UNCHANGED = "unchanged"
 DROPS, REDIRECTS_T, KEEPS = "drops", "redirects", "keeps"
 
 
-def direction_and_type(before: Any, pair: Any, cells: list, signed: float = 0.0) -> tuple[str, str]:
-    """(direction, type) for one try. The danger level decides the
+def direction_and_type(before: Any, pair: Any, cells: list,
+                       signed: float = 0.0) -> tuple[str, str, str]:
+    """(direction, type, what the direction was read from: "level" |
+    "urgency" | "shift" | "") for one try. The danger level decides the
     direction; when it did not move, the kept recommendations do (more of
     them later or smaller: eases; more sooner or bigger: escalates). The
     type is read off the recommendations that name what was dealt with:
@@ -502,13 +504,15 @@ def direction_and_type(before: Any, pair: Any, cells: list, signed: float = 0.0)
     eased = sum(1 for c in cells if c.get("way") == grounding4.EASED)
     worse = sum(1 for c in cells if c.get("way") == grounding4.ESCALATED)
     if b is not None and a is not None and a != b:
-        direction = EASES if a < b else ESCALATES
+        direction, by = (EASES if a < b else ESCALATES), "level"
     elif eased != worse:
-        direction = EASES if eased > worse else ESCALATES
+        direction, by = (EASES if eased > worse else ESCALATES), "urgency"
     elif not cells:
         direction = EASES if signed > 0 else ESCALATES if signed < 0 else UNCHANGED
+        by = "shift"
     else:
-        direction = UNCHANGED
+        # nothing moved; said of the danger level when the level is known
+        direction, by = UNCHANGED, ("level" if b is not None and a is not None else "")
     named = [c for c in cells if c.get("named_removed")]
     n = {DROPS: 0, REDIRECTS_T: 0, KEEPS: 0}
     for c in named:
@@ -521,7 +525,7 @@ def direction_and_type(before: Any, pair: Any, cells: list, signed: float = 0.0)
         else:
             n[KEEPS] += 1
     kind = max(n, key=lambda w: n[w]) if named else ""     # a tie: drops, redirects, keeps
-    return direction, kind
+    return direction, kind, by
 
 
 def try_reading(before: Any, pair: Any) -> Any:
@@ -545,6 +549,7 @@ def try_reading(before: Any, pair: Any) -> Any:
     w = way_of_try(before, pair, signed)
     return {"size": size, "way": w["way"], "counts": w["counts"],
             "direction": w["direction"], "type": w["type"],
+            "direction_by": w["direction_by"],
             "signed": round(signed, 3), "parts": parts}
 
 
@@ -572,7 +577,8 @@ def _best_tries(before: Any, tries: Any) -> dict[str, dict]:
             continue
         value, parts = rd["size"], rd["parts"]
         extra = {"signed": rd["signed"], "way": rd["way"], "counts": rd["counts"],
-                 "direction": rd["direction"], "type": rd["type"]}
+                 "direction": rd["direction"], "type": rd["type"],
+                 "direction_by": rd["direction_by"]}
         try:
             victim = iv4.is_victim(before, target)
         except Exception:
@@ -720,6 +726,7 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
                      # how much (shift, no sign) and which way, kept apart
                      "way": best[h].get("way") if h in best else None,
                      "direction": best[h].get("direction") if h in best else None,
+                     "direction_by": best[h].get("direction_by") if h in best else None,
                      "type": best[h].get("type") if h in best else None,
                      "counts": best[h].get("counts") if h in best else None,
                      "signed": best[h].get("signed") if h in best else None,
@@ -794,6 +801,7 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
                 "shift": v_mech.get(h), "parts": v_best[h]["parts"] if h in v_best else [],
                 "way": v_best[h].get("way") if h in v_best else None,
                 "direction": v_best[h].get("direction") if h in v_best else None,
+                "direction_by": v_best[h].get("direction_by") if h in v_best else None,
                 "type": v_best[h].get("type") if h in v_best else None,
                 "counts": v_best[h].get("counts") if h in v_best else None,
                 "signed": v_best[h].get("signed") if h in v_best else None,
