@@ -571,6 +571,19 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
             c["label"] = cell_label(c)            # after the way: a dealt-with hazard reads it
             c["spill"] = spill(c)
             cells_by_row[i].append(c)
+        # A possible NAME MIX-UP (Sunny, 2026-11-23: "mark it"): when the
+        # edited run's words put someone where the picture does not have
+        # them, a recommendation that now protects one of those people may
+        # be the same recommendation with the wrong name on it, not a change
+        # of mind. Marked, never removed from any number.
+        flags = _place_flags(after)
+        mixed_up = {str(f.get("who")) for f in flags} | {
+            str(x) for f in flags for x in (f.get("instead") or [])}
+        for i, c in enumerate(col_cells):
+            now = _quad(c["after"])[2] if isinstance(c.get("after"), dict) else frozenset()
+            c["mixup"] = bool(mixed_up and c["state"] == CHANGED
+                              and (set(_quad(base[i])[2]) | set(now)) & mixed_up
+                              and set(_quad(base[i])[2]) != set(now))
         counted = [c for c in col_cells if c["state"] != TARGET_REMOVED]
         moved = sum(1 for c in counted if c["state"] in (GONE, CHANGED))
         summary = one.get("summary") if isinstance(one.get("summary"), dict) else {}
@@ -586,7 +599,7 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
             "tracked": isinstance(after.get("tracks"), dict),
             # a flag only: its words put someone where the picture does not
             # have them (agentic/place4.py)
-            "place_flags": _place_flags(after),
+            "place_flags": flags,
             "kind": "dealt with" if one.get("kind") == "dealt with" else "removed",
             "also_removed": [x for x in removed if x != str(one.get("target") or "")],
             "left_behind": left_behind,

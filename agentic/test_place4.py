@@ -83,3 +83,38 @@ def test_the_table_carries_the_flag_for_the_run_and_for_each_edited_run():
         "flag · this run, #1:")
     # nothing is changed by it: the recommendation reads as it did
     assert after["recommendations"][0]["action"] == "Evacuate person_1 from the porch of house_1."
+
+
+def test_a_recommendation_that_changed_hands_in_a_flagged_run_is_marked_not_removed():
+    """Sunny, 2026-11-23: "mark it". H: "move man_1 back from the car" became
+    "direct person_1 to leave the street": the same recommendation with the
+    wrong name on it, counted as re-aimed."""
+    before = {"image_size": [1254, 1254], "detected_objects": [dict(o) for o in OBJS],
+              "threats": [{"object_id": "house_1"}, {"object_id": "car_1"}],
+              "recommendations": [
+                  _rec(1, "house_1", ["person_2"], "Get person_2 out of house_1."),
+                  _rec(2, "car_1", ["person_1"], "Move person_1 back from car_1."),
+                  _rec(3, "car_1", ["road_1"], "Put out car_1.")]}
+    # the edited run swaps the two people in its words
+    after = {**before, "recommendations": [
+        _rec(1, "house_1", ["person_1"], "Evacuate person_1 from the porch of house_1."),
+        _rec(2, "car_1", ["person_2"], "Move person_2 back from car_1."),
+        _rec(3, "car_1", ["road_1"], "Put out car_1.")]}
+    t = g.table(before, [({"index": 1, "target": "road_1", "kind": "dealt with"}, after)])
+    assert len(t["columns"][0]["place_flags"]) == 1
+    by = {r["rank"]: r["cells"][0] for r in t["rows"]}
+    assert by[1]["mixup"] is True and by[2]["mixup"] is True
+    assert by[2]["spill"] == "re-aimed" and by[2]["impact"] == 0.4     # still counted in full
+    assert by[3]["mixup"] is False                                     # it names neither person
+    comp = ui_iv.table_component(t)
+    marks = _by_class(comp, "iv-mixup")
+    assert len(marks) == 2 and _flat(marks[0]) == "possible name mix-up"
+    assert "still counts in the numbers" in marks[0].title
+    # no flag in the run: no mark, whatever changed
+    clean = {**before, "recommendations": [
+        _rec(1, "house_1", ["person_2"], "Get person_2 out of house_1."),
+        _rec(2, "car_1", ["person_2"], "Move person_2 back from car_1."),
+        _rec(3, "car_1", ["road_1"], "Put out car_1.")]}
+    t = g.table(before, [({"index": 1, "target": "road_1", "kind": "dealt with"}, clean)])
+    assert not any(r["cells"][0]["mixup"] for r in t["rows"])
+    assert _by_class(ui_iv.table_component(t), "iv-mixup") == []

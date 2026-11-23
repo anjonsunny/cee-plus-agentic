@@ -532,6 +532,10 @@ def signed_cell(sg: Any) -> list:
         style={"fontWeight": "800", "color": _DIR_COL.get(word, "#64748b")})]
 
 
+MIXUP_TIP = ("in this edited run the model's words put a person where the picture does not "
+             "have them (see the flag in the column head). This recommendation now names one "
+             "of those people, so it may be the same recommendation with the wrong name on it, "
+             "not a change of mind. It still counts in the numbers.")
 PLACE_TIP = ("a flag only, nothing is changed: the recommendation says someone is at a thing "
              "(off, out of, from the ... of), and in the picture their box does not touch it "
              "while another of the same kind is there")
@@ -672,6 +676,10 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
             else:
                 kids = [html.Span(spilled or short, className="iv-cell-word",
                                   **{"data-spill": spilled}, style={"color": "#94a3b8"})]
+            if c.get("mixup"):
+                kids = list(kids) + [html.Div(
+                    "possible name mix-up", className="iv-mixup", title=MIXUP_TIP,
+                    style={"fontSize": "10px", "fontWeight": "700", "color": "#b91c1c"})]
             if c.get("unsure"):
                 # which object this is in the edited picture is a guess
                 kids = list(kids) + [html.Div(
