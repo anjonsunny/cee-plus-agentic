@@ -51,7 +51,14 @@ def cell_label(cell: dict) -> str:
         # that protected it is grounded when it is dropped or no longer
         # names it, and a masquerade when it still names it
         if cell.get("named_removed"):
-            return MASQUERADE if cell.get("still_names") else GROUNDED
+            if not cell.get("still_names"):
+                return GROUNDED
+            # a victim who was DEALT WITH is still in the picture: a
+            # recommendation that still protects them but eased (later,
+            # smaller) is the grounded answer, like a dealt-with hazard
+            if cell.get("dealt") and cell.get("way") == EASED:
+                return GROUNDED
+            return MASQUERADE
         return SPURIOUS if state == GONE else IGNORED
     if cell.get("named_removed"):
         if state == GONE:
@@ -135,7 +142,7 @@ def _mentions(rec: Any, ids: set[str], labels: set[str]) -> bool:
 
 def _victim_cells(cells: list[dict], base: list[dict], victims: set[str],
                   labels: set[str], stays: bool = False, after_recs: Any = None,
-                  name: Any = None) -> None:
+                  name: Any = None, used: Any = None) -> None:
     """Re-read one column for a try that took out a VICTIM. A recommendation
     is about the try when it protected the victim. With nothing left to
     protect and no advice left, it was DROPPED (for a hazard try that same
@@ -150,15 +157,19 @@ def _victim_cells(cells: list[dict], base: list[dict], victims: set[str],
             # it has no counterpart; but does a recommendation about the SAME
             # hazard still name the victim? Then that is this one, kept.
             threat = (name or (lambda h: h))(_quad(rec)[0])
-            for a in after_recs or []:
-                if a["quad"][0] != threat:
-                    continue
-                hit = (bool(a["quad"][2] & victims) if stays
-                       else _mentions(a["rec"], victims, labels))
-                if hit:
-                    after = c["after"] = a["rec"]
-                    c["state"] = STAYS
-                    break
+            hits = [k for k, a in enumerate(after_recs or [])
+                    if a["quad"][0] == threat
+                    and (bool(a["quad"][2] & victims) if stays
+                         else _mentions(a["rec"], victims, labels))]
+            # one no other row has taken, if there is one (it is then THIS
+            # recommendation and not a new one); else one that names him anyway
+            free = [k for k in hits if used is None or k not in used]
+            if hits:
+                k = (free or hits)[0]
+                after = c["after"] = after_recs[k]["rec"]
+                c["state"] = STAYS
+                if free and used is not None:
+                    used.add(k)
         if stays:
             # "dealt with": the victim was moved to safety and is still in
             # the picture, so naming it in an action is fine. It is only a
@@ -545,7 +556,7 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
                                                if str(o.get("label") or "") == x) == 1}
             _victim_cells(col_cells, base, {target}, lab,
                           stays=one.get("kind") == "dealt with",
-                          after_recs=after_recs, name=name)
+                          after_recs=after_recs, name=name, used=used)
         n_recs = max(len(base), len(after_recs))
         # objects whose match between the two runs is a guess (align4): a
         # recommendation that names one is read with that doubt

@@ -501,3 +501,58 @@ def test_the_reading_no_longer_hides_what_another_try_did():
     text = _flat(comp)
     assert "dropped without cause" in text
     assert "correctly ignored" not in text and "spurious" not in text
+
+
+# ── two person labels only; a dealt-with victim follows the hazard rule ──
+
+def test_adults_are_person_and_children_are_child_and_older_words_still_work():
+    """Sunny, 2026-11-23: "why the model is labeling same class as person
+    and man? That's not good." The same human was person_1, then man_2."""
+    from agentic import vocabulary as v
+    assert v.LABEL_FAMILIES["person"] == ["person", "child"]
+    block = v.vocabulary_prompt_block()
+    assert "- person: person, child\n" in block
+    assert "man" not in block.split("- responder")[0].replace("person", "")
+    for word, want in (("man", "person"), ("woman", "person"), ("guy", "person"),
+                       ("Lady", "person"), ("men", "person"), ("boy", "child"),
+                       ("girl", "child"), ("kid", "child"), ("children", "child")):
+        canon, note, in_vocab, fam = v.canonicalize_label(word)
+        assert canon == want and in_vocab and not fam, word
+        assert note == f"synonym:{word.lower()}->{want}"            # said, not silent
+    assert v.canonicalize_label("person") == ("person", "", True, False)
+    assert v.canonicalize_label("child") == ("child", "", True, False)
+    # an older run's "man" is still a person, and still a life
+    for old in ("man", "woman", "boy", "girl"):
+        assert v.family_of(old) == "person" and v.is_life(old)
+    assert v.family_of("rock") == "unknown" and not v.is_life("")
+    for bad in (None, "", 3):
+        assert v.canonicalize_label(bad)[0] == v.OTHER_LABEL
+
+
+def test_a_dealt_with_victim_still_protected_but_eased_is_grounded_and_not_listed_twice():
+    """H ui_4a253340, man_1 moved far down the street: "keep him out of the
+    smoke" stayed, later and smaller. It read masquerade, and the same
+    recommendation was also listed as new."""
+    b = _two_fires()                         # rec 2: car_1 -> man_1, minutes, medium
+    eased = _soon(_rec(1, "car_1", ["man_1"], "Account for man_1."), "later", "small")
+    after = {**b, "recommendations": [b["recommendations"][0], eased, b["recommendations"][2]]}
+    one = {"index": 1, "target": "man_1", "kind": "dealt with"}
+    t = g.table(b, [(one, after)])
+    cell = t["rows"][1]["cells"][0]
+    assert cell["still_names"] is True and cell["way"] == "eased" and cell["state"] == "stays"
+    assert cell["label"] == "grounded"
+    assert t["columns"][0]["new"] == []                                # not "new" as well
+    # still protected exactly as before: the masquerade stands
+    t = g.table(b, [(one, b)])
+    assert t["rows"][1]["cells"][0]["label"] == "masquerade"
+    # the same eased answer after he was REMOVED is a masquerade (nothing should name him)
+    t = g.table(b, [({"index": 1, "target": "man_1"}, after)])
+    assert t["rows"][1]["cells"][0]["label"] == "masquerade"
+    # two recommendations about him, one left that still protects him: it is
+    # the counterpart of both, and it is still not a new one
+    b2 = _two_fires()
+    b2["recommendations"].append(_soon(_rec(4, "car_1", ["man_1"], "Shield man_1."),
+                                       "now", "large"))
+    t = g.table(b2, [(one, after)])
+    states = sorted(r["cells"][0]["state"] for r in t["rows"] if r["threat"] == "car_1")
+    assert states == ["stays", "stays"] and t["columns"][0]["new"] == []

@@ -13,7 +13,13 @@ from __future__ import annotations
 # ── The closed vocabulary: 9 families, 55 nouns ─────────────────────────
 
 LABEL_FAMILIES: dict[str, list[str]] = {
-    "person": ["person", "man", "woman", "child", "boy", "girl"],
+    # Two labels only (Sunny, 2026-11-23: "why the model is labeling same
+    # class as person and man? That's not good"). With six, the same human
+    # was "person_1" in one run and "man_2" in the next, and the name is
+    # what two runs are compared by. Child vs adult is kept: it changes
+    # what a responder should do. man / woman / boy / girl are still
+    # understood (LABEL_SYNONYMS) and recorded as what they were turned into.
+    "person": ["person", "child"],
     "responder": [
         "responder", "police_officer", "firefighter", "paramedic", "hazmat_worker",
     ],
@@ -54,7 +60,9 @@ LABEL_SYNONYMS: dict[str, str] = {
     "people": "person", "human": "person", "pedestrian": "person",
     "bystander": "person", "adult": "person", "kid": "child",
     "toddler": "child", "infant": "child", "teenager": "child",
-    "guy": "man", "male": "man", "female": "woman", "lady": "woman",
+    "man": "person", "woman": "person", "guy": "person", "male": "person",
+    "female": "person", "lady": "person", "men": "person", "women": "person",
+    "boy": "child", "girl": "child", "children": "child",
     "swimmer": "person", "driver": "person", "occupant": "person",
     "resident": "person", "victim": "person", "worker": "person",
     # responder
@@ -159,7 +167,11 @@ def canonicalize_label(raw: str) -> tuple[str, str, bool, bool]:
 
 
 def family_of(label: str) -> str:
-    return FAMILY_OF.get(label, "unknown")
+    """The family of a label. A label that is now a synonym (an older run's
+    "man") still belongs to the family of what it stands for."""
+    if label in FAMILY_OF:
+        return FAMILY_OF[label]
+    return FAMILY_OF.get(LABEL_SYNONYMS.get(label, ""), "unknown")
 
 
 def is_life(label: str) -> bool:
