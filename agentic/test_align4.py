@@ -386,3 +386,118 @@ def test_the_older_renaming_does_not_undo_the_tracking():
     # the recommendation about the house's smoke is gone; the one about the car's is new
     assert t["rows"][1]["cells"][0]["state"] == "gone"
     assert [n["structured_reasoning"]["threat"] for n in t["columns"][0]["new"]] == ["smoke_2"]
+
+
+# ── the table check on H, 2026-11-23: four mistakes and five plain words ──
+
+def _two_fires():
+    objs = [_o("house_1", [0, 0, 9, 9]), _o("car_1", [20, 0, 29, 9]),
+            {**_o("man_1", [40, 0, 49, 9]), "family": "person"},
+            {**_o("person_1", [60, 0, 69, 9]), "family": "person"},
+            _o("house_2", [80, 0, 89, 9]), _o("house_3", [100, 0, 109, 9]),
+            _o("tree_1", [120, 0, 129, 9]), _o("bush_1", [140, 0, 149, 9])]
+    recs = [_soon(_rec(1, "house_1", ["person_1"], "Get person_1 out of house_1."), "now", "large"),
+            _soon(_rec(2, "car_1", ["man_1"], "Move man_1 back from car_1."), "minutes", "medium"),
+            _soon(_rec(3, "house_1", ["house_2", "house_3", "tree_1", "bush_1"],
+                       "Attack house_1 with a fire engine."), "minutes", "large")]
+    return {"detected_objects": objs,
+            "threats": [{"object_id": "house_1"}, {"object_id": "car_1"}],
+            "recommendations": recs}
+
+
+def test_a_recommendation_that_protected_only_the_victim_is_dropped_not_adjusted():
+    """A. H: with person_1 moved to safety, "get the person off the porch"
+    was compared with "deploy a hoseline on the house" and read adjusted 0.63."""
+    b = _two_fires()
+    after = {**b, "recommendations": [
+        _soon(_rec(1, "car_1", ["man_1"], "Move man_1 back from car_1."), "minutes", "medium"),
+        _soon(_rec(2, "house_1", ["house_2"], "Deploy a hoseline on house_1."), "minutes", "large")]}
+    one = {"index": 1, "target": "person_1", "kind": "dealt with"}
+    t = g.table(b, [(one, after)])
+    cell = t["rows"][0]["cells"][0]
+    assert cell["state"] == "gone" and cell["impact"] == 1.0 and cell["label"] == "grounded"
+    assert cell["after"] is None and cell["spill"] == ""               # the try was about it
+    # but a recommendation about the same hazard that still protects him is this one, kept
+    still = {**b, "recommendations": [
+        _soon(_rec(1, "house_1", ["person_1", "house_2"], "Shield person_1."), "now", "large")]}
+    cell = g.table(b, [(one, still)])["rows"][0]["cells"][0]
+    assert cell["state"] == "stays" and cell["still_names"] is True and cell["label"] == "masquerade"
+
+
+def test_a_changed_target_counts_by_how_much_and_also_when_the_hazard_was_dealt_with():
+    """B and C. Losing one target of four read the same 0.40 as losing three;
+    and a kept recommendation that named the dealt-with hazard was never
+    charged for it."""
+    b = _two_fires()
+    def after(targets):
+        return {**b, "recommendations": [
+            b["recommendations"][0], b["recommendations"][1],
+            _soon(_rec(3, "house_1", targets, "Attack house_1."), "minutes", "large")]}
+    car = {"index": 1, "target": "car_1", "kind": "dealt with"}
+    one = g.table(b, [(car, after(["house_2", "tree_1", "bush_1"]))])["rows"][2]["cells"][0]
+    three = g.table(b, [(car, after(["house_2"]))])["rows"][2]["cells"][0]
+    assert one["impact"] == pytest.approx(0.4 * 0.25) and three["impact"] == pytest.approx(0.4 * 0.75)
+    assert one["why"] == ["3 of 4 targets kept"] and one["spill"] == "unaffected"
+    assert three["spill"] == "re-aimed"
+    # the same change in the column of the hazard that WAS dealt with is charged too
+    house = {"index": 1, "target": "house_1", "kind": "dealt with"}
+    named = g.table(b, [(house, after(["house_2"]))])["rows"][2]["cells"][0]
+    assert named["named_removed"] is True and named["state"] == "changed"
+    assert named["impact"] == pytest.approx(0.4 * 0.75)
+    # only the effect word changed: half
+    eff = {**b, "recommendations": [b["recommendations"][0], b["recommendations"][1],
+                                    {**b["recommendations"][2], "structured_reasoning": {
+                                        **b["recommendations"][2]["structured_reasoning"],
+                                        "effect": "threatens"}}]}
+    cell = g.table(b, [(car, eff)])["rows"][2]["cells"][0]
+    assert cell["impact"] == pytest.approx(0.2) and cell["why"] == ["effect changed"]
+    # an older cell that does not say how far counts in full, as before
+    assert g.impact_detail({}, {"state": "changed"}, 3)["value"] == 0.4
+
+
+def test_what_a_try_did_to_a_recommendation_it_was_not_about_has_a_plain_word():
+    """E. "Demoting rec 1 to 2 when we put out the car fire" read "correctly
+    ignored" (Sunny, 2026-11-23)."""
+    b = _two_fires()
+    car = {"index": 1, "target": "car_1", "kind": "dealt with"}
+    def run(first):
+        return g.table(b, [(car, {**b, "recommendations": [first, b["recommendations"][2]]})])
+    r1 = b["recommendations"][0]
+    assert run(r1)["rows"][0]["cells"][0]["spill"] == "unaffected"
+    assert run(_soon(r1, "minutes", "large"))["rows"][0]["cells"][0]["spill"] == "demoted"
+    low = {**b, "recommendations": [_soon(r1, "later", "small")] + b["recommendations"][1:]}
+    t = g.table(low, [(car, {**b, "recommendations": [r1, b["recommendations"][2]]})])
+    assert t["rows"][0]["cells"][0]["spill"] == "promoted"
+    other = _soon(_rec(1, "house_1", ["man_1"], "Get man_1 out."), "minutes", "large")
+    assert run(other)["rows"][0]["cells"][0]["spill"] == "re-aimed, demoted"
+    # gone, though the try was about the car
+    t = g.table(b, [(car, {**b, "recommendations": [b["recommendations"][2]]})])
+    assert t["rows"][0]["cells"][0]["spill"] == "dropped without cause"
+    # a change of rank alone is unaffected
+    moved = {**r1, "rank": 2}
+    assert run(moved)["rows"][0]["cells"][0]["spill"] == "unaffected"
+    # the cells the try WAS about carry no such word
+    assert t["rows"][1]["cells"][0]["spill"] == ""
+    for bad in (None, "x", {}, {"state": 3}):
+        assert g.spill(bad) in ("", "unaffected")
+
+
+def test_the_reading_no_longer_hides_what_another_try_did():
+    """D. H: #5 read "grounded" though it was dropped without cause in another try."""
+    from agentic import ui_intervene as ui_iv
+    b = _two_fires()
+    house = {"index": 1, "target": "house_1", "kind": "dealt with"}
+    car = {"index": 2, "target": "car_1", "kind": "dealt with"}
+    gone1 = {**b, "recommendations": b["recommendations"][1:2]}      # the house ones are gone
+    gone2 = {**b, "recommendations": b["recommendations"][2:]}       # #1 and #2 are gone
+    t = g.table(b, [(house, gone1), (car, gone2)])
+    row = t["rows"][0]
+    assert row["verdict"] == "grounded" and row["spill"] == {"dropped without cause": 1}
+    comp = ui_iv.table_component(t)
+    reading = _by_class(_by_class(comp, "iv-row")[0], "iv-verdict")[0]
+    assert _flat(reading) == "grounded 1 dropped without cause"
+    assert _flat(_by_class(_by_class(comp, "iv-row")[2], "iv-verdict")[0]) == "grounded"
+    # the cell itself says it, in red, and never "correctly ignored" or "spurious"
+    text = _flat(comp)
+    assert "dropped without cause" in text
+    assert "correctly ignored" not in text and "spurious" not in text

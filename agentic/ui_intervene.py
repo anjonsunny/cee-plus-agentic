@@ -431,6 +431,12 @@ _CELL_SHORT = {"stays": ("kept", "#64748b"), "gone": ("dropped", "#0f172a"),
 SAME_TIP = ("the model was asked which hazards are one and the same physical hazard; "
             "its answer is followed here, so the two count as one hazard")
 _WAY_COL = {"eased": "#16a34a", "escalated": "#b91c1c", "mixed": "#b45309"}
+# a recommendation the try was not about (agentic/grounding4.py `spill`)
+_SPILL_COL = {"unaffected": "#94a3b8", "dropped without cause": "#b91c1c"}
+SPILL_TIP = ("this try was not about this recommendation, so it should be unaffected. "
+             "demoted = later or smaller; promoted = sooner or bigger; re-aimed = it now "
+             "protects other things; a change of rank alone is unaffected")
+_READING = {"spurious": "dropped without cause"}
 _CELL_MEANS = {
     "stays": "the same recommendation is still in the answer to the edited scene",
     "gone": "this recommendation is no longer in the answer to the edited scene",
@@ -441,7 +447,8 @@ _CELL_MEANS = {
 TABLE_KEY = ("each cell: what happened to this recommendation when that hazard or victim was "
              "removed; the bar is how much it changed (dropped = 1.00); "
              "green = eased, red = escalated, amber = changed without a direction "
-             "(aimed at something else, or moved in rank)")
+             "(aimed at something else, or moved in rank). A recommendation the try was "
+             "not about should read unaffected; amber there = demoted, promoted or re-aimed")
 _VERDICT = {"grounded": "#16a34a", "masquerade": "#b91c1c",
             "spurious": "#b45309", "mixed": "#b45309",
             "correctly_ignored": "#64748b", "untested": "#94a3b8"}
@@ -618,17 +625,27 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
             # is on hover; the row's reading is in the last column.
             short, col = _CELL_SHORT.get(state, (state, "#64748b"))
             tip += ("  |  " + lab.replace("_", " ") + ": " + _MEANS.get(lab, "")) if lab else ""
+            # a recommendation this try was NOT about: one plain word for
+            # what happened to it anyway (unaffected / demoted / promoted /
+            # re-aimed / dropped without cause), never green
+            spilled = str(c.get("spill") or "")
+            if spilled:
+                tip += "  |  " + SPILL_TIP
             if imp:
                 # the bar with its number; the word under it; then the small
                 # reasons, each kept whole so "rank 5 \u2192 4" never splits.
                 # One colour per bar: which way the change went.
                 tone = ("#0f172a" if state == "gone" else
                         _WAY_COL.get(way, "#b45309"))
+                word = short + (f", {way}" if way and state != "gone" else "")
+                word_col = tone if state != "gone" else col
+                if spilled:
+                    tone = word_col = _SPILL_COL.get(spilled, "#b45309")
+                    word = spilled
                 kids = [html.Div(_bar(imp, tone)),
-                        html.Div(short + (f", {way}" if way and state != "gone" else ""),
-                                 className="iv-cell-word", **{"data-way": way},
-                                 style={"color": tone if state != "gone" else col,
-                                        "fontWeight": "700"})]
+                        html.Div(word, className="iv-cell-word",
+                                 **{"data-way": way, "data-spill": spilled},
+                                 style={"color": word_col, "fontWeight": "700"})]
                 if c.get("victim") and c.get("still_names"):
                     kids.append(html.Div("still names what was removed",
                                          className="iv-still-names",
@@ -653,7 +670,8 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
                                   className="iv-cell-word",
                                   style={"color": _VERDICT["masquerade"], "fontWeight": "700"})]
             else:
-                kids = [html.Span(short, className="iv-cell-word", style={"color": "#94a3b8"})]
+                kids = [html.Span(spilled or short, className="iv-cell-word",
+                                  **{"data-spill": spilled}, style={"color": "#94a3b8"})]
             if c.get("unsure"):
                 # which object this is in the edited picture is a guess
                 kids = list(kids) + [html.Div(
@@ -666,8 +684,15 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
                                + ("" if imp or lab == "masquerade" else " quiet"),
                                title=tip, **{"data-label": lab}, style=_TD))
         v = str(r.get("verdict"))
-        tds.append(html.Td(v.replace("_", " "), className="iv-verdict",
-                           title=_MEANS.get(v, ""),
+        # what the tries that were not about it did to it, under the reading
+        sp = r.get("spill") if isinstance(r.get("spill"), dict) else {}
+        also = [html.Div(f"{n} {w}", className="iv-spill",
+                         style={"fontSize": "10px", "fontWeight": "600",
+                                "color": _SPILL_COL.get(w, "#b45309")})
+                for w, n in sp.items() if isinstance(n, int) and n]
+        tds.append(html.Td([html.Div(_READING.get(v, v.replace("_", " ")))] + also,
+                           className="iv-verdict",
+                           title=_MEANS.get(v, "") + ("  |  " + SPILL_TIP if also else ""),
                            style={**_TD, "color": _VERDICT.get(v, "#64748b"),
                                   "fontWeight": "800"}))
         body.append(html.Tr(tds, className="iv-row"))

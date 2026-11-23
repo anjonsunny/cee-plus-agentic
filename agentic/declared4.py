@@ -421,7 +421,8 @@ def way_of_try(before: Any, pair: Any, signed: float = 0.0) -> dict:
     tie reads "redirects". With no recommendations to read, the sign of
     the combined shift decides. Never raises."""
     from agentic import grounding4
-    counts = {"dropped": 0, "re-aimed": 0, "eased": 0, "escalated": 0, "kept": 0}
+    counts = {"dropped": 0, "re-aimed": 0, "eased": 0, "escalated": 0, "kept": 0, "new": 0}
+    tbl: dict = {}
     try:
         tbl = grounding4.table(before, [pair])
         cells = [r["cells"][0] for r in tbl["rows"] if r.get("cells")]
@@ -431,20 +432,31 @@ def way_of_try(before: Any, pair: Any, signed: float = 0.0) -> dict:
         state, way = c.get("state"), c.get("way")
         if state == grounding4.TARGET_REMOVED:
             continue
+        # later / smaller or sooner / bigger says more than a changed list
+        # of targets, so it is counted first
         if state == grounding4.GONE:
             counts["dropped"] += 1
-        elif state == grounding4.CHANGED:
-            counts["re-aimed"] += 1
         elif way == grounding4.EASED:
             counts["eased"] += 1
         elif way == grounding4.ESCALATED:
             counts["escalated"] += 1
+        elif state == grounding4.CHANGED:
+            counts["re-aimed"] += 1
         else:
             counts["kept"] += 1
-    votes = {EASES: counts["dropped"] + counts["eased"], ESCALATES: counts["escalated"],
-             REDIRECTS: counts["re-aimed"]}
+    # A recommendation that was dropped and REPLACED by a new one is effort
+    # moved, not effort saved: with the man removed the model dropped "move
+    # the man" and wrote "close the road". So a drop counts as redirecting
+    # as far as new recommendations took its place, and as easing beyond.
+    try:
+        counts["new"] = len(tbl["columns"][0].get("new") or [])
+    except Exception:
+        counts["new"] = 0
+    replaced = min(counts["dropped"], counts["new"])
+    votes = {EASES: counts["dropped"] - replaced + counts["eased"],
+             ESCALATES: counts["escalated"], REDIRECTS: counts["re-aimed"] + replaced}
     top = max(votes.values())
-    if not sum(counts.values()):
+    if not sum(v for k, v in counts.items() if k != "new"):
         way = EASES if signed > 0 else ESCALATES if signed < 0 else NO_CHANGE
     elif top == 0:
         way = NO_CHANGE

@@ -844,14 +844,16 @@ def test_removing_a_victim_reads_redirects_and_its_size_does_not_cancel():
     c = declared4.compare(b, [(_mixed_try("man_1"), after)])
     man = {v["object_id"]: v for v in c["victims"]}["man_1"]
     assert man["way"] == declared4.REDIRECTS
-    assert man["counts"]["re-aimed"] == 3 and man["counts"]["dropped"] == 0
+    # the three that protected only him were dropped, and three new ones took
+    # their place: effort moved, not saved
+    assert man["counts"]["dropped"] == 3 and man["counts"]["new"] == 3
     assert man["shift"] == pytest.approx(0.7, abs=0.01)                # how much: no sign
     assert abs(man["signed"]) < man["shift"]                           # the old number cancelled
     card = ui_iv.card_component(c, {})
     row = [r for r in _by_class(card, "iv-victim") if _flat(r).startswith("man_1")][0]
     cell = _by_class(row, "iv-role")[0]
     assert _flat(cell) == "redirects emergency responses" and cell.style["color"] == "#b45309"
-    assert getattr(cell, "data-way") == "redirected" and "3 re-aimed" in cell.title
+    assert getattr(cell, "data-way") == "redirected" and "3 dropped" in cell.title
 
 
 def test_the_way_is_read_off_the_recommendations_table():

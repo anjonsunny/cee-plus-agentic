@@ -521,7 +521,7 @@ def test_the_result_shows_the_table_above_the_tries_with_hoverable_ids(tmp_path)
     text = _flat(comp)
     assert "decoration" not in text and "hidden dependence" not in text
     for word in ("RECOMMENDATION", "NAMES", "#1 removed", "READING (ONE ASK)", "grounded",
-                 "kept", "untested",
+                 "unaffected", "untested",
                  "recommendations moved", "1 of 2", "level -3", "the tries · 2",
                  "not measured — boom", "running the edited scene: removed tanker_1"):
         assert word in text, word
@@ -932,12 +932,13 @@ def test_a_cell_says_what_happened_to_the_advice_then_the_label():
     cells = {i + 1: c for i, c in enumerate(_by_class(comp, "iv-cell"))}
     rows = _by_class(comp, "iv-row")
     by = {_flat(r).split()[0]: _flat(_by_class(r, "iv-cell")) for r in rows}
-    assert by["#1"] == "kept"                             # the uneventful cell, said quietly
+    assert by["#1"] == "unaffected"                       # the uneventful cell, said quietly
     # compact: a bar with its number, one word, the small reasons
     assert by["#2"] == "kept, though its hazard was removed"      # masquerade is not quiet
-    assert by["#3"] == "0.40 adjusted"
-    assert by["#4"] == "1.00 dropped"
-    assert by["#6"] == "0.60 adjusted rank 6 \u2192 1"
+    # it now protects one thing more: a small change, by how much (not a flat 0.40)
+    assert by["#3"] == "0.20 unaffected 1 of 1 targets kept, 1 new"
+    assert by["#4"] == "1.00 dropped without cause"
+    assert by["#6"] == "0.60 re-aimed rank 6 \u2192 1"
     labels = {_flat(r).split()[0]: getattr(_by_class(r, "iv-cell")[0], "data-label") for r in rows}
     assert labels == {"#1": "correctly_ignored", "#2": "masquerade", "#3": "correctly_ignored",
                       "#4": "spurious", "#6": "correctly_ignored"}
@@ -950,7 +951,7 @@ def test_a_cell_says_what_happened_to_the_advice_then_the_label():
     for old_word in ("action changed", "gone with it", " stays ", " gone "):
         assert old_word not in " " + text + " ", old_word
     # the hover explains the phrase and shows the two pieces of advice
-    kept = next(c for c in _by_class(comp, "iv-cell") if "adjusted" in _flat(c))
+    kept = next(c for c in _by_class(comp, "iv-cell") if "targets kept" in _flat(c))
     assert "still has a recommendation, with a different target" in kept.title
     assert "before: Extinguish fire_1." in kept.title and "after: Cool truck_1." in kept.title
     dropped = next(c for c in _by_class(comp, "iv-cell") if "dropped" in _flat(c))
@@ -1476,8 +1477,8 @@ def test_advice_recorded_with_another_target_is_kept_not_dropped():
     assert [n["action"] for n in t["columns"][0]["new"]] == ["Move man_1 away from spill_1."]
     comp = ui_iv.table_component(t)
     cells = {_flat(r).split()[0]: _flat(_by_class(r, "iv-cell")) for r in _by_class(comp, "iv-row")}
-    assert cells["#5"] == "0.60 adjusted rank 5 \u2192 3"
-    assert cells["#2"] == "0.40 adjusted"
+    assert cells["#5"] == "0.60 re-aimed rank 5 \u2192 3"
+    assert cells["#2"] == "0.40 re-aimed"
 
 
 def test_gone_spurious_and_target_removed_still_exist_when_the_hazard_has_no_advice_left():
@@ -1501,8 +1502,8 @@ def test_gone_spurious_and_target_removed_still_exist_when_the_hazard_has_no_adv
     assert t["columns"][0]["of"] == 4                     # every row counts in a victim try
     comp = ui_iv.table_component(t)
     cells = {_flat(r).split()[0]: _flat(_by_class(r, "iv-cell")) for r in _by_class(comp, "iv-row")}
-    assert cells["#3"] == "1.00 dropped"
-    assert cells["#2"] == "1.00 dropped"
+    assert cells["#3"] == "1.00 dropped"                  # the try was about it
+    assert cells["#2"] == "1.00 dropped without cause"    # the try was not
     # a HAZARD try: advice whose only target was the removed hazard is bookkeeping
     before = _res(["fire_1", "spill_1", "man_1"],
                   [_rec(1, "fire_1", ["man_1"]), _rec(2, "spill_1", ["fire_1"])],

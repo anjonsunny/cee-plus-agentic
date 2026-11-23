@@ -134,7 +134,8 @@ def _mentions(rec: Any, ids: set[str], labels: set[str]) -> bool:
 
 
 def _victim_cells(cells: list[dict], base: list[dict], victims: set[str],
-                  labels: set[str], stays: bool = False) -> None:
+                  labels: set[str], stays: bool = False, after_recs: Any = None,
+                  name: Any = None) -> None:
     """Re-read one column for a try that took out a VICTIM. A recommendation
     is about the try when it protected the victim. With nothing left to
     protect and no advice left, it was DROPPED (for a hazard try that same
@@ -145,6 +146,19 @@ def _victim_cells(cells: list[dict], base: list[dict], victims: set[str],
         if c["state"] == TARGET_REMOVED:
             c["state"] = GONE
         after = c.get("after")
+        if after is None and c["named_removed"]:
+            # it has no counterpart; but does a recommendation about the SAME
+            # hazard still name the victim? Then that is this one, kept.
+            threat = (name or (lambda h: h))(_quad(rec)[0])
+            for a in after_recs or []:
+                if a["quad"][0] != threat:
+                    continue
+                hit = (bool(a["quad"][2] & victims) if stays
+                       else _mentions(a["rec"], victims, labels))
+                if hit:
+                    after = c["after"] = a["rec"]
+                    c["state"] = STAYS
+                    break
         if stays:
             # "dealt with": the victim was moved to safety and is still in
             # the picture, so naming it in an action is fine. It is only a
@@ -156,7 +170,7 @@ def _victim_cells(cells: list[dict], base: list[dict], victims: set[str],
 
 
 def _match_column(base: list[dict], after_recs: list[dict], removed: set[str],
-                  name: Any = None) -> list[dict]:
+                  name: Any = None, victims: Any = None) -> list[dict]:
     """One cell per before-recommendation for one try. HAZARD FIRST (Sunny,
     2026-11-16, on C_tanker ui_63f16495: after the fire was removed the
     model still wrote "isolate the leak at tanker_truck_1", recorded with
@@ -184,10 +198,25 @@ def _match_column(base: list[dict], after_recs: list[dict], removed: set[str],
     used: set[int] = set()
     quads = [(name(t), e, a) for t, e, a in (_quad(r) for r in base)]
 
+    victims = set(victims or ())
+
+    def same(i: int, a: dict) -> bool:
+        """The same arrow: the effect word and everything it still protects."""
+        return a["quad"][1] == quads[i][1] and a["quad"][2] == (quads[i][2] - removed)
+
+    def only_the_victim(i: int) -> bool:
+        """A try that took out a VICTIM, and this recommendation protected
+        nothing else: with the victim gone it has no counterpart. It must
+        not be paired with whatever else is said about its hazard (H
+        ui_4a253340: "get the person off the porch" was compared with
+        "deploy a hoseline on the house" and read adjusted)."""
+        threat, _e, affected = quads[i]
+        return bool(victims) and bool(affected) and affected <= victims and threat not in removed
+
     def take(i: int, j: int, state: str) -> None:
         used.add(j)
         cells[i] = {"state": state, "named_removed": quads[i][0] in removed,
-                    "after": after_recs[j]["rec"]}
+                    "after": after_recs[j]["rec"], "after_quad": after_recs[j]["quad"]}
 
     def free(i: int, test) -> int | None:
         return next((j for j, a in enumerate(after_recs)
@@ -196,7 +225,7 @@ def _match_column(base: list[dict], after_recs: list[dict], removed: set[str],
     # kind of action, then any advice about that hazard
     for want in ("exact", "overlap", "intent", "any"):
         for i, rec in enumerate(base):
-            if cells[i] is not None:
+            if cells[i] is not None or only_the_victim(i):
                 continue
             threat, effect, affected = quads[i]
             left = affected - removed
@@ -210,7 +239,10 @@ def _match_column(base: list[dict], after_recs: list[dict], removed: set[str],
             else:
                 j = free(i, lambda a: True)
             if j is not None:
-                take(i, j, STAYS if (want == "exact" or threat in removed) else CHANGED)
+                # kept as it was only when it is the same arrow; a kept
+                # recommendation that names the removed hazard and now
+                # protects other things is adjusted like any other
+                take(i, j, STAYS if same(i, after_recs[j]) else CHANGED)
     # THE SAME VICTIM UNDER ANOTHER HAZARD WORD (B_pool ui_b3ada51c, Sunny,
     # 2026-11-20): before, "rescue the child" named the pool as its hazard;
     # after the edit the model named the child itself. No recommendation
@@ -240,7 +272,8 @@ def _match_column(base: list[dict], after_recs: list[dict], removed: set[str],
             if j is not None:
                 used.add(j)
             cells[i] = {"state": STAYS, "named_removed": False,
-                        "after": after_recs[k]["rec"], "hazard_renamed": True}
+                        "after": after_recs[k]["rec"], "after_quad": after_recs[k]["quad"],
+                        "hazard_renamed": True}
     for i, rec in enumerate(base):
         if cells[i] is not None:
             continue
@@ -256,18 +289,36 @@ def _match_column(base: list[dict], after_recs: list[dict], removed: set[str],
         # nothing of its own left to compare by, and the older rule stands:
         # its hazard still has a recommendation, so it reads kept, adjusted.)
         nothing_left = bool(affected) and not (affected - removed)
-        shared = next((a for a in after_recs
-                       if a["quad"][0] == threat
-                       and (nothing_left or (a["quad"][2] & affected))), None)
+        shared = None if only_the_victim(i) else next(
+            (a for a in after_recs if a["quad"][0] == threat
+             and (nothing_left or (a["quad"][2] & affected))), None)
         if shared is not None:                  # its hazard still has advice
+            # a borrowed counterpart is another recommendation's: how close
+            # the two are cannot be told, so it reads as before (kept when
+            # it names the removed hazard, else adjusted, in full)
             cells[i] = {"state": STAYS if threat in removed else CHANGED,
-                        "named_removed": threat in removed, "after": shared["rec"]}
+                        "named_removed": threat in removed, "after": shared["rec"],
+                        "borrowed": True}
         elif threat in removed:
             cells[i] = {"state": GONE, "named_removed": True, "after": None}
         elif affected and not (affected - removed):
             cells[i] = {"state": TARGET_REMOVED, "named_removed": False, "after": None}
         else:
             cells[i] = {"state": GONE, "named_removed": False, "after": None}
+    # what each recommendation still protected, and how far its counterpart
+    # is from that: 0 = the same things, 1 = none of them (impact_detail)
+    for i, c in enumerate(cells):
+        if c is None or c.get("after_quad") is None:
+            continue
+        _t, effect, affected = quads[i]
+        left = affected - removed
+        now = frozenset(c["after_quad"][2])
+        c["effect_changed"] = c["after_quad"][1] != effect
+        c["targets_kept"], c["targets_before"] = len(left & now), len(left)
+        c["targets_new"] = len(now - left)
+        union = left | now
+        c["target_shift"] = round(1.0 - len(left & now) / len(union), 3) if union else 0.0
+        del c["after_quad"]
     return [c for c in cells if c is not None], used   # type: ignore[return-value]
 
 
@@ -312,8 +363,28 @@ def impact_detail(rec: Any, cell: Any, n: int) -> dict:
     after = cell.get("after") if isinstance(cell.get("after"), dict) else {}
     total, reasons = 0.0, []
     if state == CHANGED:
-        total += IMPACT["target or effect"]
-        reasons.append({"text": "target or effect changed", "way": ""})
+        # by how much: losing one target of four is not losing all of them
+        # (H ui_4a253340: both read 0.40). A changed effect word counts as
+        # half. A cell that does not say (an older record) counts in full.
+        shift = cell.get("target_shift")
+        if isinstance(shift, (int, float)) and not isinstance(shift, bool):
+            part = max(float(shift), 0.5 if cell.get("effect_changed") else 0.0)
+            kept, was = cell.get("targets_kept"), cell.get("targets_before")
+            if part >= 1.0 or not was:
+                text = "target or effect changed"
+            else:
+                bits = []
+                if shift > 0:
+                    new_n = cell.get("targets_new") or 0
+                    bits.append(f"{kept} of {was} targets kept"
+                                + (f", {new_n} new" if new_n else ""))
+                if cell.get("effect_changed"):
+                    bits.append("effect changed")
+                text = " \u00b7 ".join(bits) or "target or effect changed"
+        else:
+            part, text = 1.0, "target or effect changed"
+        total += IMPACT["target or effect"] * part
+        reasons.append({"text": text, "way": ""})
     if cell.get("hazard_renamed"):
         # said, not charged: the recommendation is the same one
         reasons.append({"text": "same victim, the hazard is no longer named", "way": ""})
@@ -349,6 +420,41 @@ def _verdict(cells: list[dict]) -> str:
     if any(cell_label(c) == SPURIOUS for c in cells):
         return SPURIOUS
     return UNTESTED
+
+
+# A recommendation the try was NOT about should not change at all. What
+# it did instead, in plain words (Sunny, 2026-11-23: "demoting rec 1 to 2
+# when we put out the car fire..." read "correctly ignored").
+UNAFFECTED, DEMOTED, PROMOTED, REAIMED = "unaffected", "demoted", "promoted", "re-aimed"
+NO_CAUSE = "dropped without cause"
+REAIMED_FROM = 0.5          # more than half of what it protected is other things now
+
+
+def spill(cell: Any) -> str:
+    """'' for a cell the try WAS about (or bookkeeping). Else one of:
+    unaffected / demoted (later, smaller) / promoted (sooner, bigger) /
+    re-aimed (now protects other things) / dropped without cause; two can
+    come together ("re-aimed, demoted"). A change of rank alone is
+    unaffected: when a recommendation is dropped, the ones below it all
+    move up with no decision behind it. Never raises."""
+    cell = cell if isinstance(cell, dict) else {}
+    state = cell.get("state")
+    if cell.get("named_removed") or state == TARGET_REMOVED or state is None:
+        return ""
+    if state == GONE:
+        return NO_CAUSE
+    words = []
+    shift = cell.get("target_shift")
+    if state == CHANGED and (not isinstance(shift, (int, float)) or shift > REAIMED_FROM):
+        words.append(REAIMED)
+    way = cell.get("way")
+    if way == EASED:
+        words.append(DEMOTED)
+    elif way == ESCALATED:
+        words.append(PROMOTED)
+    elif way == MIXED_WAY:
+        words += [DEMOTED, PROMOTED]
+    return ", ".join(words) or UNAFFECTED
 
 
 def _place_flags(result: Any) -> list[dict]:
@@ -427,9 +533,10 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
         whole = {same4.key(h, grp) for h in rset
                  if h in grp and all(m in rset for m in grp[h])}
         left_behind = sorted({m for h in rset if h in grp for m in grp[h] if m not in rset})
-        col_cells, used = _match_column(base, after_recs, rset | whole, name)
         target = str(one.get("target") or "")
         is_victim = bool(target) and iv4.is_victim(before, target)
+        col_cells, used = _match_column(base, after_recs, rset | whole, name,
+                                        victims={target} if is_victim else None)
         if is_victim:
             lab = {str(o.get("label") or "") for o in before["detected_objects"]
                    if str(o.get("object_id") or "") == target}
@@ -437,7 +544,8 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
             lab = {x for x in lab if x and sum(1 for o in before["detected_objects"]
                                                if str(o.get("label") or "") == x) == 1}
             _victim_cells(col_cells, base, {target}, lab,
-                          stays=one.get("kind") == "dealt with")
+                          stays=one.get("kind") == "dealt with",
+                          after_recs=after_recs, name=name)
         n_recs = max(len(base), len(after_recs))
         # objects whose match between the two runs is a guess (align4): a
         # recommendation that names one is read with that doubt
@@ -450,6 +558,7 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
             c["impact"], c["why"] = det["value"], [r["text"] for r in det["reasons"]]
             c["way"], c["reasons"] = det["way"], det["reasons"]
             c["label"] = cell_label(c)            # after the way: a dealt-with hazard reads it
+            c["spill"] = spill(c)
             cells_by_row[i].append(c)
         counted = [c for c in col_cells if c["state"] != TARGET_REMOVED]
         moved = sum(1 for c in counted if c["state"] in (GONE, CHANGED))
@@ -479,10 +588,18 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
     rows = []
     for rec, cells in zip(base, cells_by_row):
         threat, effect, affected = _quad(rec)
+        # what the tries that were NOT about it did to it: the READING is
+        # read off the tries that were, and one good column hid a drop
+        # without cause in another (H: #5 read "grounded")
+        spilled: dict[str, int] = {}
+        for c in cells:
+            for w in str(c.get("spill") or "").split(", "):
+                if w and w != UNAFFECTED:
+                    spilled[w] = spilled.get(w, 0) + 1
         rows.append({"rank": rec.get("rank"), "action": str(rec.get("action") or ""),
                      "threat": threat, "effect": effect, "affected": sorted(affected),
                      "same_as": [m for m in grp.get(threat, ()) if m != threat],
-                     "cells": cells, "verdict": _verdict(cells)})
+                     "cells": cells, "verdict": _verdict(cells), "spill": spilled})
     return {"rows": rows, "columns": columns, "shift": shift_summary(rows),
             "place_flags": _place_flags(before),
             "same_hazards": sorted({grp[h] for h in grp})}
