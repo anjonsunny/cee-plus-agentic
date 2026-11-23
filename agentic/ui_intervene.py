@@ -174,6 +174,33 @@ def small_image(path: Any, width: int = 520) -> str | None:
         return None
 
 
+def state_options() -> list[dict]:
+    """The state words the model may use, for the INTENDED dropdown. This
+    is the list perception already works with; nothing new to keep up."""
+    try:
+        from agentic import perception as p
+        words = (set(p.NORMAL_STATES) | set(p.AT_RISK_STATES) | set(p.HAZARD_BEARING_STATES)
+                 | set(p.EXTRA_NORMAL_STATES) | set(p.EXTRA_AT_RISK_STATES)
+                 | set(p.EXTRA_HAZARD_BEARING_STATES))
+    except Exception:
+        words = set()
+    return [{"label": w.replace("_", " "), "value": w} for w in sorted(str(x) for x in words if x)]
+
+
+def state_of(info: Any, target: Any) -> str:
+    """The state the run gave the picked thing ('' when unknown)."""
+    for c in ((info or {}).get("candidates") or []) if isinstance(info, dict) else []:
+        if isinstance(c, dict) and str(c.get("object_id")) == str(target or ""):
+            return str(c.get("state") or "")
+    return ""
+
+
+EDIT_COL = {"edit seen": "#16a34a", "edit seen, not as intended": "#b45309",
+            "edit not seen": "#b91c1c"}
+EDIT_TIP = ("did the model see the edit that was meant? It is read off the state the edited "
+            "run gave the same object (and whether it moved). A try the model did not see is "
+            "not a fair test, whatever its recommendations did.")
+
 PICK_OTHER, PICK_PICKED = "#facc15", "#22c55e"      # yellow: can be picked; green: the pick
 
 
@@ -434,6 +461,8 @@ def finish_try(base_dir: Path, after_dir: Path | None, pending: dict,
         "at": _dt.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
         "target": pending.get("target"),
         "kind": kind_of(pending), "mode": KIND_MODE[kind_of(pending)],
+        # the state the editor MEANT the thing to have after the edit (optional)
+        "intended_state": str(pending.get("intended_state") or "").strip().lower(),
         "modality": pending.get("modality"),
         "edit_source": pending.get("edit_source", "hand"),
         "caption_changed": bool(pending.get("caption_changed")),
@@ -726,7 +755,16 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
                           title="this try took out something that can be harmed, not a hazard; "
                                 "every hazard stayed",
                           style={"fontWeight": "400", "color": "#64748b"})]
-               if c.get("victim") else []),
+               if c.get("victim") else [])
+            # did the model see the edit: said either way (Sunny: "if the
+            # model saw it then you should say it too")
+            + ([html.Div(head_word, className="iv-edit-seen",
+                         title=str((c.get("edit") or {}).get("text") or "") + "  |  " + EDIT_TIP,
+                         **{"data-seen": "yes" if (c.get("edit") or {}).get("seen") else "no"},
+                         style={"fontWeight": "700", "fontSize": "10.5px",
+                                "color": EDIT_COL.get(head_word, "#64748b")})]
+               if (head_word := str((c.get("edit") if isinstance(c.get("edit"), dict)
+                                     else {}).get("head") or "")) else []),
             style=_TH))
     head.append(html.Th("READING (ONE ASK)", style=_TH))
     body = []

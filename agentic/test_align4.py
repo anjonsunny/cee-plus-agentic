@@ -436,23 +436,25 @@ def test_a_changed_target_counts_by_how_much_and_also_when_the_hazard_was_dealt_
     car = {"index": 1, "target": "car_1", "kind": "dealt with"}
     one = g.table(b, [(car, after(["house_2", "tree_1", "bush_1"]))])["rows"][2]["cells"][0]
     three = g.table(b, [(car, after(["house_2"]))])["rows"][2]["cells"][0]
-    assert one["impact"] == pytest.approx(0.4 * 0.25) and three["impact"] == pytest.approx(0.4 * 0.75)
+    T = g.IMPACT["target or effect"]
+    assert one["impact"] == pytest.approx(T * 0.25, abs=0.001)
+    assert three["impact"] == pytest.approx(T * 0.75, abs=0.001)
     assert one["why"] == ["3 of 4 targets kept"] and one["spill"] == "unaffected"
     assert three["spill"] == "re-aimed"
     # the same change in the column of the hazard that WAS dealt with is charged too
     house = {"index": 1, "target": "house_1", "kind": "dealt with"}
     named = g.table(b, [(house, after(["house_2"]))])["rows"][2]["cells"][0]
     assert named["named_removed"] is True and named["state"] == "changed"
-    assert named["impact"] == pytest.approx(0.4 * 0.75)
+    assert named["impact"] == pytest.approx(T * 0.75, abs=0.001)
     # only the effect word changed: half
     eff = {**b, "recommendations": [b["recommendations"][0], b["recommendations"][1],
                                     {**b["recommendations"][2], "structured_reasoning": {
                                         **b["recommendations"][2]["structured_reasoning"],
                                         "effect": "threatens"}}]}
     cell = g.table(b, [(car, eff)])["rows"][2]["cells"][0]
-    assert cell["impact"] == pytest.approx(0.2) and cell["why"] == ["effect changed"]
+    assert cell["impact"] == pytest.approx(T / 2) and cell["why"] == ["effect changed"]
     # an older cell that does not say how far counts in full, as before
-    assert g.impact_detail({}, {"state": "changed"}, 3)["value"] == 0.4
+    assert g.impact_detail({}, {"state": "changed"}, 3)["value"] == T
 
 
 def test_what_a_try_did_to_a_recommendation_it_was_not_about_has_a_plain_word():
@@ -597,7 +599,8 @@ def test_nothing_but_the_try_is_under_a_column_picture_and_the_notes_are_folded_
     t = g.table(BEFORE, [(one, align4.aligned(BEFORE, AFTER))])
     comp = ui_iv.table_component(t)
     ths = _by_class(comp, "iv-table")[0].children[0].children.children
-    assert _flat(ths[2]) == "#1 child_1 dealt with \u00b7 victim"          # the try, nothing else
+    # the try, and whether the model saw the edit: nothing else
+    assert _flat(ths[2]) == "#1 child_1 dealt with \u00b7 victim edit seen"
     (notes,) = _by_class(comp, "iv-notes")
     assert notes.open is False and "matched by its place in the picture" in _flat(notes)
     assert _flat(_by_class(notes, "iv-renamed")).startswith("#1 child_1: matched by")
@@ -607,3 +610,105 @@ def test_nothing_but_the_try_is_under_a_column_picture_and_the_notes_are_folded_
     # a try with nothing to say: no fold at all
     assert ui_iv.column_notes([{"index": 1, "target": "x"}, None, "y"]) == []
     assert ui_iv.column_notes(None) == []
+
+
+# ── did the model see the edit that was meant? ──
+
+def _seen_pair(after_state="burnt", box=None, gone=False, how="same place"):
+    b = {"detected_objects": [{**_o("house_1", [0, 0, 9, 9]), "state": "burning"},
+                              {**_o("man_1", [40, 0, 49, 9]), "state": "standing"}]}
+    objs = [] if gone else [{**_o("house_1", [0, 0, 9, 9]), "state": after_state}]
+    a = {"detected_objects": objs + [{**_o("man_1", box or [40, 0, 49, 9]), "state": "standing"}],
+         "tracks": {"pairs": [{"before": "house_1", "after": "house_1", "how": "same place"},
+                              {"before": "man_1", "after": "man_1", "how": how}]}}
+    return b, a
+
+
+def test_the_intended_state_is_compared_with_the_state_the_model_saw():
+    """Sunny, 2026-11-23: "we want to check whether the meant edit is the
+    same as what the model has seen after edit... I also meant the state"."""
+    one = {"target": "house_1", "kind": "dealt with", "intended_state": "Burnt"}
+    b, a = _seen_pair("burnt")
+    e = g.edit_seen(b, a, one)
+    assert (e["seen"], e["as_intended"], e["head"]) == (True, True, "edit seen")
+    assert e["text"] == "intended: burnt \u00b7 model saw: burnt \u2713"
+    # another new state: seen, but not as intended
+    e = g.edit_seen(*_seen_pair("intact"), one)
+    assert (e["seen"], e["as_intended"], e["head"]) == (True, False, "edit seen, not as intended")
+    assert e["text"].endswith("model saw: intact \u2717 changed, but not as intended")
+    # the old state: the model did not see the edit, so the try is not a fair test
+    e = g.edit_seen(*_seen_pair("burning"), one)
+    assert (e["seen"], e["head"]) == (False, "edit not seen")
+    assert e["text"] == "intended: burnt \u00b7 model saw: still burning \u2717 not a fair test"
+    # nothing was intended: only whether the state changed
+    plain = {"target": "house_1", "kind": "dealt with"}
+    e = g.edit_seen(*_seen_pair("burnt"), plain)
+    assert (e["seen"], e["as_intended"]) == (True, None)
+    assert e["text"] == "model saw: burning \u2192 burnt \u2713"
+    assert g.edit_seen(*_seen_pair("burning"), plain)["seen"] is False
+
+
+def test_a_moved_victim_keeps_its_state_and_a_removed_thing_must_be_gone():
+    man = {"target": "man_1", "kind": "dealt with", "intended_state": "standing"}
+    # moved (its box is somewhere else): seen, as intended, though the state is
+    # the same; however the tracking matched it (H: "the only one of its kind")
+    e = g.edit_seen(*_seen_pair(how="the only one of its kind", box=[90, 0, 99, 9]), man)
+    assert (e["seen"], e["as_intended"], e["saw"]) == (True, True, "moved")
+    # in the same place with the same state: not seen
+    assert g.edit_seen(*_seen_pair(), man)["seen"] is False
+    # removed: gone is seen; still there in the same state is not
+    gone = {"target": "house_1"}
+    e = g.edit_seen(*_seen_pair(gone=True), gone)
+    assert (e["seen"], e["text"]) == (
+        True, "intended: not in the picture \u00b7 model saw: not in the picture \u2713")
+    assert g.edit_seen(*_seen_pair("burning"), gone)["head"] == "edit not seen"
+    assert g.edit_seen(*_seen_pair("intact"), gone)["seen"] is True    # there, no longer burning
+    # dealt with, and it vanished: seen, not as intended
+    e = g.edit_seen(*_seen_pair(gone=True), {"target": "house_1", "kind": "dealt with",
+                                             "intended_state": "burnt"})
+    assert (e["seen"], e["as_intended"]) == (True, False)
+    # a target the before run does not have, and nonsense: says nothing, never raises
+    for bad_one in (None, {}, {"target": "ghost_9"}, {"target": 3, "intended_state": 7}):
+        assert g.edit_seen(*_seen_pair(), bad_one)["text"] == ""
+    for bad in (None, "x", {}, {"detected_objects": "zz", "tracks": 3}):
+        assert isinstance(g.edit_seen(bad, bad, {"target": "house_1"}), dict)
+
+
+def test_the_form_asks_for_the_intended_state_and_the_result_is_shown_either_way(tmp_path):
+    from agentic import ui, ui_intervene as ui_iv, ui_who
+    from agentic.test_ui_views import _find
+    box, anc = _find(ui.app.layout, "iv-intended")
+    assert box.value is None and len(box.options) > 20                  # the model's own state words
+    assert {"burning", "burnt", "intact"} <= {o["value"] for o in box.options}
+    left = [x for x in anc if getattr(x, "className", "") == "iv-form-rows"][0]
+    order = [str(k) for k in left.children]
+    assert order.index(next(x for x in order if "iv-kind" in x)) < order.index(
+        next(x for x in order if "iv-intended" in x)) < order.index(
+        next(x for x in order if "iv-modality" in x))
+    # the row follows the pick; a "removed" try has nothing to choose
+    from unittest.mock import patch
+    info = {"candidates": [{"object_id": "house_1", "state": "burning"}, None]}
+    with patch.object(ui, "_iv_info", lambda r: info):
+        assert ui.iv_intended("house_1", "dealt with", "base") == ("burning \u2192 ", None, False)
+        assert ui.iv_intended("house_1", "removed", "base") == ("not in the picture", None, True)
+        assert ui.iv_intended("ghost_9", "dealt with", "base") == ("", None, False)
+    # saved with the try
+    one = ui_iv.finish_try(tmp_path, None, {"target": "house_1", "kind": "dealt with",
+                                            "intended_state": " Burnt "}, error="x")
+    assert one["intended_state"] == "burnt"
+    assert ui_iv.finish_try(tmp_path, None, {"target": "house_1"}, error="x")["intended_state"] == ""
+    # said in the column head whether it was seen or not
+    b, a = _seen_pair("burnt")
+    b["recommendations"] = [_rec(1, "house_1", ["man_1"])]
+    t = g.table(b, [({"index": 1, "target": "house_1", "kind": "dealt with",
+                      "intended_state": "burnt"}, {**a, "recommendations": []})])
+    (mark,) = _by_class(ui_iv.table_component(t), "iv-edit-seen")
+    assert _flat(mark) == "edit seen" and mark.style["color"] == "#16a34a"
+    assert "intended: burnt" in mark.title
+    b2, a2 = _seen_pair("burning")
+    b2["recommendations"] = b["recommendations"]
+    t = g.table(b2, [({"index": 1, "target": "house_1", "kind": "dealt with",
+                       "intended_state": "burnt"}, {**a2, "recommendations": []})])
+    (mark,) = _by_class(ui_iv.table_component(t), "iv-edit-seen")
+    assert _flat(mark) == "edit not seen" and mark.style["color"] == "#b91c1c"
+    assert ui_iv.state_of(None, "x") == "" and ui_iv.state_options()

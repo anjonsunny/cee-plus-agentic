@@ -104,7 +104,8 @@ def test_a_recommendation_that_changed_hands_in_a_flagged_run_is_marked_not_remo
     assert len(t["columns"][0]["place_flags"]) == 1
     by = {r["rank"]: r["cells"][0] for r in t["rows"]}
     assert by[1]["mixup"] is True and by[2]["mixup"] is True
-    assert by[2]["spill"] == "re-aimed" and by[2]["impact"] == 0.4     # still counted in full
+    assert by[2]["spill"] == "re-aimed"
+    assert by[2]["impact"] == g.IMPACT["target or effect"]              # still counted in full
     assert by[3]["mixup"] is False                                     # it names neither person
     comp = ui_iv.table_component(t)
     marks = _by_class(comp, "iv-mixup")

@@ -920,7 +920,7 @@ def test_the_tile_says_how_much_the_recommendations_changed_named_and_other():
             "recommendations": [_rec(1, "spill_1", ["man_1"], "Keep man_1 clear of spill_1.")]}
     t = g.table(b, [({"index": 1, "target": "fire_1"}, gone)])
     assert t["shift"]["named"] == 1.0                                  # both fire ones dropped
-    assert t["shift"]["other"] == pytest.approx(0.1)                   # the spill one: rank 2 -> 1
+    assert t["shift"]["other"] == pytest.approx(g.IMPACT["rank"] / 2)   # the spill one: rank 2 -> 1
     tile = _by_class(ui_iv.card_component(declared4.compare(b, []), t), "iv-tied")[0]
     assert len(_by_class(tile, "iv-shift")) == 2 and "should be high" in _by_class(
         tile, "iv-shift")[0].title

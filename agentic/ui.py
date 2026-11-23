@@ -6575,6 +6575,22 @@ app.layout = html.Div([
                                                "value": ui_intervene.REMOVED}],
                                           className="ctl-toggle"),
                                   ], className="iv-row-form"),
+                                  # the state the thing is MEANT to have after the
+                                  # edit; afterwards the model's own word for it is
+                                  # compared with this (optional)
+                                  html.Div([
+                                      html.Span("intended", className="iv-lbl"),
+                                      html.Span(id="iv-intended-from",
+                                                style={"fontSize": "11.5px", "color": "#64748b",
+                                                       "whiteSpace": "nowrap"}),
+                                      dcc.Dropdown(id="iv-intended",
+                                                   options=ui_intervene.state_options(),
+                                                   value=None, clearable=True,
+                                                   placeholder="its state after the edit "
+                                                               "(optional)",
+                                                   style={"flex": "1", "fontSize": "11.5px",
+                                                          "color": "#111"}),
+                                  ], className="iv-row-form"),
                                   html.Div([
                                       html.Span("changed", className="iv-lbl"),
                                       dcc.RadioItems(
@@ -6790,6 +6806,21 @@ def iv_setup(run_id, _n, current, value):
     return opts, keep, {"display": "block"}, note
 
 
+@app.callback(Output("iv-intended-from", "children"), Output("iv-intended", "value"),
+              Output("iv-intended", "disabled"),
+              Input("iv-target", "value"), Input("iv-kind", "value"),
+              State("run-id", "data"))
+def iv_intended(target, kind, run_id):
+    """The INTENDED row follows the pick: "burning →", an empty choice, and
+    switched off for a "removed" try (there the intended state is simply:
+    not in the picture)."""
+    from agentic import ui_intervene
+    was = ui_intervene.state_of(_iv_info(run_id), target)
+    if ui_intervene.kind_of(kind) != ui_intervene.DEALT_WITH:
+        return "not in the picture", None, True
+    return (f"{was} \u2192 " if was else ""), None, False
+
+
 @app.callback(Output("iv-picker", "children"),
               Input("iv-target", "value"), Input("iv-target", "options"),
               State("run-id", "data"))
@@ -6867,7 +6898,7 @@ def iv_show_channel(modality):
 
 def iv_start(run_id: str | None, target: str | None, modality: str | None,
              caption: str | None, upload: str | None, filename: str | None,
-             kind: str | None = None) -> str:
+             kind: str | None = None, intended: str | None = None) -> str:
     """Start the after run for one try. Returns "" on success or a plain
     reason. No model is called when the try is not valid."""
     from agentic import ui_intervene
@@ -6901,6 +6932,8 @@ def iv_start(run_id: str | None, target: str | None, modality: str | None,
     kind = ui_intervene.kind_of(kind)
     origin = {"before_run": info["run"], "target": str(target), "modality": modality,
               "kind": kind, "mode": ui_intervene.KIND_MODE[kind], "edit_source": "hand"}
+    if intended and kind == ui_intervene.DEALT_WITH:
+        origin["intended_state"] = str(intended).strip().lower()
     after_id = start_live_run(image_bytes, name, plan["caption"],
                               settings=S, after_of=origin)
     IV_ACTIVE[info["run"]] = {
@@ -6916,12 +6949,12 @@ def iv_start(run_id: str | None, target: str | None, modality: str | None,
               State("run-id", "data"), State("iv-target", "value"),
               State("iv-modality", "value"), State("iv-caption", "value"),
               State("iv-upload", "contents"), State("iv-upload", "filename"),
-              State("iv-kind", "value"),
+              State("iv-kind", "value"), State("iv-intended", "value"),
               prevent_initial_call=True)
-def iv_run(n, run_id, target, modality, caption, upload, filename, kind=None):
+def iv_run(n, run_id, target, modality, caption, upload, filename, kind=None, intended=None):
     if not n:
         return dash.no_update, dash.no_update
-    why = iv_start(run_id, target, modality, caption, upload, filename, kind)
+    why = iv_start(run_id, target, modality, caption, upload, filename, kind, intended)
     # started: the form folds away and the running line shows on top
     return why, (dash.no_update if why else False)
 

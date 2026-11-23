@@ -339,7 +339,10 @@ def _match_column(base: list[dict], after_recs: list[dict], removed: set[str],
 # is kept can still change: its target or effect, how soon, how big the
 # hazard it names is, its rank. The four shares add up to 1 and are
 # priors, the one place to change them.
-IMPACT = {"target or effect": 0.4, "how soon": 0.25, "size": 0.15, "rank": 0.2}
+# 2026-11-23 (Sunny: "that itself can be another shift signal"): the STATE
+# the recommendation gives its hazard is a fifth part (burning -> burnt).
+IMPACT = {"target or effect": 0.35, "how soon": 0.2, "size": 0.15, "rank": 0.15,
+          "state": 0.15}
 _SOON, _SIZE = ("now", "minutes", "later"), ("small", "medium", "large")
 
 
@@ -347,6 +350,12 @@ def _field(rec: Any, key: str, allowed: tuple) -> str:
     q = rec.get("structured_reasoning") if isinstance(rec, dict) else None
     v = q.get(key) if isinstance(q, dict) else None
     return v if isinstance(v, str) and v in allowed else ""
+
+
+def _state(rec: Any) -> str:
+    q = rec.get("structured_reasoning") if isinstance(rec, dict) else None
+    v = q.get("state") if isinstance(q, dict) else None
+    return v.strip().lower() if isinstance(v, str) else ""
 
 
 def _rank(rec: Any) -> Any:
@@ -408,6 +417,11 @@ def impact_detail(rec: Any, cell: Any, n: int) -> dict:
             total += IMPACT[name] * abs(step) / (len(allowed) - 1)
             reasons.append({"text": f"{b} \u2192 {a}",
                             "way": EASED if (step > 0) == eased_when_up else ESCALATED})
+    # the state it gives its hazard: a change with no direction of its own
+    sb, sa = _state(rec), _state(after)
+    if sb and sa and sb != sa:
+        total += IMPACT["state"]
+        reasons.append({"text": f"{sb} \u2192 {sa}", "way": ""})
     rb, ra = _rank(rec), _rank(after)
     if rb is not None and ra is not None and rb != ra:
         total += IMPACT["rank"] * min(1.0, abs(rb - ra) / max(1, n - 1))
@@ -477,6 +491,85 @@ def spill(cell: Any) -> str:
     elif way == MIXED_WAY:
         words += [DEMOTED, PROMOTED]
     return ", ".join(words) or UNAFFECTED
+
+
+def edit_seen(before: Any, after: Any, one: Any) -> dict:
+    """Did the model see the edit that was MEANT (Sunny, 2026-11-23: "we
+    want to check whether the meant edit is the same as what the model has
+    seen after edit")? A try the model did not see is not a fair test,
+    whatever its recommendations did.
+
+    `one` is the try: its target, its kind, and the state the editor
+    intended (`intended_state`, optional). `after` is the edited run in the
+    before run's names (agentic/align4.py). Returns
+      {"seen": bool, "as_intended": True | False | None (no state was
+       intended), "was", "intended", "saw", "moved", "head", "text"}.
+    Removed: seen when it is gone (or no longer in that state). Dealt with:
+    seen when its state changed, or when it moved (a victim moved to safety
+    often keeps its state). Never raises."""
+    one = one if isinstance(one, dict) else {}
+    target = str(one.get("target") or "")
+    removed = one.get("kind") != "dealt with"
+    intended = str(one.get("intended_state") or "").strip().lower()
+
+    def obj_of(result: Any) -> Any:
+        for o in (result.get("detected_objects") if isinstance(result, dict) else None) or []:
+            if isinstance(o, dict) and str(o.get("object_id") or "") == target:
+                return o
+        return None
+
+    def state_of(result: Any) -> Any:
+        o = obj_of(result)
+        return str(o.get("state") or "").strip().lower() if o is not None else None
+    was, now = state_of(before), state_of(after)
+    # moved: its box in the edited picture no longer overlaps the old one by
+    # half (the same measure the tracking uses for "the same place")
+    moved = False
+    try:
+        from agentic import align4
+        ob, oa = obj_of(before), obj_of(after)
+        sb = before.get("image_size") if isinstance(before, dict) else None
+        sa = after.get("image_size") if isinstance(after, dict) else None
+        if not (sb and sa):
+            sb = sa = None
+        bb, ba = align4._box(ob or {}, sb), align4._box(oa or {}, sa)
+        moved = bool(bb and ba) and align4.iou(bb, ba) < align4.IOU_SAME
+    except Exception:
+        moved = False
+    gone = now is None
+    saw = "not in the picture" if gone else ("moved" if moved and now == was else now)
+    if removed:
+        seen = gone or now != was
+        as_intended: Any = seen
+        wanted = "not in the picture"
+    elif intended:
+        wanted = intended
+        if gone:
+            seen, as_intended = True, False
+        elif now == intended:
+            # the same state as before was intended (a moved victim): it must have moved
+            seen = as_intended = (now != was) or moved
+        else:
+            seen, as_intended = (now != was) or moved, False
+    else:
+        wanted = ""
+        seen, as_intended = gone or now != was or moved, None
+    if not target or was is None:
+        return {"seen": True, "as_intended": None, "was": was, "intended": wanted,
+                "saw": saw, "moved": moved, "head": "", "text": ""}
+    if not seen:
+        head = "edit not seen"
+        text = ((f"intended: {wanted} \u00b7 " if wanted else "")
+                + f"model saw: still {was} \u2717 not a fair test")
+    elif as_intended is False:
+        head = "edit seen, not as intended"
+        text = f"intended: {wanted} \u00b7 model saw: {saw} \u2717 changed, but not as intended"
+    else:
+        head = "edit seen"
+        text = ((f"intended: {wanted} \u00b7 model saw: {saw} \u2713") if wanted
+                else f"model saw: {was} \u2192 {saw} \u2713")
+    return {"seen": seen, "as_intended": as_intended, "was": was, "intended": wanted,
+            "saw": saw, "moved": moved, "head": head, "text": text}
 
 
 def _place_flags(result: Any) -> list[dict]:
@@ -617,6 +710,8 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
             # a flag only: its words put someone where the picture does not
             # have them (agentic/place4.py)
             "place_flags": flags,
+            # did the model see the edit that was meant?
+            "edit": edit_seen(before, after, one),
             "kind": "dealt with" if one.get("kind") == "dealt with" else "removed",
             "also_removed": [x for x in removed if x != str(one.get("target") or "")],
             "left_behind": left_behind,

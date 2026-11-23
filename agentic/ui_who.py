@@ -219,6 +219,18 @@ def component(before: Any, pairs: Any, title_style: dict | None = None) -> list:
                                        "color": "#16a34a" if not s["not sure"] else "#b45309"}),
                       html.Span(f" · same place {s['same place']}"
                                 + (f" · by looks {s['by looks']}" if s["by looks"] else ""))]
+        # did the model see the edit that was meant?
+        try:
+            from agentic import grounding4
+            seen = grounding4.edit_seen(before, after, t)
+        except Exception:
+            seen = {}
+        if seen.get("text"):
+            foot.append(html.Div(seen["text"], className="who-edit",
+                                 title=ui_intervene.EDIT_TIP,
+                                 style={"fontWeight": "700",
+                                        "color": ui_intervene.EDIT_COL.get(seen.get("head"),
+                                                                           "#64748b")}))
         if unsure:
             foot.append(html.Div("not sure (a guess, dashed): " + ", ".join(sorted(unsure)),
                                  className="who-unsure", style={"color": "#b45309"}))
