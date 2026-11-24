@@ -1205,9 +1205,9 @@ def test_said_more_done_more_and_more_alarmed_are_named():
     # a hazard removed twice counts once; a removed thing it never declared is listed
     twice = d.compare(D_BEFORE, [_try("fire_1", 0.2), _try("fire_1", 0.6),
                                  _try("smoke_9", 0.4)])
-    # (the fixture's graphs are empty, so the graph third of the signed shift
-    # adds nothing: 0.6 on level and advice averages to 0.4)
-    assert d.mechanistic(D_BEFORE, [_try("fire_1", 0.2), _try("fire_1", 0.6)]) == {"fire_1": 0.4}
+    # (the fixture's graphs are empty, so the graph third has no direction: it is
+    # "redirected" and counts in how much, 2026-11-24; all three parts read 0.6)
+    assert d.mechanistic(D_BEFORE, [_try("fire_1", 0.2), _try("fire_1", 0.6)]) == {"fire_1": 0.6}
     assert twice["removed"] == 2 and twice["tested"] == 1
     for bad in (None, "x", {}):
         assert d.compare(bad, [(None, bad), ("x", None)])["score"] is None

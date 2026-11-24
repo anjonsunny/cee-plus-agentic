@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agentic import chain4, intervention4 as iv4, same4
+from agentic import chain4, intervention4 as iv4, parts4, same4
 
 APART = 0.15            # shares further apart than this do not "match"
 MATCH, SAID_MORE, DONE_MORE = "matches", "said more than done", "done more than said"
@@ -556,6 +556,24 @@ def graph_part(before: Any, after: Any) -> Any:
     return round(1.0 - len(b & a) / len(b | a), 3)
 
 
+def _state_ids(before: Any) -> set[str]:
+    """The threats and those at risk of the before run (those the
+    assessment listed; the things its arrows end at when it listed none)."""
+    r = iv4.clean_result(before)
+    want = set(iv4.hazards_of(r))
+    risk = {str(x.get("object_id") or "") for x in (r.get("at_risk") or [])
+            if isinstance(x, dict)}
+    if not risk and not isinstance((before or {}).get("at_risk"), list):
+        risk = {v["object_id"] for v in iv4.victims_of(r)}
+    return {x for x in want | risk if x}
+
+
+def own_part(before: Any, pair: Any) -> Any:
+    """The fifth part, the tried object itself (agentic/parts4.py). A
+    function of its own so a test of the other parts can switch it off."""
+    return parts4.itself(before, pair)
+
+
 def state_part(before: Any, after: Any) -> Any:
     """Of the threats and those at risk in the before run, the share whose
     STATE is different in the edited run (one that is gone counts as
@@ -563,12 +581,7 @@ def state_part(before: Any, after: Any) -> Any:
     in the before run's names (agentic/align4.py)."""
     try:
         r = iv4.clean_result(before)
-        want = set(iv4.hazards_of(r))
-        risk = {str(x.get("object_id") or "") for x in (r.get("at_risk") or [])
-                if isinstance(x, dict)}
-        if not risk and not isinstance((before or {}).get("at_risk"), list):
-            risk = {v["object_id"] for v in iv4.victims_of(r)}
-        want |= risk
+        want = _state_ids(before)
         was = {str(o.get("object_id") or ""): str(o.get("state") or "").strip().lower()
                for o in r["detected_objects"]}
         now = {str(o.get("object_id") or ""): str(o.get("state") or "").strip().lower()
@@ -592,9 +605,7 @@ def try_reading(before: Any, pair: Any) -> Any:
         one = one if isinstance(one, dict) else {}
         sg = chain4.signed_shift(one.get("signals"), chain4.direction(before, after))
         signed = float(sg["value"])
-        parts = [{"name": PART_NAMES.get(str(p.get("signal")), str(p.get("signal"))),
-                  "signed": round(float(p.get("signed") or 0.0), 3)}
-                 for p in sg["parts"] if isinstance(p, dict)]
+        raw = [p for p in sg["parts"] if isinstance(p, dict)]
     except Exception:
         return None
     # the graph part: who threatens whom, WITHOUT the state; and the state
@@ -604,18 +615,40 @@ def try_reading(before: Any, pair: Any) -> Any:
         g_size, s_size = graph_part(before, after), state_part(before, after)
     except Exception:
         g_size = s_size = None
-    for p in parts:
-        if p["name"] == "graph" and g_size is not None:
-            p["signed"] = round(g_size * (-1.0 if p["signed"] < 0 else 1.0), 3)
+    # every part says HOW MUCH and WHICH DIRECTION (2026-11-24). A part
+    # that changed with no up or down (the urgency the same, the arrows
+    # weigh the same) is "redirected": it counts in how much, and before
+    # this it was dropped from the size or read as eased.
+    parts = []
+    for p in raw:
+        name = PART_NAMES.get(str(p.get("signal")), str(p.get("signal")))
+        size = abs(float(p.get("size") or 0.0))
+        if name == "graph" and g_size is not None:
+            size = g_size
+        sign = float(p.get("sign") or 0.0)
+        parts.append(parts4.part(name, size, parts4.EASED if sign > 0 else
+                                 parts4.ESCALATED if sign < 0 else parts4.REDIRECTED))
     if s_size is not None:
-        parts.append({"name": "state", "signed": s_size})
-    size = (round(sum(abs(p["signed"]) for p in parts) / len(parts), 3)
+        try:
+            s_dir = parts4.state_direction_of(before, after, _state_ids(before))
+        except Exception:
+            s_dir = parts4.CHANGED
+        parts.append(parts4.part("state", s_size, s_dir))
+    # the tried object itself: only for "dealt with" (see agentic/parts4.py)
+    try:
+        own = own_part(before, pair)
+    except Exception:
+        own = None
+    if own is not None:
+        parts.append(own)
+    size = (round(sum(p["size"] for p in parts) / len(parts), 3)
             if parts else abs(signed))
     w = way_of_try(before, pair, signed)
     return {"size": size, "way": w["way"], "counts": w["counts"],
             "direction": w["direction"], "type": w["type"],
             "direction_by": w["direction_by"],
-            "signed": round(signed, 3), "parts": parts}
+            "signed": round(signed, 3), "parts": parts,
+            "agree": parts4.agree(parts)}
 
 
 def _best_tries(before: Any, tries: Any) -> dict[str, dict]:
@@ -643,7 +676,7 @@ def _best_tries(before: Any, tries: Any) -> dict[str, dict]:
         value, parts = rd["size"], rd["parts"]
         extra = {"signed": rd["signed"], "way": rd["way"], "counts": rd["counts"],
                  "direction": rd["direction"], "type": rd["type"],
-                 "direction_by": rd["direction_by"]}
+                 "direction_by": rd["direction_by"], "agree": rd.get("agree")}
         try:
             victim = iv4.is_victim(before, target)
         except Exception:
@@ -792,6 +825,7 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
                      "way": best[h].get("way") if h in best else None,
                      "direction": best[h].get("direction") if h in best else None,
                      "direction_by": best[h].get("direction_by") if h in best else None,
+                     "agree": best[h].get("agree") if h in best else None,
                      "type": best[h].get("type") if h in best else None,
                      "counts": best[h].get("counts") if h in best else None,
                      "signed": best[h].get("signed") if h in best else None,
@@ -867,6 +901,7 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
                 "way": v_best[h].get("way") if h in v_best else None,
                 "direction": v_best[h].get("direction") if h in v_best else None,
                 "direction_by": v_best[h].get("direction_by") if h in v_best else None,
+                "agree": v_best[h].get("agree") if h in v_best else None,
                 "type": v_best[h].get("type") if h in v_best else None,
                 "counts": v_best[h].get("counts") if h in v_best else None,
                 "signed": v_best[h].get("signed") if h in v_best else None,

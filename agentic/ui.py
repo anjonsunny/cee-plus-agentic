@@ -6107,6 +6107,27 @@ app.index_string = """<!DOCTYPE html>
       border-radius:2px; }
   #spot-zoom .spot-thumb-box span { position:absolute; left:-2px; top:-13px; font-size:9px;
       line-height:12px; padding:0 3px; color:#fff; font-weight:700; white-space:nowrap; }
+  /* the parts of a feature row's shift, as bars from a centre line */
+  #parts-pop { position:fixed; z-index:9999; display:none; width:470px; background:#fff;
+      border:1px solid #cbd5e1; border-radius:8px; box-shadow:0 6px 24px #0004;
+      padding:9px 12px 8px; pointer-events:none; font-size:11px; color:#334155; }
+  #parts-pop .pp-head { display:flex; font-size:9.5px; color:#94a3b8; margin-bottom:3px; }
+  #parts-pop .pp-row { display:flex; align-items:center; height:19px; }
+  #parts-pop .pp-row.sub { height:16px; font-size:10px; color:#64748b; }
+  #parts-pop .pp-name { flex:0 0 172px; white-space:nowrap; overflow:hidden;
+      text-overflow:ellipsis; font-weight:700; }
+  #parts-pop .pp-row.sub .pp-name { font-weight:400; padding-left:12px; box-sizing:border-box; }
+  #parts-pop .pp-track { flex:0 0 170px; position:relative; height:11px; }
+  #parts-pop .pp-row.sub .pp-track { height:7px; }
+  #parts-pop .pp-track:before { content:''; position:absolute; left:50%; top:-4px; bottom:-4px;
+      width:1px; background:#94a3b8; }
+  #parts-pop .pp-bar { position:absolute; top:0; bottom:0; border-radius:2px; }
+  #parts-pop .pp-val { flex:1 1 auto; padding-left:8px; white-space:nowrap; font-weight:700; }
+  #parts-pop .pp-was { font-size:9.5px; color:#94a3b8; padding:0 0 2px 12px; white-space:nowrap;
+      overflow:hidden; text-overflow:ellipsis; }
+  #parts-pop .pp-foot { border-top:1px solid #e2e8f0; margin-top:6px; padding-top:5px;
+      font-size:10.5px; color:#475569; }
+  #parts-pop .pp-note { font-size:10px; color:#94a3b8; margin-top:3px; white-space:normal; }
   .scene-all { font-size:11px; color:#64748b; margin:6px 2px 0; }
   .scene-all label { cursor:pointer; }
   /* clean view: the agent dock is one input line; the transcript opens
@@ -6191,6 +6212,79 @@ app.index_string = """<!DOCTYPE html>
   document.addEventListener('mouseout', function (e) {
     var chip = e.target.closest ? e.target.closest('[data-oid]') : null;
     if (chip && !chip.classList.contains('scene-box')) clear();
+  });
+})();
+</script>
+<script>
+/* The parts of a feature row's shift as a picture (Sunny, 2026-11-24:
+   "picture always helps more"). Any element with data-bars shows, beside
+   the pointer, one bar per part from a centre line: its length is how much
+   that part changed, its side the direction (right, green = eased; left,
+   red = escalated; grey across the line = changed with no up or down).
+   Pure display: no callback, no state. */
+(function () {
+  var COL = { eased: '#16a34a', escalated: '#b91c1c' };
+  function pop() {
+    var z = document.getElementById('parts-pop');
+    if (!z) { z = document.createElement('div'); z.id = 'parts-pop'; document.body.appendChild(z); }
+    return z;
+  }
+  function el(cls, text) {
+    var d = document.createElement('div'); d.className = cls;
+    if (text !== undefined) d.textContent = text; return d;
+  }
+  function row(p, sub) {
+    var r = el('pp-row' + (sub ? ' sub' : ''));
+    r.appendChild(el('pp-name', p.name));
+    var t = el('pp-track'), b = el('pp-bar');
+    var size = Math.max(0, Math.min(1, +p.size || 0)), half = size * 50;
+    var col = COL[p.direction];
+    if (p.direction === 'eased') { b.style.left = '50%'; b.style.width = half + '%'; }
+    else if (p.direction === 'escalated') { b.style.left = (50 - half) + '%'; b.style.width = half + '%'; }
+    else { b.style.left = (50 - half / 2) + '%'; b.style.width = half + '%'; }
+    b.style.background = col || 'repeating-linear-gradient(90deg,#94a3b8 0 3px,transparent 3px 6px)';
+    if (size > 0) t.appendChild(b);
+    r.appendChild(t);
+    var v = el('pp-val', size.toFixed(2) + '  ' + p.direction);
+    v.style.color = col || '#64748b';
+    r.appendChild(v);
+    return r;
+  }
+  function show(cell) {
+    var data; try { data = JSON.parse(cell.getAttribute('data-bars')); } catch (e) { return; }
+    if (!data || !data.rows || !data.rows.length) return;
+    var z = pop(); z.innerHTML = '';
+    var h = el('pp-head');
+    var a = el('pp-name', ''), m = el('pp-track'), c = el('pp-val', '');
+    m.style.height = 'auto'; m.style.display = 'flex'; m.style.justifyContent = 'space-between';
+    m.appendChild(el('', '\u2190 escalated')); m.appendChild(el('', 'eased \u2192'));
+    h.appendChild(a); h.appendChild(m); h.appendChild(c); z.appendChild(h);
+    data.rows.forEach(function (p) {
+      z.appendChild(row(p, false));
+      if (p.note) z.appendChild(el('pp-was', p.note));
+      (p.lines || []).forEach(function (x) {
+        z.appendChild(row(x, true));
+        if (x.was || x.now) z.appendChild(el('pp-was', x.was + '  \u2192  ' + x.now));
+      });
+    });
+    if (data.foot) z.appendChild(el('pp-foot', data.foot));
+    if (data.note) z.appendChild(el('pp-note', data.note));
+    z.style.display = 'block';
+    var r = cell.getBoundingClientRect(), w = z.offsetWidth, hh = z.offsetHeight;
+    var left = r.left - w - 12;
+    if (left < 8) left = Math.min(window.innerWidth - w - 8, r.right + 12);
+    var top = Math.max(8, Math.min(window.innerHeight - hh - 8, r.top - hh / 2));
+    z.style.left = left + 'px'; z.style.top = top + 'px';
+  }
+  document.addEventListener('mouseover', function (e) {
+    var cell = e.target.closest ? e.target.closest('[data-bars]') : null;
+    if (cell) show(cell);
+  });
+  document.addEventListener('mouseout', function (e) {
+    var cell = e.target.closest ? e.target.closest('[data-bars]') : null;
+    if (!cell) return;
+    if (e.relatedTarget && cell.contains(e.relatedTarget)) return;
+    var z = document.getElementById('parts-pop'); if (z) z.style.display = 'none';
   });
 })();
 </script></body></html>"""

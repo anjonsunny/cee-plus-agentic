@@ -23,3 +23,4 @@ def three_part_shift(monkeypatch):
     from agentic import declared4
     monkeypatch.setattr(declared4, "graph_part", lambda before, after: None)
     monkeypatch.setattr(declared4, "state_part", lambda before, after: None)
+    monkeypatch.setattr(declared4, "own_part", lambda before, pair: None)

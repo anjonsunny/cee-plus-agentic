@@ -769,22 +769,38 @@ def test_the_feature_shift_is_four_parts_and_the_state_is_one_of_them():
     from agentic import declared4
     b, a = {**_run3("burning"), "disaster_level": 8}, {**_run3("burnt"), "disaster_level": 7}
     b["recommendations"] = a["recommendations"] = []
-    one = {"target": "house_1", "kind": "dealt with", "signals": {
+    one = {"target": "house_1", "kind": "removed", "signals": {
         "hazard_shift": 0.1, "graph_shift": 0.8, "recommendation_shift": 0.6,
         "hazard_level_delta": -1, "rec_direction": "de-escalated",
         "graph_direction": "de-escalated"}}
     rd = declared4.try_reading(b, (one, a))
     parts = {p["name"]: p["signed"] for p in rd["parts"]}
+    # a REMOVED thing has four parts: what the model says about it after is
+    # forced by the edit, so it is not a part (agentic/parts4.py)
     assert set(parts) == {"level", "recommendations", "graph", "state"}
     assert parts["graph"] == 0.0                                        # not the frozen 0.8
     assert parts["state"] == pytest.approx(1 / 3, abs=0.001)
     assert rd["size"] == pytest.approx((0.1 + 0.6 + 0.0 + 1 / 3) / 4, abs=0.002)
+    # every part says how much and which direction (2026-11-24)
+    by = {p["name"]: p for p in rd["parts"]}
+    assert by["level"]["direction"] == "eased" and by["recommendations"]["direction"] == "eased"
+    assert by["graph"]["direction"] == "unchanged" and by["graph"]["size"] == 0.0
+    assert by["state"]["direction"] == "eased"                          # burning -> burnt
+    assert rd["agree"]["eased"] == 3 and rd["agree"]["of"] == 4
+    assert rd["agree"]["direction"] == "eased"
+    # DEALT WITH: the thing itself is the fifth part
+    rd5 = declared4.try_reading(b, ({**one, "kind": "dealt with"}, a))
+    assert [p["name"] for p in rd5["parts"]] == ["level", "recommendations", "graph",
+                                                 "state", "itself"]
+    assert rd5["size"] == pytest.approx(sum(p["size"] for p in rd5["parts"]) / 5, abs=0.002)
     # nothing that is a threat or at risk: three parts, as before
     bare = {"detected_objects": [], "causal_graph": None, "recommendations": []}
     rd = declared4.try_reading(bare, (one, bare))
     assert [p["name"] for p in rd["parts"]] == ["level", "recommendations", "graph"]
-    # (the older graph number has no direction here, so it adds nothing, as before)
-    assert rd["size"] == pytest.approx((0.1 + 0.6 + 0.0) / 3, abs=0.002)
+    # the older graph number has no direction here: it is "redirected" and
+    # COUNTS in how much (before 2026-11-24 it was left out of the size)
+    assert rd["parts"][2]["direction"] == "redirected" and rd["parts"][2]["signed"] == 0.0
+    assert rd["size"] == pytest.approx((0.1 + 0.6 + 0.8) / 3, abs=0.002)
 
 
 def test_hovering_the_mechanistic_cell_shows_the_parts_of_the_shift():

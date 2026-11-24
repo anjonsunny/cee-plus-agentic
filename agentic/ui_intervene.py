@@ -970,45 +970,114 @@ WAY_TIP = {"eases": "removing it eased the emergency responses: recommendations 
            "no change": "removing it did not shift the emergency responses"}
 
 
+def _part_ok(p: Any) -> bool:
+    return (isinstance(p, dict) and isinstance(p.get("signed"), (int, float))
+            and not isinstance(p.get("signed"), bool))
+
+
+def part_label(p: Any, target: Any = "") -> str:
+    """The name a part goes by on the screen: 'house_1 itself'."""
+    name = str((p if isinstance(p, dict) else {}).get("name") or "")
+    if name == "itself":
+        who = str((p.get("target") if isinstance(p, dict) else "") or target or "").strip()
+        return f"{who} itself" if who else "the tried object itself"
+    return name
+
+
 def parts_text(parts: Any) -> str:
-    """'level: +0.10; recommendations: -0.87; graph: -0.50; state: +0.40'."""
-    return "; ".join(f"{p.get('name')}: {p.get('signed'):+.2f}"
-                     for p in (parts if isinstance(parts, list) else [])
-                     if isinstance(p, dict) and isinstance(p.get("signed"), (int, float))
-                     and not isinstance(p.get("signed"), bool))
+    """'level: 0.10 eased; recommendations: 0.87 escalated; graph: 0.50
+    redirected'. A part from before 2026-11-24 has only a signed number:
+    'level: +0.10'."""
+    out = []
+    for p in (parts if isinstance(parts, list) else []):
+        if not _part_ok(p):
+            continue
+        size, d = p.get("size"), p.get("direction")
+        if isinstance(size, (int, float)) and not isinstance(size, bool) and isinstance(d, str):
+            out.append(f"{part_label(p)}: {size:.2f} {d}")
+        else:
+            out.append(f"{p.get('name')}: {p.get('signed'):+.2f}")
+    return "; ".join(out)
+
+
+def bars_of(r: Any, note: str = "") -> str:
+    """The parts of one feature row as JSON for the bar picture that pops
+    up over its mechanistic cell (Sunny, 2026-11-24: "picture always helps
+    more"): one bar per part, its length how much, its side the direction.
+    '' when the row's parts carry no direction (an older record)."""
+    r = r if isinstance(r, dict) else {}
+
+    def one(p: dict) -> dict:
+        return {"name": part_label(p, r.get("object_id")),
+                "size": round(float(p["size"]), 2), "direction": str(p["direction"])}
+    rows = []
+    for p in (r.get("parts") if isinstance(r.get("parts"), list) else []):
+        if not (_part_ok(p) and isinstance(p.get("direction"), str)
+                and isinstance(p.get("size"), (int, float)) and not isinstance(p.get("size"), bool)):
+            continue
+        row = one(p)
+        lines = []
+        for x in (p.get("lines") if isinstance(p.get("lines"), list) else []):
+            if (isinstance(x, dict) and isinstance(x.get("direction"), str)
+                    and isinstance(x.get("size"), (int, float))
+                    and not isinstance(x.get("size"), bool)):
+                lines.append({**one(x), "was": str(x.get("before") or ""),
+                              "now": str(x.get("after") or "")})
+        if lines:
+            row["lines"] = lines
+        if p.get("name") == "itself" and p.get("listed") is False:
+            row["note"] = "not listed in the after picture"
+        rows.append(row)
+    if not rows:
+        return ""
+    ag = r.get("agree") if isinstance(r.get("agree"), dict) else {}
+    said = ", ".join(f"{ag[d]} {d}" for d in ("eased", "escalated", "redirected", "changed",
+                                               "unchanged")
+                     if isinstance(ag.get(d), int) and not isinstance(ag.get(d), bool) and ag[d])
+    sh = r.get("shift")
+    foot = ((f"changed {sh:.2f} = the average of the {len(rows)} parts"
+             if isinstance(sh, (int, float)) and not isinstance(sh, bool) else "")
+            + (f" \u00b7 {said}" if said else ""))
+    return json.dumps({"rows": rows, "foot": foot, "note": str(note or "")})
 
 
 def mech_cell(r: Any, faded: bool = False) -> Any:
     """The mechanistic cell of a feature row: the SHARE as the bar (the
     same kind of number as the declared columns, so they can be compared),
     and beside it, small, how much the responses really changed (a lone
-    row always has a share of 1.00)."""
+    row always has a share of 1.00). Hovering it shows the parts the shift
+    is the average of: as a bar picture when the parts carry a direction
+    (the page's script draws it from data-bars), as a line of text when
+    they do not."""
     r = r if isinstance(r, dict) else {}
     sh = r.get("shift")
     numbers = parts_text(r.get("parts"))
+    bars = bars_of(r, ONE_TRY_TIP if faded else "")
+    # the text pop-up would cover the picture: one or the other
+    said = "" if bars else numbers
     bar = _bar(r.get("does"), "#16a34a")
     # the bar and the "changed" text had pop-ups of their own (a bare number,
     # and a sentence with no numbers), which hid the parts: every piece of
-    # the cell now shows the same numbers
+    # the cell now shows the same thing
     if numbers:
         try:
-            bar.children[0].title = numbers
+            bar.children[0].title = said
         except Exception:
             pass
     kids = [bar]
     if isinstance(sh, (int, float)) and not isinstance(sh, bool):
         kids.append(html.Span(f" \u00b7 changed {sh:.2f}", className="iv-changed",
-                              title=numbers or ("how much the emergency responses changed "
-                                                "when it was removed, 0 to 1"),
+                              title=said if numbers else ("how much the emergency responses "
+                                                          "changed when it was removed, 0 to 1"),
                               style={"fontSize": "10px", "color": "#94a3b8",
                                      "whiteSpace": "nowrap"}))
-    # hovering the mechanistic cell shows the parts the shift is the average
-    # of (Sunny, 2026-11-23)
-    tip = parts_text(r.get("parts"))
-    if faded:
+    tip = said
+    if faded and not bars:
         tip = (tip + "  |  " if tip else "") + ONE_TRY_TIP
-    return html.Div(kids, className="iv-again" if faded else "iv-own", title=tip,
-                    **{"data-parts": parts_text(r.get("parts"))},
+    more = {"data-parts": numbers}
+    if bars:
+        more["data-bars"] = bars
+    return html.Div(kids, className="iv-again" if faded else "iv-own", title=tip, **more,
                     style={"opacity": ".45"} if faded else {})
 
 
