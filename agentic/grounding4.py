@@ -661,24 +661,66 @@ def edit_seen(before: Any, after: Any, one: Any) -> dict:
             "saw": saw, "moved": moved, "head": head, "text": text}
 
 
+def _how(result: Any) -> tuple[dict, dict]:
+    """({object: state}, {object: at-risk kind}) of one run."""
+    try:
+        r = iv4.clean_result(result)
+        state = {str(o.get("object_id") or ""): str(o.get("state") or "").strip().lower()
+                 for o in r["detected_objects"]}
+        kind = {str(x.get("object_id") or ""): str(x.get("kind") or "").strip().lower()
+                for x in (r.get("at_risk") if isinstance(r.get("at_risk"), list) else [])
+                if isinstance(x, dict)}
+        return state, kind
+    except Exception:
+        return {}, {}
+
+
 def _who_words(ids: Any, result: Any) -> str:
     """'person_1 (trapped \u00b7 distress), house_2 (intact)': each protected
     thing with the state the run gave it and, when the run put it at risk,
     which kind. 'nothing' for an empty list. Never raises."""
-    try:
-        r = iv4.clean_result(result)
-        state = {str(o.get("object_id") or ""): str(o.get("state") or "").strip()
-                 for o in r["detected_objects"]}
-        kind = {str(x.get("object_id") or ""): str(x.get("kind") or "").strip()
-                for x in (r.get("at_risk") if isinstance(r.get("at_risk"), list) else [])
-                if isinstance(x, dict)}
-    except Exception:
-        state, kind = {}, {}
+    state, kind = _how(result)
     out = []
     for i in sorted(str(x) for x in (ids or []) if isinstance(x, str) and x):
         bits = [b for b in (state.get(i, ""), kind.get(i, "")) if b]
         out.append(i + (" (" + " \u00b7 ".join(bits) + ")" if bits else ""))
     return ", ".join(out) or "nothing"
+
+
+WHO_ARE = "how those it protects are"
+
+
+def _who_change(ids: Any, before: Any, after: Any) -> dict:
+    """One field for the cell's picture: of the things the recommendation
+    protected, the share whose state or at-risk kind is different in the
+    edited run, and which way it went (a less severe state, or distress
+    become proximity, or no longer at risk: eased). `counted` False: it is
+    shown beside the recommendation's own fields and never added to the
+    cell's number. Never raises."""
+    ids = sorted(str(x) for x in (ids or []) if isinstance(x, str) and x)
+    sb, kb = _how(before)
+    sa, ka = _how(after)
+    votes, moved = [], 0
+    for i in ids:
+        ways = []
+        if i in sb:
+            d = parts4.state_direction(sb[i], sa.get(i))
+            if d != parts4.UNCHANGED:
+                ways.append(d)
+        if kb.get(i, "") != ka.get(i, ""):
+            rb, ra = parts4.KIND_RANK.get(kb.get(i, ""), 0), parts4.KIND_RANK.get(ka.get(i, ""), 0)
+            known = all(x in parts4.KIND_RANK or x == "" for x in (kb.get(i, ""), ka.get(i, "")))
+            ways.append(parts4.CHANGED if not known or ra == rb else
+                        parts4.EASED if ra < rb else parts4.ESCALATED)
+        if ways:
+            moved += 1
+            votes += [{"size": 1.0, "direction": w} for w in ways]
+    size = moved / len(ids) if ids else 0.0
+    way = parts4.vote(votes)
+    if size and way == parts4.REDIRECTED:
+        way = parts4.CHANGED
+    return {**parts4.part(WHO_ARE, size, way), "before": _who_words(ids, before),
+            "after": _who_words(ids, after), "counted": False}
 
 
 def _place_flags(result: Any) -> list[dict]:
@@ -795,15 +837,17 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
             c["impact"], c["why"] = det["value"], [r["text"] for r in det["reasons"]]
             c["way"], c["reasons"] = det["way"], det["reasons"]
             c["fields"] = det["fields"]
-            # beside who it protects, HOW THEY ARE in each run: their state
-            # and their at-risk kind. Context for reading the cell (did the
-            # recommendation follow when the person got better?), never
-            # counted here: it is the person's, and the feature table counts it.
-            for f in c["fields"]:
-                if f.get("name") == "who it protects":
-                    f["before"] = _who_words(aff_i, before)
-                    if isinstance(c.get("after"), dict):
-                        f["after"] = _who_words(_quad(c["after"])[2], after)
+            # HOW THOSE IT PROTECTS ARE in each run, as a bar of its own
+            # (Sunny, 2026-11-25: "no victim state change shown from distress
+            # to proximity"): their state and their at-risk kind, with a
+            # direction. Context for reading the cell (the person got better;
+            # did the recommendation follow?). Never counted in the cell's
+            # number: it is the person's change, and the feature table counts it.
+            if c["fields"] and isinstance(c.get("after"), dict):
+                k = next((j for j, f in enumerate(c["fields"])
+                          if f.get("name") == "who it protects"), None)
+                if k is not None:
+                    c["fields"].insert(k + 1, _who_change(aff_i, before, after))
             c["label"] = cell_label(c)            # after the way: a dealt-with hazard reads it
             # is what it names still in the edited picture? (for a dropped one)
             c["hazard_there"] = any(m in after_ids for m in (grp.get(t_i) or (t_i,)))

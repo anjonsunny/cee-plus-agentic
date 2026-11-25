@@ -405,29 +405,52 @@ def test_only_what_was_changed_gets_the_row_never_the_other_end_of_the_recommend
     assert vic["officer_1"]["shift"] == vic["officer_2"]["shift"] is not None
 
 
-def test_a_cell_says_how_those_it_protects_are_in_each_run():
+def test_a_cell_shows_how_those_it_protects_changed_as_a_bar_of_its_own():
     """Sunny, 2026-11-25, E #1: the person went from trapped (distress) to
     standing (proximity), and the cell of the recommendation that protects
-    him showed nothing of it. It is said beside "who it protects", as words:
-    it is the person's change, so it is not counted in the cell."""
-    from agentic import grounding4
+    him showed "unchanged" everywhere. It is a bar of its own, with a
+    direction. It is the person's change, so it is not counted in the cell."""
+    from agentic import grounding4, ui_intervene as ui_iv
+    import json
     b = _scene(man_state="trapped", man_kind="distress")
     a = _scene(man_state="standing", man_kind="proximity")
     tbl = grounding4.table(b, [(_one("person_1"), a)])
     by = {r["rank"]: r["cells"][0] for r in tbl["rows"]}
-    who = {f["name"]: f for f in by[2]["fields"]}["who it protects"]
-    assert who["before"] == "person_1 (trapped · distress)"
-    assert who["after"] == "person_1 (standing · proximity)"
-    assert who["size"] == 0.0 and by[2]["impact"] == 0.0          # shown, not counted
-    # something that is not at risk: its state only
-    house = {f["name"]: f for f in by[1]["fields"]}["who it protects"]
+    names = [f["name"] for f in by[2]["fields"]]
+    assert names[names.index("who it protects") + 1] == "how those it protects are"
+    who = {f["name"]: f for f in by[2]["fields"]}["how those it protects are"]
+    assert (who["size"], who["direction"]) == (1.0, "eased")
+    assert who["before"] == "person_1 (trapped \u00b7 distress)"
+    assert who["after"] == "person_1 (standing \u00b7 proximity)"
+    assert who["counted"] is False and by[2]["impact"] == 0.0     # shown, not counted
+    # the plain line keeps the names only
+    assert {f["name"]: f for f in by[2]["fields"]}["who it protects"]["before"] == "person_1"
+    # something that did not change: an empty bar, its state said
+    house = {f["name"]: f for f in by[1]["fields"]}["how those it protects are"]
+    assert (house["size"], house["direction"]) == (0.0, "unchanged")
     assert house["before"] == house["after"] == "house_1 (intact)"
-    # a dropped recommendation has no such line; nonsense never raises
+    # the picture says which bars are not counted
+    foot = json.loads(ui_iv.cell_bars("Evacuate.", by[2]))["foot"]
+    assert foot.endswith("shown, not counted: action, how those it protects are")
+    # the directions
+    f = grounding4._who_change
+    worse = _scene(man_state="unconscious", man_kind="distress")
+    assert f(["person_1"], _scene(), worse)["direction"] == "escalated"
+    assert f(["person_1"], _scene(), _scene(man_at_risk=False))["direction"] == "eased"      # left the list
+    assert f(["person_1"], _scene(man_at_risk=False), _scene())["direction"] == "escalated"  # entered it
+    assert f(["person_1"], _scene(), _scene(man_kind="wobbly"))["direction"] == "changed"
+    assert f(["person_1"], _scene(man_state="trapped"), _scene(man_kind="distress")
+             )["direction"] == "changed"                         # state better, kind worse
+    assert f(["person_1", "house_1"], b, a)["size"] == 0.5       # one of the two
+    # a dropped recommendation has no such bar; nonsense never raises
     gone = grounding4.table(b, [(_one("person_1"), _scene(man_rec=False, man_arrows=False,
                                                            man_at_risk=False))])
-    assert [f["name"] for f in gone["rows"][1]["cells"][0]["fields"]] == ["the recommendation"]
+    assert [x["name"] for x in gone["rows"][1]["cells"][0]["fields"]] == ["the recommendation"]
     assert grounding4._who_words(["person_1", "ghost_9", 3, None], b) == (
-        "ghost_9, person_1 (trapped · distress)")
+        "ghost_9, person_1 (trapped \u00b7 distress)")
     for bad in (None, "x", {}, {"detected_objects": "zz", "at_risk": 3}):
         assert grounding4._who_words(["person_1"], bad) == "person_1"
         assert grounding4._who_words(None, bad) == "nothing"
+        for ids in (["person_1"], None, "x", [3, None]):
+            got = f(ids, bad, bad)
+            assert got["size"] == 0.0 and got["direction"] == "unchanged"

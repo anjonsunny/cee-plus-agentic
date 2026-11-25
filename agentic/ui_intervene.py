@@ -831,6 +831,11 @@ def cell_bars(action: Any, c: Any, note: str = "") -> str:
     foot = (f"changed {imp:.2f}. " if isinstance(imp, (int, float)) and not isinstance(imp, bool)
             else "") + (CELL_WEIGHTS if c.get("state") != "gone" else "a dropped recommendation "
                                                                      "counts as changed in full")
+    # the fields that are shown beside the recommendation's own, not counted
+    extra = [str(f.get("name")) for f in (c.get("fields") or [])
+             if isinstance(f, dict) and f.get("counted") is False]
+    if extra and c.get("state") != "gone":
+        foot += " \u00b7 shown, not counted: " + ", ".join(extra)
     return json.dumps({"top": top, "rows": rows, "foot": foot, "note": str(note or "")})
 
 
