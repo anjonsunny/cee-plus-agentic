@@ -132,17 +132,67 @@ def part(name: str, size: Any, direction: str, **more: Any) -> dict:
             "signed": round(s * sign, 3), **more}
 
 
+MIXED = "mixed"
+PART_LABEL = {"level": "danger level"}
+
+
+def label(p: Any) -> str:
+    """The name a part goes by in a sentence: 'danger level', 'house_1 itself'."""
+    p = p if isinstance(p, dict) else {}
+    name = str(p.get("name") or "")
+    if name == ITSELF:
+        who = str(p.get("target") or "").strip()
+        return f"{who} itself" if who else "the tried object itself"
+    return PART_LABEL.get(name, name)
+
+
+def _and(names: list[str]) -> str:
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+
 def agree(parts: Any) -> dict:
-    """{"eased": n, "escalated": n, "redirected": n, "changed": n,
-    "unchanged": n, "of": parts counted, "direction": what they point to
-    together}."""
-    out = {d: 0 for d in DIRECTIONS}
-    ok = [p for p in (parts if isinstance(parts, list) else []) if isinstance(p, dict)]
+    """What ALL the parts of a try say together (Sunny, 2026-11-25: one
+    part's word beside a number made of all of them "will miscommunicate").
+
+    {"eased": n, "escalated": n, "redirected": n, "changed": n,
+     "unchanged": n, "of": parts counted, "direction": where they pull
+     together by size, "word": eased | escalated | mixed | redirected |
+     unchanged, "text": what a row shows}
+
+        all that moved went one way          "eased"
+        most went one way, by count AND      "eased (3 of 4)", of the
+        by size                               parts that moved
+        they split (the count and the size   "mixed: danger level eased,
+        disagree, or the count is a tie)      recommendations and graph escalated"
+        nothing went up or down, something   "redirected"
+        changed
+    """
+    out: dict = {d: 0 for d in DIRECTIONS}
+    ok = [p for p in (parts if isinstance(parts, list) else [])
+          if isinstance(p, dict) and p.get("direction") in DIRECTIONS]
     for p in ok:
-        d = p.get("direction")
-        if d in out:
-            out[d] += 1
-    return {**out, "of": len(ok), "direction": vote(ok)}
+        out[p["direction"]] += 1
+    pull = vote(ok)
+    e = [label(p) for p in ok if p["direction"] == EASED]
+    x = [label(p) for p in ok if p["direction"] == ESCALATED]
+    # counted over the parts that MOVED: one that stood still disagrees with nobody
+    n = len(ok) - out[UNCHANGED]
+    if e and x:
+        by_count = EASED if len(e) > len(x) else ESCALATED if len(x) > len(e) else ""
+        if by_count and by_count == pull:
+            word = by_count
+            text = f"{word} ({len(e) if word == EASED else len(x)} of {n})"
+        else:
+            word = MIXED
+            text = f"mixed: {_and(e)} eased, {_and(x)} escalated"
+    elif e or x:
+        word = EASED if e else ESCALATED
+        k = len(e or x)
+        text = word if k == n else f"{word} ({k} of {n})"
+    else:
+        word = REDIRECTED if out[REDIRECTED] or out[CHANGED] else UNCHANGED
+        text = word if ok else ""
+    return {**out, "of": len(ok), "moved": n, "direction": pull, "word": word, "text": text}
 
 
 # ---- the state part -------------------------------------------------------

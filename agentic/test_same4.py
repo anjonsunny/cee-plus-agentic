@@ -323,7 +323,7 @@ def test_a_hazard_that_went_with_the_removed_one_carries_the_same_shift():
     rows = {_flat(r).split()[0]: _flat(r) for r in
             _by_class(ui_iv.card_component(c, {}), "iv-feature")}
     assert "gone with fire_1" in rows["smoke_1"] and "gone with" not in rows["fire_1"]
-    assert rows["smoke_1"].endswith("eased")
+    assert rows["smoke_1"].endswith("eased (3 of 4)")       # of the parts that moved
 
 
 @pytest.mark.usefixtures("three_part_shift")
@@ -740,7 +740,7 @@ def test_a_try_that_took_out_a_victim_is_its_own_test_and_touches_no_hazard_scor
     card = ui_iv.card_component(c, {})
     rows = {_flat(r).split()[0]: _flat(r) for r in _by_class(card, "iv-victim")}
     assert set(rows) == {"man_1", "car_1", "dog_1"}
-    assert rows["man_1"].endswith("unchanged \u00b7 its recommendations dropped") and "not removed yet" in rows["car_1"]
+    assert rows["man_1"].endswith("eased \u00b7 its recommendations dropped") and "not removed yet" in rows["car_1"]
     # one table: the victim rows are in the feature table, each row labelled
     assert len(_by_class(card, "iv-features")) == 1 and _by_class(card, "iv-victims") == []
     table = _by_class(card, "iv-features")[0]
@@ -861,7 +861,8 @@ def test_removing_a_victim_reads_redirects_and_its_size_does_not_cancel():
     # two words: the direction (no level in this scene, nothing kept: unchanged)
     # and the type (all three that named him were dropped)
     assert (man["direction"], man["type"]) == ("unchanged", "drops")
-    assert _flat(cell) == "unchanged \u00b7 its recommendations dropped"
+    # on the screen the direction is what ALL the parts say (2026-11-25), not the level alone
+    assert _flat(cell) == "eased (2 of 3) \u00b7 its recommendations dropped"
     assert getattr(cell, "data-type") == "drops" and "3 dropped" in cell.title
     assert "type: most recommendations that name it were dropped" in cell.title
 
@@ -1123,7 +1124,9 @@ def test_direction_comes_from_the_danger_level_and_type_from_the_recommendations
     # no recommendation names what was dealt with: a direction, no type
     rd = declared4.try_reading(b, ({**one, "target": "car_1"}, {**b, "disaster_level": 7}))
     assert (rd["direction"], rd["type"]) == ("eases", "")
-    assert ui_iv.words_of(rd) == "danger level eased" and ui_iv.words_of(None) == ""
+    # the level fell and the recommendations part went up: said as it is, not as the level alone
+    assert ui_iv.words_of(rd) == "mixed: danger level eased, recommendations escalated"
+    assert ui_iv.words_of(None) == ""
     assert ui_iv.words_of({"direction": "eases", "type": "drops"}) == "eased \u00b7 its recommendations dropped"
     assert ui_iv.words_of({"direction": "eases", "type": "keeps", "direction_by": "level"}) == (
         "danger level eased \u00b7 its recommendations kept")
@@ -1137,8 +1140,9 @@ def test_direction_comes_from_the_danger_level_and_type_from_the_recommendations
     row = [r for r in _by_class(ui_iv.card_component(c, {}), "iv-feature")
            if _flat(r).startswith("fire_1")][0]
     cell = _by_class(row, "iv-role")[0]
-    assert _flat(cell) == "danger level eased \u00b7 its recommendations dropped"
+    assert _flat(cell) == "eased (3 of 4) \u00b7 its recommendations dropped"
     assert cell.style["color"] == "#16a34a"
+    assert getattr(_by_class(cell, "iv-direction-word")[0], "data-agree") == "eased"
     assert getattr(cell, "data-way") == "eased" and getattr(cell, "data-type") == "drops"
     for bad in (None, "x", (1,), ({"target": 3}, None)):
         assert declared4.try_reading(b, bad) is None or "direction" in declared4.try_reading(b, bad)

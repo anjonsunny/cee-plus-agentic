@@ -635,7 +635,7 @@ def reading_cell(rd: Any) -> list:
     and the three parts."""
     if not isinstance(rd, dict) or not isinstance(rd.get("size"), (int, float)):
         return []
-    col = DIRECTION.get(str(rd.get("direction")), ("", "#64748b"))[1]
+    col = direction_colour(rd)
     counts = rd.get("counts") if isinstance(rd.get("counts"), dict) else {}
     said = " \u00b7 ".join(f"{n} {k}" for k, n in counts.items()
                            if isinstance(n, int) and not isinstance(n, bool) and n)
@@ -1101,11 +1101,39 @@ TYPE_PHRASE = {"drops": "its recommendations dropped", "keeps": "its recommendat
                "redirects": "its recommendations redirected"}
 
 
+AGREE_COL = {"eased": "#16a34a", "escalated": "#b91c1c", "mixed": "#b45309",
+             "redirected": "#64748b", "unchanged": "#94a3b8"}
+AGREE_TIP = ("direction: what ALL the parts of the shift say together (danger level, "
+             "recommendations, graph, state, and the thing itself when it was dealt with). "
+             "'mixed' = they split; hover the mechanistic cell for each part")
+
+
+def _agreed(r: Any) -> dict:
+    """The row's `agree` record when it carries a sentence, else {} (a
+    record from before 2026-11-25, or a row not tried)."""
+    ag = r.get("agree") if isinstance(r, dict) else None
+    return ag if isinstance(ag, dict) and isinstance(ag.get("text"), str) and ag["text"] else {}
+
+
+def direction_colour(r: Any) -> str:
+    ag = _agreed(r)
+    if ag:
+        return AGREE_COL.get(str(ag.get("word")), "#64748b")
+    return DIRECTION.get(str((r if isinstance(r, dict) else {}).get("direction")),
+                         ("", "#64748b"))[1]
+
+
 def direction_phrase(r: Any) -> str:
-    """'danger level eased' when the danger level moved (or is known and did
-    not); 'urgency eased' when the level stood still and what was kept came
-    later or smaller; just 'eased' when neither can be read."""
+    """The direction of a row or a try, from ALL the parts of its shift:
+    'eased', 'eased (3 of 5)', 'mixed: danger level eased, recommendations
+    and graph escalated' (agentic/parts4.agree). Before 2026-11-25 the
+    danger level alone decided the word while the number beside it was made
+    of every part; a record without the parts' directions still reads that
+    way: 'danger level eased', 'urgency eased', or just 'eased'."""
     r = r if isinstance(r, dict) else {}
+    ag = _agreed(r)
+    if ag:
+        return ag["text"]
     d = str(r.get("direction") or "")
     if d not in _PAST:
         return ""
@@ -1134,9 +1162,14 @@ def way_cell(r: Any, td: dict) -> Any:
     counts = r.get("counts") if isinstance(r.get("counts"), dict) else {}
     said = " \u00b7 ".join(f"{n} {w}" for w, n in counts.items()
                            if isinstance(n, int) and not isinstance(n, bool) and n)
-    tip = " | ".join(x for x in (DIRECTION_TIP.get(d, ""), TYPE_TIP.get(k, ""), said) if x)
+    ag = _agreed(r)
+    if ag:
+        col = direction_colour(r)
+    tip = " | ".join(x for x in (AGREE_TIP if ag else DIRECTION_TIP.get(d, ""),
+                                 TYPE_TIP.get(k, ""), said) if x)
     kids = ([html.Span(direction_phrase(r), className="iv-direction-word",
-                       style={"color": col})] if d in DIRECTION else [])
+                       **({"data-agree": str(ag.get("word"))} if ag else {}),
+                       style={"color": col})] if (ag or d in DIRECTION) else [])
     if k in TYPE_TIP:
         kids += [html.Span(" \u00b7 ", style={"color": "#cbd5e1"}),
                  html.Span(type_phrase(r), className="iv-type-word",

@@ -298,7 +298,7 @@ def test_the_tick_reports_progress_then_measures_and_saves_when_the_run_ends(pag
     ui.RUNS["after"]["done"] = True
     kids, proof, key2 = ui.iv_status(1, "base", [], key)
     assert key2 != key and len(_by_class(kids, "iv-card")) == 1
-    assert ": danger level eased \u00b7 its recommendations dropped, changed 0." in _flat(proof)   # the try line sits in the proof
+    assert ": eased \u00b7 its recommendations dropped, changed 0." in _flat(proof)   # the try line sits in the proof
     # the advice names a hazard its own graph does not: it is offered next
     assert [b.children for b in _by_class(kids, "iv-next")] == ["remove next: tanker_1"]
     assert ui.IV_ACTIVE == {}
@@ -861,7 +861,7 @@ def test_the_table_shows_the_signed_shift(tmp_path):
     # parts cancel: C_tanker, the man removed, read "+0.03 eased")
     assert "signed shift" not in _flat(comp)
     (cell,) = _by_class(comp, "iv-signed-value")
-    assert _flat(cell).endswith("\u00b7 danger level eased \u00b7 its recommendations dropped")
+    assert _flat(cell).endswith("\u00b7 eased \u00b7 its recommendations dropped")
     assert cell.style["color"] == "#16a34a"
     assert "level:" in cell.title and "dropped" in cell.title
     assert ui_iv.reading_cell({"size": 0.7, "direction": "unchanged", "type": "redirects",
@@ -1368,12 +1368,12 @@ def test_the_card_shows_each_feature_declared_beside_mechanistic():
     rows = _by_class(card, "iv-feature")
     assert [_flat(r).split()[0] for r in rows] == ["spill_1", "fire_1", "tanker_1", "brush_1"]
     by = {_flat(r).split()[0]: r for r in rows}
-    assert _flat(_by_class(by["fire_1"], "iv-role")) == "eased"
-    assert _flat(_by_class(by["spill_1"], "iv-role")) == "eased"
+    assert _flat(_by_class(by["fire_1"], "iv-role")) == "eased (2 of 3)"
+    assert _flat(_by_class(by["spill_1"], "iv-role")) == "eased (2 of 3)"
     assert _by_class(by["fire_1"], "iv-role")[0].style["color"] == "#16a34a"      # eased: green
     assert "not removed yet" in _flat(by["tanker_1"])    # declared bars, no mechanistic bar
     assert _flat(_by_class(by["tanker_1"], "iv-role")) == ""
-    assert "direction: the danger level went down" in _by_class(by["spill_1"], "iv-role")[0].title
+    assert "what ALL the parts of the shift say together" in _by_class(by["spill_1"], "iv-role")[0].title
     # two declared bars and one mechanistic bar, each with its number
     assert len(_by_class(by["fire_1"], "iv-bar-num")) == 3
     assert len(_by_class(by["tanker_1"], "iv-bar-num")) == 2
@@ -1551,8 +1551,10 @@ def test_the_feature_row_says_one_phrase_coloured_by_the_direction_of_the_shift(
     rows = {_flat(r).split()[0]: r for r in _by_class(card, "iv-feature")}
     (fire,), (spill,), (brush,) = (_by_class(rows[h], "iv-role")
                                    for h in ("fire_1", "spill_1", "brush_1"))
-    assert _flat(fire) == "eased"                          # direction; no type: no recommendation names it
-    assert _flat(spill) == "escalated"
+    # direction, from all the parts that moved (the fixture's graph part has no direction);
+    # no type: no recommendation names it
+    assert _flat(fire) == "eased (2 of 3)"
+    assert _flat(spill) == "escalated"                     # its after run has an arrow: all three went up
     assert fire.style["color"] == "#16a34a" and getattr(fire, "data-way") == "eased"
     assert spill.style["color"] == "#b91c1c" and getattr(spill, "data-way") == "escalated"
     assert _flat(brush) == "unchanged"

@@ -282,3 +282,66 @@ def test_the_page_has_the_bar_picture_script():
     from agentic import ui
     page = ui.app.index_string
     assert "parts-pop" in page and "data-bars" in page
+
+
+# ---- the row's direction comes from ALL the parts (2026-11-25) ---------------
+def _p(name, size, direction, **more):
+    return parts4.part(name, size, direction, **more)
+
+
+def test_the_direction_of_a_row_is_what_all_its_parts_say():
+    """Sunny, 2026-11-25: one part's word (the danger level) beside a number
+    made of all of them "will miscommunicate"."""
+    # H, the house fire dealt with: the level eased a little, the
+    # recommendations and the graph escalated a lot
+    house = [_p("level", 0.10, "eased"), _p("recommendations", 0.87, "escalated"),
+             _p("graph", 0.50, "escalated"), _p("state", 0.40, "eased"),
+             _p("itself", 0.51, "eased", target="house_1")]
+    got = parts4.agree(house)
+    assert got["word"] == "mixed"                # 3 against 2 by count, the other way by size
+    assert got["text"] == ("mixed: danger level, state and house_1 itself eased, "
+                           "recommendations and graph escalated")
+    # most one way, by count and by size; a part that stood still is not counted
+    car = [_p("level", 0.0, "eased"), _p("recommendations", 1.0, "eased"),
+           _p("graph", 0.75, "escalated"), _p("state", 0.2, "eased"),
+           _p("itself", 0.67, "eased", target="car_1")]
+    got = parts4.agree(car)
+    assert (got["word"], got["text"], got["moved"], got["of"]) == ("eased", "eased (3 of 4)", 4, 5)
+    # all that moved went one way: the word alone
+    assert parts4.agree([_p("level", 0.2, "eased"), _p("graph", 0.5, "eased"),
+                         _p("state", 0.0, "eased")])["text"] == "eased"
+    assert parts4.agree([_p("level", 0.2, "escalated")])["text"] == "escalated"
+    # one moved with no up or down
+    assert parts4.agree([_p("level", 0.2, "eased"), _p("graph", 0.5, "redirected")]
+                        )["text"] == "eased (1 of 2)"
+    # a tie by count is a split
+    assert parts4.agree([_p("level", 0.2, "eased"), _p("graph", 0.5, "escalated")]
+                        )["text"] == "mixed: danger level eased, graph escalated"
+    # nothing went up or down
+    assert parts4.agree([_p("graph", 0.5, "redirected"), _p("state", 0.3, "changed")]
+                        )["text"] == "redirected"
+    assert parts4.agree([_p("level", 0.0, "eased")])["text"] == "unchanged"
+    for bad in (None, "x", [], [None, 3, {"name": "a"}, {"direction": "banana", "size": 1}]):
+        got = parts4.agree(bad)
+        assert got["text"] == "" and got["word"] == "unchanged" and got["of"] == 0
+    assert parts4.label({"name": "itself"}) == "the tried object itself" and parts4.label(3) == ""
+
+
+def test_the_row_shows_that_sentence_and_an_older_record_keeps_its_own():
+    from agentic import ui_intervene as ui_iv
+    mixed = {"direction": "eases", "direction_by": "level", "type": "keeps",
+             "agree": {"word": "mixed", "text": "mixed: danger level eased, graph escalated"}}
+    assert ui_iv.words_of(mixed) == ("mixed: danger level eased, graph escalated "
+                                     "\u00b7 its recommendations kept")
+    assert ui_iv.direction_colour(mixed) == "#b45309"
+    cell = ui_iv.way_cell(mixed, {})
+    assert cell.style["color"] == "#b45309" and "what ALL the parts" in cell.title
+    # the bottom row of the recommendations table reads the same
+    rd = {**mixed, "size": 0.47, "counts": {}, "parts": []}
+    assert ui_iv.reading_cell(rd)[0].style["color"] == "#b45309"
+    # no sentence (before 2026-11-25, or nonsense): the level's word, as before
+    for ag in (None, "x", {}, {"text": ""}, {"text": 3}):
+        old = {"direction": "eases", "direction_by": "level", "agree": ag}
+        assert ui_iv.words_of(old) == "danger level eased"
+        assert ui_iv.direction_colour(old) == "#16a34a"
+    assert ui_iv.direction_colour(None) == "#64748b"
