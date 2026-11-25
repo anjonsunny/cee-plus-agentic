@@ -421,7 +421,20 @@ def test_a_recommendation_that_protected_only_the_victim_is_dropped_not_adjusted
     still = {**b, "recommendations": [
         _soon(_rec(1, "house_1", ["person_1", "house_2"], "Shield person_1."), "now", "large")]}
     cell = g.table(b, [(one, still)])["rows"][0]["cells"][0]
-    assert cell["state"] == "stays" and cell["still_names"] is True and cell["label"] == "masquerade"
+    assert cell["still_names"] is True and cell["label"] == "masquerade"
+    # ... and it is compared like any other pair (E, 2026-11-25: "extricate person_1" against
+    # "retreat person_1 and both officers" read 0.00, nothing changed): here it now also
+    # protects house_2, so it is kept ADJUSTED, by how much
+    assert cell["state"] == "changed" and cell["target_shift"] == 0.5
+    assert (cell["targets_kept"], cell["targets_before"], cell["targets_new"]) == (1, 1, 1)
+    assert cell["impact"] == pytest.approx(0.35 * 0.5, abs=0.002)
+    who = {f["name"]: f for f in cell["fields"]}["who it protects"]
+    assert (who["size"], who["direction"]) == (0.5, "redirected")
+    # the very same arrow is kept as it was
+    same = {**b, "recommendations": [
+        {**b["recommendations"][0], "action": "Shield person_1."}]}
+    cell = g.table(b, [(one, same)])["rows"][0]["cells"][0]
+    assert cell["state"] == "stays" and cell["impact"] == 0.0 and cell["target_shift"] == 0.0
 
 
 def test_a_changed_target_counts_by_how_much_and_also_when_the_hazard_was_dealt_with():

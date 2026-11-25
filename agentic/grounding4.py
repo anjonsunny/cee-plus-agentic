@@ -170,6 +170,24 @@ def _victim_cells(cells: list[dict], base: list[dict], victims: set[str],
                 c["state"] = STAYS
                 if free and used is not None:
                     used.add(k)
+                if stays:
+                    # A dealt-with victim is still there, so this is an
+                    # ordinary pair and is compared like any other: who it
+                    # protects now, and the effect word. (E, 2026-11-25:
+                    # "extricate person_1" was paired with "retreat person_1
+                    # and both officers", effect threatens -> may_harm, and
+                    # the cell read 0.00, nothing changed.)
+                    _t, effect, affected = _quad(rec)
+                    aq = after_recs[k]["quad"]
+                    left, now = frozenset(affected), frozenset(aq[2])
+                    c["effect_changed"] = aq[1] != effect
+                    c["targets_kept"], c["targets_before"] = len(left & now), len(left)
+                    c["targets_new"] = len(now - left)
+                    union = left | now
+                    c["target_shift"] = (round(1.0 - len(left & now) / len(union), 3)
+                                         if union else 0.0)
+                    if c["effect_changed"] or now != left:
+                        c["state"] = CHANGED
         if stays:
             # "dealt with": the victim was moved to safety and is still in
             # the picture, so naming it in an action is fine. It is only a
