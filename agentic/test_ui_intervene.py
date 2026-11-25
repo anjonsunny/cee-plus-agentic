@@ -1929,6 +1929,18 @@ def test_the_action_is_a_field_of_the_cell_shown_and_not_counted(monkeypatch):
                                "was": "", "now": ""}
     assert data["top"] == ["before: Extricate person_1 from the window.",
                            "after: Retreat person_1 to a safe distance."]
+    # its direction is the recommendation's own, from how soon and size
+    def act_dir(**q):
+        aft = {**after, "structured_reasoning": {**after["structured_reasoning"], **q}}
+        return g.impact_detail(before, {"state": g.STAYS, "after": aft}, 4)["fields"][0]["direction"]
+    assert act_dir(how_soon="minutes") == "eased"                 # now -> minutes
+    assert act_dir(size="medium") == "eased"                      # large -> medium
+    before_later = {**before, "structured_reasoning": {**before["structured_reasoning"],
+                                                       "how_soon": "later"}}
+    assert g.impact_detail(before_later, cell, 4)["fields"][0]["direction"] == "escalated"   # later -> now
+    assert g.impact_detail({**before_later}, {"state": g.STAYS, "after": {
+        **after, "structured_reasoning": {**after["structured_reasoning"], "size": "small"}}}, 4
+    )["fields"][0]["direction"] == "changed"                      # one each way: no direction
     # the measure that cannot be read, or breaks, leaves the cell as it was
     monkeypatch.setattr(g, "action_shift", lambda a, b: None)
     assert "action" not in [f["name"] for f in g.impact_detail(before, cell, 4)["fields"]]

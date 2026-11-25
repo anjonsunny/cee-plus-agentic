@@ -508,8 +508,14 @@ def impact_detail(rec: Any, cell: Any, n: int) -> dict:
     field("state of its hazard", 1.0 if (sb and sa and sb != sa) else 0.0, parts4.CHANGED,
           sb or "?", sa or "?")
     ways = {r["way"] for r in reasons if r["way"]}
-    return {"value": round(min(1.0, total), 3), "reasons": reasons,
-            "way": MIXED_WAY if len(ways) > 1 else (ways.pop() if ways else ""),
+    way = MIXED_WAY if len(ways) > 1 else (ways.pop() if ways else "")
+    # The action bar says HOW MUCH (the embedding); its DIRECTION is the
+    # recommendation's own, read off how soon and size (Sunny, 2026-11-25:
+    # "embedding should show how much it changed... and then other feature
+    # should show direction"). Neither moved, or one each way: no direction.
+    if act is not None and way in (EASED, ESCALATED):
+        fields[0] = {**fields[0], **parts4.part("action", act, way)}
+    return {"value": round(min(1.0, total), 3), "reasons": reasons, "way": way,
             "fields": fields}
 
 
