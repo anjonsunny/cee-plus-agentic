@@ -800,6 +800,40 @@ def direction_cell(ch: Any) -> list:
         style={"fontWeight": "700", "color": "#475569"})]
 
 
+CELL_WEIGHTS = ("the bar is these, each times its weight: who it protects or the effect 0.35 "
+                "\u00b7 how soon 0.20 \u00b7 size 0.15 \u00b7 rank 0.15 \u00b7 state of its "
+                "hazard 0.15")
+
+
+def cell_bars(action: Any, c: Any, note: str = "") -> str:
+    """One cell of the recommendations table as JSON for the bar picture
+    that pops up over it (Sunny, 2026-11-25: "what eased, what escalated...
+    from the perspective of recommendation not feature"): the two actions on
+    top, then one bar per field of the recommendation, its length how much
+    that field changed and its side the direction. '' when the cell has no
+    fields to show (its target was removed, or an older record)."""
+    c = c if isinstance(c, dict) else {}
+    rows = []
+    for f in (c.get("fields") if isinstance(c.get("fields"), list) else []):
+        if not (isinstance(f, dict) and isinstance(f.get("direction"), str)
+                and isinstance(f.get("size"), (int, float)) and not isinstance(f.get("size"), bool)):
+            continue
+        rows.append({"name": str(f.get("name") or ""), "size": round(float(f["size"]), 2),
+                     "direction": f["direction"],
+                     "was": str(f.get("before") or ""), "now": str(f.get("after") or "")})
+    if not rows:
+        return ""
+    after = c.get("after") if isinstance(c.get("after"), dict) else {}
+    top = ["before: " + " ".join(str(action or "").split())]
+    top.append("after: " + (" ".join(str(after.get("action") or "").split())
+                            if after.get("action") else "no such recommendation"))
+    imp = c.get("impact")
+    foot = (f"changed {imp:.2f}. " if isinstance(imp, (int, float)) and not isinstance(imp, bool)
+            else "") + (CELL_WEIGHTS if c.get("state") != "gone" else "a dropped recommendation "
+                                                                     "counts as changed in full")
+    return json.dumps({"top": top, "rows": rows, "foot": foot, "note": str(note or "")})
+
+
 def reading_cell(rd: Any) -> list:
     """One try in two words: how much the responses changed, and which way
     (the same reading as the feature table). The hover gives the counts
@@ -1035,9 +1069,15 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
                     title="the framework could not match this object between the two "
                           "pictures with certainty; see WHO IS WHO",
                     style={"fontSize": "10px", "color": "#b45309"})]
+            # hovering a cell shows its change field by field as bars; the
+            # text pop-up would cover that picture, so its words go into it
+            bars = cell_bars(r.get("action"), c, "  |  ".join(
+                x for x in tip.split("  |  ") if not x.startswith(("before: ", "after: "))))
             tds.append(html.Td(kids, className=f"iv-cell {state.split()[0]}"
                                + ("" if imp or lab == "masquerade" else " quiet"),
-                               title=tip, **{"data-label": lab}, style=_TD))
+                               title="" if bars else tip,
+                               **{"data-label": lab, "data-tip": tip},
+                               **({"data-bars": bars} if bars else {}), style=_TD))
         v = str(r.get("verdict"))
         # what the tries that were not about it did to it, under the reading
         sp = r.get("spill") if isinstance(r.get("spill"), dict) else {}

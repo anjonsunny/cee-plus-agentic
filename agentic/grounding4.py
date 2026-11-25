@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agentic import intervention4 as iv4, same4
+from agentic import intervention4 as iv4, parts4, same4
 
 STAYS, GONE, CHANGED, TARGET_REMOVED = "stays", "gone", "changed", "target removed"
 # (the screen says: advice kept / advice dropped / advice kept, adjusted /
@@ -367,21 +367,41 @@ EASED, ESCALATED, MIXED_WAY = "eased", "escalated", "mixed"
 
 
 def impact_detail(rec: Any, cell: Any, n: int) -> dict:
-    """{"value": 0..1 or None, "reasons": [{"text", "way"}], "way"} for one
-    cell. `way` says which direction the change went: "eased" (later,
-    smaller), "escalated" (sooner, bigger), "mixed" when the reasons
-    disagree, "" when nothing with a direction changed. A rank change and
-    a changed target or effect carry no direction: a recommendation can
-    move up only because another one was dropped. None for a cell that is
-    not evidence (its target was removed). Never raises."""
+    """{"value": 0..1 or None, "reasons": [{"text", "way"}], "way",
+    "fields"} for one cell. `way` says which direction the change went:
+    "eased" (later, smaller), "escalated" (sooner, bigger), "mixed" when
+    the reasons disagree, "" when nothing with a direction changed. A rank
+    change and a changed target or effect carry no direction: a
+    recommendation can move up only because another one was dropped. None
+    for a cell that is not evidence (its target was removed).
+
+    `fields` is the same change field by field, for the picture that pops
+    up over the cell (Sunny, 2026-11-25: "what eased, what escalated... from
+    the perspective of recommendation"): [{"name", "size": that field's own
+    change 0..1, "direction": eased | escalated | redirected | changed |
+    unchanged, "before", "after"}], every field listed, also the ones that
+    did not change. The value is these sizes times the weights in IMPACT.
+    Never raises."""
     cell = cell if isinstance(cell, dict) else {}
     state = cell.get("state")
     if state == TARGET_REMOVED:
-        return {"value": None, "reasons": [], "way": ""}
+        return {"value": None, "reasons": [], "way": "", "fields": []}
     if state == GONE:
-        return {"value": 1.0, "reasons": [{"text": "dropped", "way": ""}], "way": ""}
+        return {"value": 1.0, "reasons": [{"text": "dropped", "way": ""}], "way": "",
+                "fields": [{**parts4.part("the recommendation", 1.0, parts4.EASED),
+                            "before": "there", "after": "dropped"}]}
     after = cell.get("after") if isinstance(cell.get("after"), dict) else {}
-    total, reasons = 0.0, []
+    total, reasons, fields = 0.0, [], []
+
+    def field(name: str, size: Any, direction: str, was: Any, now: Any) -> None:
+        fields.append({**parts4.part(name, size, direction),
+                       "before": str(was), "after": str(now)})
+    try:
+        who_b, who_a = sorted(_quad(rec)[2]), sorted(_quad(after)[2]) if after else []
+        eff_b, eff_a = _quad(rec)[1], (_quad(after)[1] if after else "")
+    except Exception:
+        who_b, who_a, eff_b, eff_a = [], [], "", ""
+    who_size = eff_size = 0.0
     if state == CHANGED:
         # by how much: losing one target of four is not losing all of them
         # (H ui_4a253340: both read 0.40). A changed effect word counts as
@@ -389,6 +409,8 @@ def impact_detail(rec: Any, cell: Any, n: int) -> dict:
         shift = cell.get("target_shift")
         if isinstance(shift, (int, float)) and not isinstance(shift, bool):
             part = max(float(shift), 0.5 if cell.get("effect_changed") else 0.0)
+            who_size = float(shift)
+            eff_size = 1.0 if cell.get("effect_changed") else 0.0
             kept, was = cell.get("targets_kept"), cell.get("targets_before")
             if part >= 1.0 or not was:
                 text = "target or effect changed"
@@ -403,8 +425,12 @@ def impact_detail(rec: Any, cell: Any, n: int) -> dict:
                 text = " \u00b7 ".join(bits) or "target or effect changed"
         else:
             part, text = 1.0, "target or effect changed"
+            who_size = 1.0
         total += IMPACT["target or effect"] * part
         reasons.append({"text": text, "way": ""})
+    field("who it protects", who_size, parts4.REDIRECTED,
+          ", ".join(who_b) or "nothing", ", ".join(who_a) or "nothing")
+    field("effect", eff_size, parts4.CHANGED, eff_b or "?", eff_a or "?")
     if cell.get("hazard_renamed"):
         # said, not charged: the recommendation is the same one
         reasons.append({"text": "same victim, the hazard is no longer named", "way": ""})
@@ -415,8 +441,11 @@ def impact_detail(rec: Any, cell: Any, n: int) -> dict:
         if b and a and b != a:
             step = allowed.index(a) - allowed.index(b)
             total += IMPACT[name] * abs(step) / (len(allowed) - 1)
-            reasons.append({"text": f"{b} \u2192 {a}",
-                            "way": EASED if (step > 0) == eased_when_up else ESCALATED})
+            way = EASED if (step > 0) == eased_when_up else ESCALATED
+            reasons.append({"text": f"{b} \u2192 {a}", "way": way})
+            field(name, abs(step) / (len(allowed) - 1), way, b, a)
+        else:
+            field(name, 0.0, parts4.UNCHANGED, b or "not said", a or "not said")
     # the state it gives its hazard: a change with no direction of its own
     sb, sa = _state(rec), _state(after)
     if sb and sa and sb != sa:
@@ -424,11 +453,18 @@ def impact_detail(rec: Any, cell: Any, n: int) -> dict:
         reasons.append({"text": f"{sb} \u2192 {sa}", "way": ""})
     rb, ra = _rank(rec), _rank(after)
     if rb is not None and ra is not None and rb != ra:
-        total += IMPACT["rank"] * min(1.0, abs(rb - ra) / max(1, n - 1))
+        step = min(1.0, abs(rb - ra) / max(1, n - 1))
+        total += IMPACT["rank"] * step
         reasons.append({"text": f"rank {rb} \u2192 {ra}", "way": ""})
+        field("rank", step, parts4.CHANGED, rb, ra)
+    else:
+        field("rank", 0.0, parts4.UNCHANGED, "?" if rb is None else rb, "?" if ra is None else ra)
+    field("state of its hazard", 1.0 if (sb and sa and sb != sa) else 0.0, parts4.CHANGED,
+          sb or "?", sa or "?")
     ways = {r["way"] for r in reasons if r["way"]}
     return {"value": round(min(1.0, total), 3), "reasons": reasons,
-            "way": MIXED_WAY if len(ways) > 1 else (ways.pop() if ways else "")}
+            "way": MIXED_WAY if len(ways) > 1 else (ways.pop() if ways else ""),
+            "fields": fields}
 
 
 def impact(rec: Any, cell: Any, n: int) -> tuple[Any, list[str]]:
@@ -685,6 +721,7 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
             det = impact_detail(base[i], c, n_recs)
             c["impact"], c["why"] = det["value"], [r["text"] for r in det["reasons"]]
             c["way"], c["reasons"] = det["way"], det["reasons"]
+            c["fields"] = det["fields"]
             c["label"] = cell_label(c)            # after the way: a dealt-with hazard reads it
             # is what it names still in the edited picture? (for a dropped one)
             c["hazard_there"] = any(m in after_ids for m in (grp.get(t_i) or (t_i,)))

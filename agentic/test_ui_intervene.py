@@ -528,7 +528,10 @@ def test_the_result_shows_the_table_above_the_tries_with_hoverable_ids(tmp_path)
     assert {"fire_1", "tanker_1", "man_1"} <= set(_oids(comp))
     assert len(_by_class(comp, "iv-row")) == 2 and len(_by_class(comp, "iv-table")) == 1
     cell = _by_class(comp, "iv-cell")[0]
-    assert "no longer in the answer" in cell.title       # hover says what the words mean
+    # hover says what the words mean: inside the bar picture of the cell (2026-11-25),
+    # which replaces the text pop-up
+    assert "no longer in the answer" in json.loads(getattr(cell, "data-bars"))["note"]
+    assert not cell.title and "no longer in the answer" in getattr(cell, "data-tip")
     # a try whose after run folder is gone does not break the page
     (after / "stage4.json").unlink()
     assert "the tries · 2" in _flat(ui_iv.result_component(base, tmp_path))
@@ -946,7 +949,8 @@ def test_a_cell_says_what_happened_to_the_advice_then_the_label():
                       "#4": "spurious", "#6": "correctly_ignored"}
     # the frozen word for the cell is on hover
     four = _by_class(next(r for r in rows if _flat(r).startswith("#4")), "iv-cell")[0]
-    assert "spurious: went when a hazard it does not name was removed" in four.title
+    assert "spurious: went when a hazard it does not name was removed" in json.loads(
+        getattr(four, "data-bars"))["note"]
     assert "recommendation dropped" not in _flat(comp)            # no long phrases in the cells
     assert "nothing left to protect" not in _flat(comp)
     text = _flat(comp)
@@ -954,10 +958,12 @@ def test_a_cell_says_what_happened_to_the_advice_then_the_label():
         assert old_word not in " " + text + " ", old_word
     # the hover explains the phrase and shows the two pieces of advice
     kept = next(c for c in _by_class(comp, "iv-cell") if "targets kept" in _flat(c))
-    assert "still has a recommendation, with a different target" in kept.title
-    assert "before: Extinguish fire_1." in kept.title and "after: Cool truck_1." in kept.title
+    kb = json.loads(getattr(kept, "data-bars"))             # (in the cell's bar picture, 2026-11-25)
+    assert "still has a recommendation, with a different target" in kb["note"]
+    assert kb["top"] == ["before: Extinguish fire_1.", "after: Cool truck_1."]
     dropped = next(c for c in _by_class(comp, "iv-cell") if "dropped" in _flat(c))
-    assert "no longer in the answer" in dropped.title and "after:" not in dropped.title
+    db = json.loads(getattr(dropped, "data-bars"))
+    assert "no longer in the answer" in db["note"] and db["top"][1] == "after: no such recommendation"
 
 
 def test_what_else_the_edited_picture_lost_is_worded_as_an_observation():
@@ -1633,7 +1639,9 @@ def test_an_adjusted_cell_says_which_way_it_went_and_the_bar_takes_that_colour()
     d = g.impact_detail(rec(1), {"state": "changed", "after": rec(3)}, 4)
     assert d["way"] == "" and [r["way"] for r in d["reasons"]] == ["", ""]
     assert g.impact_detail(rec(1), {"state": "gone"}, 4)["way"] == ""
-    assert g.impact_detail(None, None, 0) == {"value": 0.0, "reasons": [], "way": ""}
+    empty = g.impact_detail(None, None, 0)
+    assert (empty["value"], empty["reasons"], empty["way"]) == (0.0, [], "")
+    assert all(f["size"] == 0.0 and f["direction"] == "unchanged" for f in empty["fields"])
     assert g.impact_detail("x", {"state": "target removed"}, 0)["value"] is None
 
     def cell(way, state="changed", reasons=None):
@@ -1839,3 +1847,55 @@ def test_a_pick_that_stands_for_two_hazards_is_recorded_on_the_one_acted_on(page
     assert ui.iv_start("base", "fire_1", "caption", "a tanker stands on a road", None, None,
                        ui_iv.BY_REC, None, 2) == ""
     assert page["calls"][0]["after_of"]["target"] == "tanker_1"
+
+
+# ── the bar picture over a cell of the recommendations table (2026-11-25) ────
+
+def test_a_cell_carries_its_change_field_by_field():
+    """Sunny: "we should show graph of this like we did on feature table.
+    What eased, what escalated... from the perspective of recommendation"."""
+    from agentic import grounding4 as g
+    before = {"rank": 3, "action": "Move officer_1 back.", "structured_reasoning": {
+        "threat": "building_1", "state": "collapsed", "effect": "may_harm",
+        "affected_objects": ["officer_1", "officer_2"], "how_soon": "minutes", "size": "large"}}
+    after = {"rank": 1, "action": "Retreat everyone.", "structured_reasoning": {
+        "threat": "building_1", "state": "collapsed", "effect": "may_harm",
+        "affected_objects": ["officer_1", "officer_2", "person_1"], "how_soon": "now",
+        "size": "medium"}}
+    cell = {"state": g.CHANGED, "after": after, "target_shift": 1 / 3, "targets_kept": 2,
+            "targets_before": 2, "targets_new": 1}
+    det = g.impact_detail(before, cell, 4)
+    by = {f["name"]: f for f in det["fields"]}
+    assert list(by) == ["who it protects", "effect", "how soon", "size", "rank", "state of its hazard"]
+    assert by["who it protects"]["size"] == pytest.approx(0.333, abs=0.001)
+    assert by["who it protects"]["direction"] == "redirected"
+    assert by["who it protects"]["after"] == "officer_1, officer_2, person_1"
+    assert (by["how soon"]["size"], by["how soon"]["direction"]) == (0.5, "escalated")   # minutes -> now
+    assert (by["size"]["size"], by["size"]["direction"]) == (0.5, "eased")               # large -> medium
+    assert (by["rank"]["size"], by["rank"]["direction"]) == (pytest.approx(0.667, abs=0.001), "changed")
+    assert (by["effect"]["size"], by["effect"]["direction"]) == (0.0, "unchanged")
+    assert by["state of its hazard"]["direction"] == "unchanged"
+    # the bar is these, each times its weight
+    want = 0.35 * (1 / 3) + 0.2 * 0.5 + 0.15 * 0.5 + 0.15 * (2 / 3)
+    assert det["value"] == pytest.approx(want, abs=0.002)
+    # a dropped one is one bar, in full; a cell that is not evidence has none
+    gone = g.impact_detail(before, {"state": g.GONE}, 4)["fields"]
+    assert [(f["name"], f["size"], f["direction"]) for f in gone] == [("the recommendation", 1.0, "eased")]
+    assert g.impact_detail(before, {"state": g.TARGET_REMOVED}, 4)["fields"] == []
+    # the picture: the two actions on top, a bar per field, what the bar is made of
+    data = json.loads(ui_iv.cell_bars(before["action"], {**cell, "fields": det["fields"],
+                                                         "impact": det["value"]}, "meaning"))
+    assert data["top"] == ["before: Move officer_1 back.", "after: Retreat everyone."]
+    assert [r["name"] for r in data["rows"]][:3] == ["who it protects", "effect", "how soon"]
+    assert data["rows"][2] == {"name": "how soon", "size": 0.5, "direction": "escalated",
+                               "was": "minutes", "now": "now"}
+    assert data["foot"].startswith(f"changed {det['value']:.2f}. the bar is these")
+    assert data["note"] == "meaning"
+    dropped = json.loads(ui_iv.cell_bars("Go.", {"state": "gone", "fields": gone, "impact": 1.0}))
+    assert dropped["top"][1] == "after: no such recommendation" and "in full" in dropped["foot"]
+    for bad in (None, "x", {}, {"fields": "zz"}, {"fields": [None, 3, {"name": "a"},
+                                                             {"size": "big", "direction": 3}]}):
+        assert ui_iv.cell_bars("Go.", bad) == ""
+    for bad_rec in (None, "x", {"structured_reasoning": 5}, {"rank": "one"}):
+        assert isinstance(g.impact_detail(bad_rec, cell, 0)["fields"], list)
+        assert isinstance(g.impact_detail(before, {"state": g.CHANGED, "after": bad_rec}, 0)["fields"], list)

@@ -6125,6 +6125,7 @@ app.index_string = """<!DOCTYPE html>
   #parts-pop .pp-val { flex:1 1 auto; padding-left:8px; white-space:nowrap; font-weight:700; }
   #parts-pop .pp-was { font-size:9.5px; color:#94a3b8; padding:0 0 2px 12px; white-space:nowrap;
       overflow:hidden; text-overflow:ellipsis; }
+  #parts-pop .pp-top { font-size:10.5px; color:#334155; margin-bottom:3px; line-height:1.35; }
   #parts-pop .pp-foot { border-top:1px solid #e2e8f0; margin-top:6px; padding-top:5px;
       font-size:10.5px; color:#475569; }
   #parts-pop .pp-note { font-size:10px; color:#94a3b8; margin-top:3px; white-space:normal; }
@@ -6259,9 +6260,11 @@ app.index_string = """<!DOCTYPE html>
     m.style.height = 'auto'; m.style.display = 'flex'; m.style.justifyContent = 'space-between';
     m.appendChild(el('', '\u2190 escalated')); m.appendChild(el('', 'eased \u2192'));
     h.appendChild(a); h.appendChild(m); h.appendChild(c); z.appendChild(h);
+    (data.top || []).forEach(function (t) { z.insertBefore(el('pp-top', t), h); });
     data.rows.forEach(function (p) {
       z.appendChild(row(p, false));
       if (p.note) z.appendChild(el('pp-was', p.note));
+      if (p.was || p.now) z.appendChild(el('pp-was', p.was + '  \u2192  ' + p.now));
       (p.lines || []).forEach(function (x) {
         z.appendChild(row(x, true));
         if (x.was || x.now) z.appendChild(el('pp-was', x.was + '  \u2192  ' + x.now));
