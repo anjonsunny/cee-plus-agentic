@@ -13,20 +13,22 @@ check the recommendation changes accordingly).
 
 There are two arms:
 
-- **Arm A** = `main.py` at the repo root. The legacy monolithic
-  pipeline with FROZEN scoring. **NEVER edit main.py. Import only.**
+- **Arm A** = `main.py` (and `intervention.py`) at the repo root. The
+  legacy monolithic pipeline. It may be edited when a fix belongs there
+  (Sunny, 2026-11-25; see Iron rule 1).
   It owns the state vocabulary and the causal-quad ontology.
 - **Arm B** = everything in `agentic/`. The agentic conversion:
   staged, ledgered, revision-capable. All new work happens here,
   on git branch `agentic`. Sunny pushes git himself — never push.
 
-Arm B is scored by IMPORTING Arm A's frozen metrics, so the two arms
-stay comparable.
+Arm B still imports Arm A's metrics. The comparison between the arms
+is made inside this framework, by switching the agentic loops on and
+off (Sunny, 2026-11-25), not by keeping Arm A's code unchanged.
 
 ## Where things are
 
 ```
-main.py                          Arm A. Frozen. Import only.
+main.py                          Arm A. Legacy. May be edited (rule 1).
 agentic/                         Arm B — all the new code
   perception.py                  Stage 1: VLM naming -> repair loop ->
                                  DINO grounding -> SAM masks -> assemble
@@ -120,7 +122,12 @@ STAGE 4  (BUILT, Phase 1a/1b) recommendations / causal quads — where
 
 ## Iron rules (violating these has burned us before)
 
-1. **Never edit `main.py`.** Import only.
+1. **`main.py` and `intervention.py` may be edited** (Sunny, 2026-11-25:
+   "I don't care if frozen arm changes"). The arms will be compared by
+   switching the agentic loops on and off inside this framework, so Arm A
+   no longer has to stay byte-for-byte the same. A change there moves the
+   numbers of earlier runs when they are read again: say so when
+   proposing one. The other rules still apply to it.
 2. **Every code change ships with tests** — including malformed-model-
    output cases at every boundary that consumes raw VLM answers.
 3. **Discuss before building.** Propose, get Sunny's explicit yes
