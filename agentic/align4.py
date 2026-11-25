@@ -354,7 +354,10 @@ def rename(after: Any, mapping: Any) -> Any:
 
     def one(x: Any) -> Any:
         return _swap(x, m)
-    for key in ("detected_objects", "threats"):
+    # the at-risk list too (2026-11-25): it was left in the edited run's own
+    # names, so when the model named two people the other way round, what it
+    # said about one was read as said about the other
+    for key in ("detected_objects", "threats", "at_risk"):
         for o in out.get(key) if isinstance(out.get(key), list) else []:
             if isinstance(o, dict) and "object_id" in o:
                 o["object_id"] = one(o["object_id"])

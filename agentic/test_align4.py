@@ -819,3 +819,40 @@ def test_hovering_the_mechanistic_cell_shows_the_parts_of_the_shift():
     faded = ui_iv.mech_cell(r, True)
     assert faded.title.startswith(want + "  |  ") and "counts the try once" in faded.title
     assert ui_iv.mech_cell({"does": 0.5}).title == "" and ui_iv.parts_text("x") == ""
+
+
+def test_the_at_risk_list_is_read_in_the_before_names_too():
+    """H, 2026-11-25, person_1 moved: the edited run named the two people
+    the other way round. The recommendations, the graph and the objects
+    were put back in the before run's names; the at-risk list was not, so
+    what the model said about the person in the road was read as said about
+    the person who was moved."""
+    after = {"detected_objects": [{"object_id": "person_1"}, {"object_id": "person_2"}],
+             "threats": [{"object_id": "car_1"}],
+             "at_risk": [{"object_id": "person_1", "kind": "distress", "reason": "in the road"},
+                         {"object_id": "person_2", "kind": "proximity"}, None, "x",
+                         {"kind": "proximity"}, {"object_id": 7}]}
+    out = align4.rename(after, {"person_1": "person_2", "person_2": "person_1"})
+    risk = {x["object_id"]: x["kind"] for x in out["at_risk"]
+            if isinstance(x, dict) and isinstance(x.get("object_id"), str)}
+    assert risk == {"person_2": "distress", "person_1": "proximity"}
+    assert out["at_risk"][0]["reason"] == "in the road"          # its own words are kept
+    assert after["at_risk"][0]["object_id"] == "person_1"        # the saved run is not touched
+    # a list that is not a list, or missing, never breaks it
+    for bad in ("zz", None, 3, {"a": 1}):
+        align4.rename({**after, "at_risk": bad}, {"person_1": "person_2"})
+    # and the tried person's own "at risk" line reads the right entry
+    from agentic import parts4
+    before = {"detected_objects": [{"object_id": "person_1", "label": "person", "state": "standing"},
+                                   {"object_id": "person_2", "label": "person", "state": "standing"}],
+              "threats": [], "recommendations": [], "causal_graph": None,
+              "graph_b": {"nodes": [], "edges": [
+                  {"source": "car_1", "effect": "may_harm", "target": "person_1"},
+                  {"source": "car_1", "effect": "may_harm", "target": "person_2"}]},
+              "at_risk": [{"object_id": "person_1", "kind": "proximity"},
+                          {"object_id": "person_2", "kind": "proximity"}]}
+    edited = {**before, "at_risk": [{"object_id": "person_1", "kind": "proximity"}]}   # its person_1 = the road person
+    seen = align4.rename(edited, {"person_1": "person_2", "person_2": "person_1"})
+    p = parts4.itself(before, ({"target": "person_1", "kind": "dealt with"}, seen))
+    line = [x for x in p["lines"] if x["name"] == "at risk"][0]
+    assert (line["after"], line["direction"]) == ("not at risk", "eased")
