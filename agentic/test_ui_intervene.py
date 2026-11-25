@@ -1924,7 +1924,9 @@ def test_the_action_is_a_field_of_the_cell_shown_and_not_counted(monkeypatch):
     assert det["value"] == 0.0 and det["way"] == ""          # not counted, no direction
     data = json.loads(ui_iv.cell_bars(before["action"], {**cell, "fields": det["fields"],
                                                          "impact": det["value"]}))
-    assert data["rows"][0]["name"] == "action" and data["rows"][0]["note"] == ui_iv.ACTION_NOTE
+    # just the bar and its number: no sentence under it (Sunny, 2026-11-25)
+    assert data["rows"][0] == {"name": "action", "size": 0.36, "direction": "changed",
+                               "was": "", "now": ""}
     assert data["top"] == ["before: Extricate person_1 from the window.",
                            "after: Retreat person_1 to a safe distance."]
     # the measure that cannot be read, or breaks, leaves the cell as it was
