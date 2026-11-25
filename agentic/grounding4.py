@@ -687,7 +687,7 @@ def _who_words(ids: Any, result: Any) -> str:
     return ", ".join(out) or "nothing"
 
 
-WHO_ARE = "how those it protects are"
+WHO_ARE = "target state"
 
 
 def _who_change(ids: Any, before: Any, after: Any) -> dict:

@@ -417,8 +417,8 @@ def test_a_cell_shows_how_those_it_protects_changed_as_a_bar_of_its_own():
     tbl = grounding4.table(b, [(_one("person_1"), a)])
     by = {r["rank"]: r["cells"][0] for r in tbl["rows"]}
     names = [f["name"] for f in by[2]["fields"]]
-    assert names[names.index("who it protects") + 1] == "how those it protects are"
-    who = {f["name"]: f for f in by[2]["fields"]}["how those it protects are"]
+    assert names[names.index("who it protects") + 1] == "target state"
+    who = {f["name"]: f for f in by[2]["fields"]}["target state"]
     assert (who["size"], who["direction"]) == (1.0, "eased")
     assert who["before"] == "person_1 (trapped \u00b7 distress)"
     assert who["after"] == "person_1 (standing \u00b7 proximity)"
@@ -426,12 +426,12 @@ def test_a_cell_shows_how_those_it_protects_changed_as_a_bar_of_its_own():
     # the plain line keeps the names only
     assert {f["name"]: f for f in by[2]["fields"]}["who it protects"]["before"] == "person_1"
     # something that did not change: an empty bar, its state said
-    house = {f["name"]: f for f in by[1]["fields"]}["how those it protects are"]
+    house = {f["name"]: f for f in by[1]["fields"]}["target state"]
     assert (house["size"], house["direction"]) == (0.0, "unchanged")
     assert house["before"] == house["after"] == "house_1 (intact)"
     # the picture says which bars are not counted
     foot = json.loads(ui_iv.cell_bars("Evacuate.", by[2]))["foot"]
-    assert foot.endswith("shown, not counted: action, how those it protects are")
+    assert foot.endswith("shown, not counted: action, target state")
     # the directions
     f = grounding4._who_change
     worse = _scene(man_state="unconscious", man_kind="distress")
