@@ -396,8 +396,9 @@ def action_shift(before_action: Any, after_action: Any) -> Any:
             v = iv4._frozen().rec_semantic_shift([{"action": a}], [{"action": b}])
         except Exception:
             v = None
-        _ACTION_CACHE[(a, b)] = (round(float(v), 3) if isinstance(v, (int, float))
-                                 and not isinstance(v, bool) else None)
+        if not isinstance(v, (int, float)) or isinstance(v, bool):
+            return None               # not kept: the model may only be loading; ask again next time
+        _ACTION_CACHE[(a, b)] = round(float(v), 3)
     return _ACTION_CACHE[(a, b)]
 
 
@@ -660,6 +661,26 @@ def edit_seen(before: Any, after: Any, one: Any) -> dict:
             "saw": saw, "moved": moved, "head": head, "text": text}
 
 
+def _who_words(ids: Any, result: Any) -> str:
+    """'person_1 (trapped \u00b7 distress), house_2 (intact)': each protected
+    thing with the state the run gave it and, when the run put it at risk,
+    which kind. 'nothing' for an empty list. Never raises."""
+    try:
+        r = iv4.clean_result(result)
+        state = {str(o.get("object_id") or ""): str(o.get("state") or "").strip()
+                 for o in r["detected_objects"]}
+        kind = {str(x.get("object_id") or ""): str(x.get("kind") or "").strip()
+                for x in (r.get("at_risk") if isinstance(r.get("at_risk"), list) else [])
+                if isinstance(x, dict)}
+    except Exception:
+        state, kind = {}, {}
+    out = []
+    for i in sorted(str(x) for x in (ids or []) if isinstance(x, str) and x):
+        bits = [b for b in (state.get(i, ""), kind.get(i, "")) if b]
+        out.append(i + (" (" + " \u00b7 ".join(bits) + ")" if bits else ""))
+    return ", ".join(out) or "nothing"
+
+
 def _place_flags(result: Any) -> list[dict]:
     try:
         from agentic import place4
@@ -774,6 +795,15 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
             c["impact"], c["why"] = det["value"], [r["text"] for r in det["reasons"]]
             c["way"], c["reasons"] = det["way"], det["reasons"]
             c["fields"] = det["fields"]
+            # beside who it protects, HOW THEY ARE in each run: their state
+            # and their at-risk kind. Context for reading the cell (did the
+            # recommendation follow when the person got better?), never
+            # counted here: it is the person's, and the feature table counts it.
+            for f in c["fields"]:
+                if f.get("name") == "who it protects":
+                    f["before"] = _who_words(aff_i, before)
+                    if isinstance(c.get("after"), dict):
+                        f["after"] = _who_words(_quad(c["after"])[2], after)
             c["label"] = cell_label(c)            # after the way: a dealt-with hazard reads it
             # is what it names still in the edited picture? (for a dropped one)
             c["hazard_there"] = any(m in after_ids for m in (grp.get(t_i) or (t_i,)))

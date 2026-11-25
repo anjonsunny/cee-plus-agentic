@@ -403,3 +403,31 @@ def test_only_what_was_changed_gets_the_row_never_the_other_end_of_the_recommend
     vic = {r["object_id"]: r for r in c["victims"]}
     assert haz["building_1"]["shift"] is None and haz["building_1"]["does"] is None
     assert vic["officer_1"]["shift"] == vic["officer_2"]["shift"] is not None
+
+
+def test_a_cell_says_how_those_it_protects_are_in_each_run():
+    """Sunny, 2026-11-25, E #1: the person went from trapped (distress) to
+    standing (proximity), and the cell of the recommendation that protects
+    him showed nothing of it. It is said beside "who it protects", as words:
+    it is the person's change, so it is not counted in the cell."""
+    from agentic import grounding4
+    b = _scene(man_state="trapped", man_kind="distress")
+    a = _scene(man_state="standing", man_kind="proximity")
+    tbl = grounding4.table(b, [(_one("person_1"), a)])
+    by = {r["rank"]: r["cells"][0] for r in tbl["rows"]}
+    who = {f["name"]: f for f in by[2]["fields"]}["who it protects"]
+    assert who["before"] == "person_1 (trapped · distress)"
+    assert who["after"] == "person_1 (standing · proximity)"
+    assert who["size"] == 0.0 and by[2]["impact"] == 0.0          # shown, not counted
+    # something that is not at risk: its state only
+    house = {f["name"]: f for f in by[1]["fields"]}["who it protects"]
+    assert house["before"] == house["after"] == "house_1 (intact)"
+    # a dropped recommendation has no such line; nonsense never raises
+    gone = grounding4.table(b, [(_one("person_1"), _scene(man_rec=False, man_arrows=False,
+                                                           man_at_risk=False))])
+    assert [f["name"] for f in gone["rows"][1]["cells"][0]["fields"]] == ["the recommendation"]
+    assert grounding4._who_words(["person_1", "ghost_9", 3, None], b) == (
+        "ghost_9, person_1 (trapped · distress)")
+    for bad in (None, "x", {}, {"detected_objects": "zz", "at_risk": 3}):
+        assert grounding4._who_words(["person_1"], bad) == "person_1"
+        assert grounding4._who_words(None, bad) == "nothing"

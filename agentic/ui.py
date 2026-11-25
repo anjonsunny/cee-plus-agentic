@@ -6123,8 +6123,8 @@ app.index_string = """<!DOCTYPE html>
       width:1px; background:#94a3b8; }
   #parts-pop .pp-bar { position:absolute; top:0; bottom:0; border-radius:2px; }
   #parts-pop .pp-val { flex:1 1 auto; padding-left:8px; white-space:nowrap; font-weight:700; }
-  #parts-pop .pp-was { font-size:9.5px; color:#94a3b8; padding:0 0 2px 12px; white-space:nowrap;
-      overflow:hidden; text-overflow:ellipsis; }
+  #parts-pop .pp-was { font-size:9.5px; color:#94a3b8; padding:0 0 2px 12px; white-space:normal;
+      line-height:1.3; }
   #parts-pop .pp-top { font-size:10.5px; color:#334155; margin-bottom:3px; line-height:1.35; }
   #parts-pop .pp-foot { border-top:1px solid #e2e8f0; margin-top:6px; padding-top:5px;
       font-size:10.5px; color:#475569; }
