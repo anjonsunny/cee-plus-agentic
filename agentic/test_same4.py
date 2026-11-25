@@ -1088,7 +1088,9 @@ def test_the_kind_is_saved_with_the_try_and_said_wherever_the_try_is_named(tmp_p
     # the form asks, and "dealt with" is the default
     radio, _ = _find(ui.app.layout, "iv-kind")
     assert radio.value == "dealt with"
-    assert [o["value"] for o in radio.options] == ["dealt with", "removed"]
+    # (the third way, 2026-11-25: one of its own recommendations, carried out)
+    assert [o["value"] for o in radio.options] == ["dealt with", "removed", "by a recommendation"]
+    assert _find(ui.app.layout, "iv-follow-row")[0].style == {"display": "none"}
 
 
 def test_a_finished_try_records_its_kind_and_the_run_list_says_it(tmp_path, monkeypatch):

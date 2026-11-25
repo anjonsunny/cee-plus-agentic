@@ -6648,19 +6648,6 @@ app.layout = html.Div([
                               # boxed: click a box to pick it (Sunny, 2026-11-23)
                               html.Div([
                                   html.Div([
-                                  # FOLLOW A RECOMMENDATION (Sunny, 2026-11-25): pick one
-                                  # of the model's own recommendations instead of an
-                                  # object; WHAT and HOW are filled in from it and the
-                                  # edit instruction is its action, carried out
-                                  html.Div([
-                                      html.Span("follow", className="iv-lbl"),
-                                      dcc.Dropdown(id="iv-follow", options=[], value=None,
-                                                   clearable=True, searchable=False,
-                                                   placeholder="a recommendation: show the scene "
-                                                               "after it was carried out (optional)",
-                                                   style={"flex": "1", "fontSize": "11.5px",
-                                                          "color": "#111"}),
-                                  ], className="iv-row-form"),
                                   html.Div([
                                       html.Span("what", className="iv-lbl"),
                                       dcc.Dropdown(id="iv-target", options=[], value=None,
@@ -6679,9 +6666,25 @@ app.layout = html.Div([
                                               {"label": " dealt with (the action worked, it stays)",
                                                "value": ui_intervene.DEALT_WITH},
                                               {"label": " removed (as if it never was)",
-                                               "value": ui_intervene.REMOVED}],
+                                               "value": ui_intervene.REMOVED},
+                                              # the third way (Sunny, 2026-11-25): one of
+                                              # the model's own recommendations that concern
+                                              # the picked thing, carried out
+                                              {"label": " by a recommendation (its action "
+                                                        "is carried out)",
+                                               "value": ui_intervene.BY_REC}],
                                           className="ctl-toggle"),
                                   ], className="iv-row-form"),
+                                  html.Div([
+                                      html.Span("which", className="iv-lbl"),
+                                      dcc.Dropdown(id="iv-follow", options=[], value=None,
+                                                   clearable=False, searchable=False,
+                                                   placeholder="pick the recommendation to "
+                                                               "carry out",
+                                                   style={"flex": "1", "fontSize": "11.5px",
+                                                          "color": "#111"}),
+                                  ], id="iv-follow-row", className="iv-row-form",
+                                      style={"display": "none"}),
                                   # the state the thing is MEANT to have after the
                                   # edit; afterwards the model's own word for it is
                                   # compared with this (optional)
@@ -6923,6 +6926,9 @@ def iv_intended(target, kind, run_id):
     not in the picture)."""
     from agentic import ui_intervene
     was = ui_intervene.state_of(_iv_info(run_id), target)
+    if kind == ui_intervene.BY_REC:
+        # the recommendation may act on something else than the pick
+        return "set by the recommendation", None, True
     if ui_intervene.kind_of(kind) != ui_intervene.DEALT_WITH:
         return "not in the picture", None, True
     return (f"{was} \u2192 " if was else ""), None, False
@@ -6955,39 +6961,26 @@ def iv_pick(clicks, options, run_id):
 
 
 @app.callback(Output("iv-follow", "options"), Output("iv-follow", "value"),
-              Input("iv-target", "options"),
+              Output("iv-follow-row", "style"),
+              Input("iv-target", "value"), Input("iv-kind", "value"),
               State("run-id", "data"), State("iv-follow", "value"))
-def iv_follow_options(_targets, run_id, value):
-    """The recommendations of the run on screen that can be followed. It is
-    refilled whenever the list of things that can be tried is; a pick is
-    kept while it is still one of them."""
+def iv_follow_options(target, kind, run_id, value):
+    """The WHICH row under HOW: shown only for "by a recommendation", and
+    listing the recommendations that concern the picked thing. A pick is
+    kept while it is still one of them; a lone one is picked for you."""
     from agentic import ui_intervene
-    opts = ui_intervene.rec_options(_iv_info(run_id))
-    keep = value if any(o["value"] == value for o in opts) else None
+    if kind != ui_intervene.BY_REC:
+        return [], None, {"display": "none"}
+    opts = ui_intervene.rec_options(_iv_info(run_id), target) if target else []
+    keep = value if any(o["value"] == value for o in opts) else (
+        opts[0]["value"] if len(opts) == 1 else None)
     # one line each, cut with "..." when the column is narrow (a long action
     # wrapped over the next option); the whole action shows on hover
     one_line = {"display": "block", "whiteSpace": "nowrap", "overflow": "hidden",
                 "textOverflow": "ellipsis"}
-    return [{"value": o["value"],
-             "label": html.Span(o["label"].strip(), title=o["label"].strip(), style=one_line)}
-            for o in opts], keep
-
-
-@app.callback(Output("iv-target", "value", allow_duplicate=True),
-              Output("iv-kind", "value"),
-              Input("iv-follow", "value"), State("run-id", "data"),
-              prevent_initial_call=True)
-def iv_follow_pick(rank, run_id):
-    """Picking a recommendation fills in WHAT (the first thing it acts on)
-    and HOW (dealt with: its action was carried out)."""
-    from agentic import ui_intervene
-    info = _iv_info(run_id)
-    targets = ui_intervene.rec_targets(info, rank)
-    if not targets:
-        return dash.no_update, dash.no_update
-    # the option it belongs to (two hazards the model called the same are one option)
-    value = ui_intervene.option_for(info, ui_intervene.target_options(info), targets[0])
-    return (value or dash.no_update), ui_intervene.DEALT_WITH
+    return ([{"value": o["value"],
+              "label": html.Span(o["label"].strip(), title=o["label"].strip(), style=one_line)}
+             for o in opts], keep, {"display": "flex"})
 
 
 @app.callback(Output("iv-instructions", "children"), Output("iv-caption", "value"),
@@ -7001,11 +6994,21 @@ def iv_instructions(target, kind, follow, run_id=None):
     the instructions are its own action, carried out."""
     from agentic import ui_intervene
     info = _iv_info(run_id)
-    cap, img = (ui_intervene.instructions(info, target, kind)
-                if info and target else ("", ""))
-    if (cap and ui_intervene.kind_of(kind) == ui_intervene.DEALT_WITH
-            and ui_intervene.follow_record(info, follow, target)):
-        cap, img = ui_intervene.follow_instructions(info, follow)
+    if kind == ui_intervene.BY_REC:
+        # its own action, carried out; nothing until one is picked
+        cap, img = (ui_intervene.follow_instructions(info, follow)
+                    if info and target and ui_intervene.follow_record(info, follow, target)
+                    else ("", ""))
+        if not cap:
+            said = ("pick the recommendation to carry out" if info and target
+                    and ui_intervene.rec_options(info, target)
+                    else "no recommendation concerns this one: use dealt with or removed")
+            return ([html.Div(said, className="iv-follow-none",
+                              style={"fontSize": "11px", "color": "#b45309"})],
+                    str(info.get("caption") or "") if info else "")
+    else:
+        cap, img = (ui_intervene.instructions(info, target, kind)
+                    if info and target else ("", ""))
     if not cap:
         return [], ""
     box = {"fontSize": "11px", "color": "#334155", "background": "#f1f5f9",
@@ -7062,6 +7065,14 @@ def iv_start(run_id: str | None, target: str | None, modality: str | None,
             edited = base64.b64decode(str(upload).split(",", 1)[1])
         except Exception:
             return "the uploaded image could not be read"
+    # "by a recommendation": one that concerns the pick must be chosen; the
+    # try is then a "dealt with" try on what that recommendation acts on
+    rec: dict = {}
+    if kind == ui_intervene.BY_REC:
+        rec = ui_intervene.follow_record(info, follow, target)
+        if not rec:
+            return "pick the recommendation to carry out"
+        kind, target = ui_intervene.DEALT_WITH, rec["target"]
     plan = ui_intervene.plan_try(info, str(target or ""), str(modality or ""),
                                  caption, edited)
     if not plan["ok"]:
@@ -7081,14 +7092,11 @@ def iv_start(run_id: str | None, target: str | None, modality: str | None,
     kind = ui_intervene.kind_of(kind)
     origin = {"before_run": info["run"], "target": str(target), "modality": modality,
               "kind": kind, "mode": ui_intervene.KIND_MODE[kind], "edit_source": "hand"}
-    if intended and kind == ui_intervene.DEALT_WITH:
+    if intended and kind == ui_intervene.DEALT_WITH and not rec:
         origin["intended_state"] = str(intended).strip().lower()
-    # a try that follows a recommendation keeps which one, and what else it
-    # acted on; the model is told nothing of it
-    if kind == ui_intervene.DEALT_WITH:
-        # (this also sets the target to the one thing the recommendation acts
-        #  on, when the pick stood for two hazards the model called the same)
-        origin.update(ui_intervene.follow_record(info, follow, target))
+    # a try that follows a recommendation keeps which one, what else it acted
+    # on, and the thing that was picked; the model is told nothing of it
+    origin.update(rec)
     after_id = start_live_run(image_bytes, name, plan["caption"],
                               settings=S, after_of=origin)
     IV_ACTIVE[info["run"]] = {

@@ -41,6 +41,11 @@ MODE = "retrospective"          # "the hazard never happened": the mode of a "re
 #                puddle is still there, the man has been moved to safety.
 # A try saved before this existed has no kind and is a "removed" try.
 REMOVED, DEALT_WITH = "removed", "dealt with"
+# the third way to change the picked thing in the NEW TRY form (Sunny,
+# 2026-11-25: "the rec should be an alternative to dealt with or remove").
+# It is a choice in the form only: the try it makes is saved as "dealt with",
+# with the recommendation it followed.
+BY_REC = "by a recommendation"
 KINDS = (REMOVED, DEALT_WITH)
 KIND_MODE = {REMOVED: "retrospective", DEALT_WITH: "prospective"}   # the frozen arm's names
 KIND_HELP = {
@@ -77,7 +82,13 @@ def kind_phrase(kind: Any, what: Any) -> str:
     names = " + ".join([str(what)] + [str(a) for a in (also if isinstance(also, list) else [])
                                       if isinstance(a, str) and a])
     r = followed(kind)
-    return f"{names} dealt with" + (f" by recommendation #{r}" if r is not None else "")
+    if r is None:
+        return f"{names} dealt with"
+    # the variable that was picked, when the recommendation acts on something
+    # else ("for building_1": its victim was moved, the building is as it was)
+    f = kind.get("addresses") if isinstance(kind, dict) else None
+    return (f"{names} dealt with by recommendation #{r}"
+            + (f" (for {f})" if isinstance(f, str) and f else ""))
 TRIES_FILE = "interventions.json"
 _IMG_EXT = (".png", ".jpg", ".jpeg", ".webp")
 MODALITY_LABEL = {"caption": "caption only", "image": "image only", "both": "both"}
@@ -347,15 +358,37 @@ def rec_targets(info: Any, rank: Any) -> list[str]:
     return [hazard] if hazard in can else []
 
 
-def rec_options(info: Any) -> list[dict]:
-    """One option per recommendation that can be followed (it acts on
-    something that can be tried)."""
+def recs_for(info: Any, target: Any) -> list[int]:
+    """The ranks of the recommendations that CONCERN the picked thing: it
+    is their hazard, or one of those they protect. Only those that act on
+    something that can be tried. A pick that stands for two hazards the
+    model called the same counts for both."""
+    unit = set(pick_unit(info, target))
     out = []
     for r in _acting_recs(info):
-        if rec_targets(info, r["rank"]):
-            text = " ".join(r["action"].split())
-            out.append({"label": f" #{r['rank']} " + (text if len(text) <= 90 else text[:87] + "..."),
-                        "value": r["rank"]})
+        q = r["structured_reasoning"]
+        aff = q.get("affected_objects") if isinstance(q.get("affected_objects"), list) else []
+        names = {str(q.get("threat") or "").strip()} | {str(x) for x in aff if isinstance(x, str)}
+        if unit & names and rec_targets(info, r["rank"]):
+            out.append(r["rank"])
+    return out
+
+
+def rec_options(info: Any, target: Any = None) -> list[dict]:
+    """One option per recommendation that can be followed. With `target`,
+    only those that concern it. Each says what it acts on, because that is
+    not always the picked thing ("extricate person_1" concerns the building
+    and moves the person)."""
+    only = None if target is None else set(recs_for(info, target))
+    out = []
+    for r in _acting_recs(info):
+        acts = rec_targets(info, r["rank"])
+        if not acts or (only is not None and r["rank"] not in only):
+            continue
+        text = " ".join(r["action"].split())
+        out.append({"label": f" #{r['rank']} " + (text if len(text) <= 90 else text[:87] + "...")
+                    + " \u00b7 acts on " + ", ".join(acts),
+                    "value": r["rank"]})
     return out
 
 
@@ -402,27 +435,34 @@ def follow_instructions(info: Any, rank: Any) -> tuple[str, str]:
 
 
 def follow_record(info: Any, rank: Any, target: Any) -> dict:
-    """What a try keeps when it followed a recommendation: {"target": the
-    thing that recommendation acts on, "follows": {"rank", "action"},
-    "also": [the other things it acted on]}. {} when the pick is not one
-    of the things that recommendation acts on (it was changed by hand
-    afterwards: an ordinary try).
+    """What a try keeps when the picked thing is changed BY A RECOMMENDATION:
+      {"target": the thing that recommendation acts on,
+       "follows": {"rank", "action"},
+       "also": [the other things it acted on],
+       "addresses": the picked thing, when the recommendation does not act
+                    on it (building_1 by "extricate person_1": the person is
+                    moved, the building is as it was); absent otherwise}
+    {} when that recommendation does not concern the pick.
 
     The pick may be an option that stands for two hazards the model called
-    the same (building_1 + rubble_1). A followed recommendation acts on ONE
-    of them ("clear the rubble"), so the try is recorded on that one, not
-    on the option's lead name."""
-    targets = rec_targets(info, rank)
+    the same (building_1 + rubble_1); the one the recommendation names is
+    the one recorded."""
     r = rec_of(info, rank)
-    if r is None or not targets:
+    if r is None or r["rank"] not in recs_for(info, target):
         return {}
+    acts = rec_targets(info, rank)
     unit = pick_unit(info, target)
-    mine = [t for t in targets if t in unit]
+    mine = [t for t in acts if t in unit]
+    lead = mine[0] if mine else acts[0]
+    out = {"target": lead,
+           "follows": {"rank": r["rank"], "action": " ".join(r["action"].split())},
+           "also": [t for t in acts if t != lead]}
     if not mine:
-        return {}
-    return {"target": mine[0],
-            "follows": {"rank": r["rank"], "action": " ".join(r["action"].split())},
-            "also": [t for t in targets if t != mine[0]]}
+        q = r["structured_reasoning"]
+        aff = q.get("affected_objects") if isinstance(q.get("affected_objects"), list) else []
+        names = [str(q.get("threat") or "").strip()] + [str(x) for x in aff if isinstance(x, str)]
+        out["addresses"] = next((u for u in unit if u in names), unit[0])
+    return out
 
 
 def victim_instructions(label: str, others: list[str]) -> tuple[str, str]:
@@ -622,6 +662,8 @@ def finish_try(base_dir: Path, after_dir: Path | None, pending: dict,
         one["follows"] = pending["follows"]
         one["also"] = [str(x) for x in (pending.get("also") if isinstance(pending.get("also"), list)
                                         else []) if isinstance(x, str) and x]
+        if isinstance(pending.get("addresses"), str) and pending["addresses"]:
+            one["addresses"] = pending["addresses"]
     if error:
         return {**one, "status": "failed", "why": str(error)}
     base = iv4.result_from_run_dir(base_dir)
@@ -777,6 +819,25 @@ def direction_cell(ch: Any) -> list:
         # grey on purpose: this is one of three inputs to the signed shift
         # below, which carries the colour
         style={"fontWeight": "700", "color": "#475569"})]
+
+
+def addressed_note(r: Any) -> list:
+    """Under the name of a feature row: 'addressed by recommendation #1
+    (person_1 dealt with)'. The row was the pick of a try that changed it
+    BY A RECOMMENDATION, and that recommendation acts on something else, so
+    this thing itself is as it was in the edited picture."""
+    a = r.get("addressed") if isinstance(r, dict) else None
+    if not isinstance(a, dict) or not isinstance(a.get("rank"), int) or isinstance(a.get("rank"), bool):
+        return []
+    acted = [str(x) for x in (a.get("acted") if isinstance(a.get("acted"), list) else [])
+             if isinstance(x, str) and x]
+    return [html.Div(f"addressed by recommendation #{a['rank']}"
+                     + (f" ({' + '.join(acted)} dealt with)" if acted else ""),
+                     className="iv-addressed",
+                     title="this thing was picked, and changed by following a recommendation "
+                           "that acts on something else: it is as it was in the edited "
+                           "picture, and its row carries that try's shift",
+                     style={"fontSize": "10px", "color": "#1d4ed8"})]
 
 
 def reading_cell(rd: Any) -> list:
@@ -1642,11 +1703,12 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
             way = ("" if not isinstance(sh, (int, float)) or isinstance(sh, bool) else
                    "eased" if sh > 0 else "escalated" if sh < 0 else "unchanged")
             td = {**_TD, "borderTop": "2px solid #cbd5e1"} if k == 0 else _TD
-            tds = [html.Td(html.Div(
+            tds = [html.Td([html.Div(
                 [ent_chip(oid, "#f97316"), kind("victim")]
                 + ([html.Span(" \u00b7 " + state, className="iv-state",
                               style={"color": "#64748b"})] if state else []),
-                className="iv-name", style={"whiteSpace": "nowrap"}), style=td),
+                className="iv-name", style={"whiteSpace": "nowrap"})]
+                + (addressed_note(r) if r.get("does") is not None else []), style=td),
                    html.Td(_bar(r.get("says_advice"), "#64748b"), style=td),
                    html.Td(_bar(r.get("says"), "#334155"), style=td),
                    html.Td(mech_cell(r) if r.get("does") is not None
@@ -1715,7 +1777,8 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
                                               "these were removed, and carries that try's shift",
                                         style={"fontSize": "10px", "color": "#64748b"})]
                               if (went := [str(x) for x in (r.get("gone_with") or [])])
-                              and r.get("does") is not None else []), style=_TD),
+                              and r.get("does") is not None else [])
+                           + addressed_note(r), style=_TD),
                    html.Td(_bar(r.get("says_advice"), "#64748b"), style=_TD),
                    html.Td(_bar(r.get("says"), "#334155"), style=_TD),
                    html.Td(mech_cell(r, again)
