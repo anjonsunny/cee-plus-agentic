@@ -1125,7 +1125,7 @@ def test_direction_comes_from_the_danger_level_and_type_from_the_recommendations
     rd = declared4.try_reading(b, ({**one, "target": "car_1"}, {**b, "disaster_level": 7}))
     assert (rd["direction"], rd["type"]) == ("eases", "")
     # the level fell and the recommendations part went up: said as it is, not as the level alone
-    assert ui_iv.words_of(rd) == "mixed: danger level eased, recommendations escalated"
+    assert ui_iv.words_of(rd) == "mixed (1 eased, 1 escalated)"
     assert ui_iv.words_of(None) == ""
     assert ui_iv.words_of({"direction": "eases", "type": "drops"}) == "eased \u00b7 its recommendations dropped"
     assert ui_iv.words_of({"direction": "eases", "type": "keeps", "direction_by": "level"}) == (

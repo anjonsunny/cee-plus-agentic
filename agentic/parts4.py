@@ -162,8 +162,8 @@ def agree(parts: Any) -> dict:
         all that moved went one way          "eased"
         most went one way, by count AND      "eased (3 of 4)", of the
         by size                               parts that moved
-        they split (the count and the size   "mixed: danger level eased,
-        disagree, or the count is a tie)      recommendations and graph escalated"
+        they split (the count and the size   "mixed (3 eased, 2 escalated)"
+        disagree, or the count is a tie)
         nothing went up or down, something   "redirected"
         changed
     """
@@ -184,7 +184,9 @@ def agree(parts: Any) -> dict:
             text = f"{word} ({len(e) if word == EASED else len(x)} of {n})"
         else:
             word = MIXED
-            text = f"mixed: {_and(e)} eased, {_and(x)} escalated"
+            # just the two counts (Sunny, 2026-11-25); which part went which
+            # way is in the bar picture over the mechanistic cell
+            text = f"mixed ({len(e)} eased, {len(x)} escalated)"
     elif e or x:
         word = EASED if e else ESCALATED
         k = len(e or x)

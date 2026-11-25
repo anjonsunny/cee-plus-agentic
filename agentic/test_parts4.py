@@ -299,8 +299,7 @@ def test_the_direction_of_a_row_is_what_all_its_parts_say():
              _p("itself", 0.51, "eased", target="house_1")]
     got = parts4.agree(house)
     assert got["word"] == "mixed"                # 3 against 2 by count, the other way by size
-    assert got["text"] == ("mixed: danger level, state and house_1 itself eased, "
-                           "recommendations and graph escalated")
+    assert got["text"] == "mixed (3 eased, 2 escalated)"
     # most one way, by count and by size; a part that stood still is not counted
     car = [_p("level", 0.0, "eased"), _p("recommendations", 1.0, "eased"),
            _p("graph", 0.75, "escalated"), _p("state", 0.2, "eased"),
@@ -316,7 +315,7 @@ def test_the_direction_of_a_row_is_what_all_its_parts_say():
                         )["text"] == "eased (1 of 2)"
     # a tie by count is a split
     assert parts4.agree([_p("level", 0.2, "eased"), _p("graph", 0.5, "escalated")]
-                        )["text"] == "mixed: danger level eased, graph escalated"
+                        )["text"] == "mixed (1 eased, 1 escalated)"
     # nothing went up or down
     assert parts4.agree([_p("graph", 0.5, "redirected"), _p("state", 0.3, "changed")]
                         )["text"] == "redirected"
@@ -330,9 +329,8 @@ def test_the_direction_of_a_row_is_what_all_its_parts_say():
 def test_the_row_shows_that_sentence_and_an_older_record_keeps_its_own():
     from agentic import ui_intervene as ui_iv
     mixed = {"direction": "eases", "direction_by": "level", "type": "keeps",
-             "agree": {"word": "mixed", "text": "mixed: danger level eased, graph escalated"}}
-    assert ui_iv.words_of(mixed) == ("mixed: danger level eased, graph escalated "
-                                     "\u00b7 its recommendations kept")
+             "agree": {"word": "mixed", "text": "mixed (1 eased, 1 escalated)"}}
+    assert ui_iv.words_of(mixed) == "mixed (1 eased, 1 escalated) \u00b7 its recommendations kept"
     assert ui_iv.direction_colour(mixed) == "#b45309"
     cell = ui_iv.way_cell(mixed, {})
     assert cell.style["color"] == "#b45309" and "what ALL the parts" in cell.title

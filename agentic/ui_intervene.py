@@ -1125,8 +1125,8 @@ def direction_colour(r: Any) -> str:
 
 def direction_phrase(r: Any) -> str:
     """The direction of a row or a try, from ALL the parts of its shift:
-    'eased', 'eased (3 of 5)', 'mixed: danger level eased, recommendations
-    and graph escalated' (agentic/parts4.agree). Before 2026-11-25 the
+    'eased', 'eased (3 of 4)', 'mixed (3 eased, 2 escalated)'
+    (agentic/parts4.agree). Before 2026-11-25 the
     danger level alone decided the word while the number beside it was made
     of every part; a record without the parts' directions still reads that
     way: 'danger level eased', 'urgency eased', or just 'eased'."""
