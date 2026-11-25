@@ -326,6 +326,25 @@ def test_a_hazard_that_went_with_the_removed_one_carries_the_same_shift():
     assert rows["smoke_1"].endswith("eased (3 of 4)")       # of the parts that moved
 
 
+def test_the_tried_row_stays_solid_and_the_one_that_went_with_it_is_faded():
+    """Sunny, 2026-11-25, H: the house fire was dealt with and the smoke
+    went with it; the table lists the smoke first, and the house (the thing
+    tried) was the faded row."""
+    b, objs = _smoke_scene()
+    one, _ = _try("fire_1", 0.6)
+    c = declared4.compare(b, [(one, _after(objs, ("fire_1", "smoke_1"), ["spill_1"]))])
+    for order in (("smoke_1", "fire_1", "spill_1"), ("fire_1", "smoke_1", "spill_1")):
+        by = {r["object_id"]: r for r in c["hazards"]}
+        card = ui_iv.card_component({**c, "hazards": [by[h] for h in order]}, {})
+        feats = _by_class(card, "iv-feature")
+        faded = [_flat(r).split()[0] for r in feats if _by_class(r, "iv-again")]
+        solid = [_flat(r).split()[0] for r in feats if _by_class(r, "iv-own")]
+        assert faded == ["smoke_1"] and solid == ["fire_1"], order
+    # nonsense in the fields never breaks the table
+    odd = [{**by["smoke_1"], "gone_with": "fire_1", "try_with": 3}, {**by["fire_1"], "gone_with": None}]
+    ui_iv.card_component({**c, "hazards": odd}, {})
+
+
 @pytest.mark.usefixtures("three_part_shift")
 def test_removing_it_by_itself_later_is_its_own_test_and_wins():
     b, objs = _smoke_scene()

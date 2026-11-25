@@ -133,7 +133,7 @@ def part(name: str, size: Any, direction: str, **more: Any) -> dict:
 
 
 MIXED = "mixed"
-PART_LABEL = {"level": "danger level"}
+PART_LABEL = {"level": "danger level", "recommendations": "all recommendations"}
 
 
 def label(p: Any) -> str:

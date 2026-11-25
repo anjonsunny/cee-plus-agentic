@@ -235,7 +235,9 @@ def test_the_mechanistic_cell_carries_the_bars_of_its_parts():
     cell = ui_iv.mech_cell(row["person_1"])
     data = json.loads(getattr(cell, "data-bars"))
     names = [r["name"] for r in data["rows"]]
-    assert names == ["level", "recommendations", "graph", "state", "person_1 itself"]
+    # "all recommendations": the whole list; those that name the thing are a
+    # line of their own under "itself", and the two can go opposite ways
+    assert names == ["level", "all recommendations", "graph", "state", "person_1 itself"]
     assert all(set(r) >= {"name", "size", "direction"} for r in data["rows"])
     own = data["rows"][-1]
     assert [x["name"] for x in own["lines"]][0] == "at risk"

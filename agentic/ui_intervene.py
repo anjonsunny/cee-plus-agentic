@@ -978,6 +978,10 @@ def _part_ok(p: Any) -> bool:
 def part_label(p: Any, target: Any = "") -> str:
     """The name a part goes by on the screen: 'house_1 itself'."""
     name = str((p if isinstance(p, dict) else {}).get("name") or "")
+    if name == "recommendations":
+        # the whole list, not only those that name the tried thing (that is a
+        # line of its own under "itself"; the two can go opposite ways)
+        return "all recommendations"
     if name == "itself":
         who = str((p.get("target") if isinstance(p, dict) else "") or target or "").strip()
         return f"{who} itself" if who else "the tried object itself"
@@ -1518,12 +1522,21 @@ def card_component(cmp: dict, tbl: dict, syn: dict | None = None,
         quiet = {"color": "#94a3b8", "fontSize": "10.5px"}
         body = []
         seen: set[str] = set()
+        all_ids = {str(r.get("object_id")) for r in feats}
         for r in feats:
             oid, role = str(r.get("object_id")), str(r.get("role") or "")
-            # a later row of a try already shown: the same share again, so
-            # its bar is faded (five rows must not read as five shares)
-            again = any(str(m) in seen for m in (r.get("try_with") or []))
-            seen.add(oid)
+            # one try, several rows: the same share again, so all but one
+            # bar is faded (five rows must not read as five shares). The row
+            # that stays solid is the thing that was TRIED; a row that only
+            # went with it (the smoke with the house) is the faded one, also
+            # when the table lists it first (Sunny, 2026-11-25).
+            went_with, tried_with = (
+                [str(m) for m in (r.get(k) if isinstance(r.get(k), (list, tuple)) else [])]
+                for k in ("gone_with", "try_with"))
+            along = any(m in all_ids for m in went_with)
+            again = along or any(m in seen for m in tried_with)
+            if not along:
+                seen.add(oid)
             alone = [str(x) for x in (r.get("alone_of") or [])]
             same = [str(x) for x in (r.get("same_as") or [])]
             state = str(r.get("state") or "")
