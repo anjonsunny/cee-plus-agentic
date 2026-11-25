@@ -366,6 +366,41 @@ def _rank(rec: Any) -> Any:
 EASED, ESCALATED, MIXED_WAY = "eased", "escalated", "mixed"
 
 
+_ACTION_CACHE: dict[tuple[str, str], Any] = {}
+
+
+def action_shift(before_action: Any, after_action: Any) -> Any:
+    """How far apart two actions are BY MEANING, 0 (the same) to 1: one
+    minus the similarity of the two sentences (the frozen arm's embedding
+    measure, the one the pathology part uses). No verb list, so it reads
+    the same in any domain (Sunny, 2026-11-25). It has no direction: which
+    way a recommendation went is read off how soon and size.
+
+    None when it cannot be measured (the embedding model is not installed,
+    or switched off, as in the tests) or one side has no action.
+
+    Read it with care: on E and H the SAME action reworded reads about 0.25
+    to 0.30 ("deploy a hose line to extinguish the car fire" against
+    "extinguish the car with water or foam"), and a different action 0.36
+    to 0.68 ("extricate from the window" against "retreat to a safe
+    distance": 0.36). So it is shown, and NOT yet counted in the cell's own
+    number."""
+    a = " ".join(str(before_action or "").split())
+    b = " ".join(str(after_action or "").split())
+    if not a or not b or not isinstance(before_action, str) or not isinstance(after_action, str):
+        return None
+    if a == b:
+        return 0.0
+    if (a, b) not in _ACTION_CACHE:
+        try:
+            v = iv4._frozen().rec_semantic_shift([{"action": a}], [{"action": b}])
+        except Exception:
+            v = None
+        _ACTION_CACHE[(a, b)] = (round(float(v), 3) if isinstance(v, (int, float))
+                                 and not isinstance(v, bool) else None)
+    return _ACTION_CACHE[(a, b)]
+
+
 def impact_detail(rec: Any, cell: Any, n: int) -> dict:
     """{"value": 0..1 or None, "reasons": [{"text", "way"}], "way",
     "fields"} for one cell. `way` says which direction the change went:
@@ -380,7 +415,8 @@ def impact_detail(rec: Any, cell: Any, n: int) -> dict:
     the perspective of recommendation"): [{"name", "size": that field's own
     change 0..1, "direction": eased | escalated | redirected | changed |
     unchanged, "before", "after"}], every field listed, also the ones that
-    did not change. The value is these sizes times the weights in IMPACT.
+    did not change. The value is these sizes times the weights in IMPACT;
+    the "action" field (when it can be measured) is shown and not counted.
     Never raises."""
     cell = cell if isinstance(cell, dict) else {}
     state = cell.get("state")
@@ -401,6 +437,16 @@ def impact_detail(rec: Any, cell: Any, n: int) -> dict:
         eff_b, eff_a = _quad(rec)[1], (_quad(after)[1] if after else "")
     except Exception:
         who_b, who_a, eff_b, eff_a = [], [], "", ""
+    # the action itself: how far the two sentences are apart by meaning.
+    # Shown first; not counted in the value (see action_shift).
+    try:
+        act = action_shift(rec.get("action") if isinstance(rec, dict) else None,
+                           after.get("action"))
+    except Exception:
+        act = None
+    if act is not None:
+        fields.append({**parts4.part("action", act, parts4.CHANGED), "before": "", "after": "",
+                       "counted": False})
     who_size = eff_size = 0.0
     if state == CHANGED:
         # by how much: losing one target of four is not losing all of them

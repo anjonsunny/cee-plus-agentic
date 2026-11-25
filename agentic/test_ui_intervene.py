@@ -1899,3 +1899,64 @@ def test_a_cell_carries_its_change_field_by_field():
     for bad_rec in (None, "x", {"structured_reasoning": 5}, {"rank": "one"}):
         assert isinstance(g.impact_detail(bad_rec, cell, 0)["fields"], list)
         assert isinstance(g.impact_detail(before, {"state": g.CHANGED, "after": bad_rec}, 0)["fields"], list)
+
+
+def test_the_action_is_a_field_of_the_cell_shown_and_not_counted(monkeypatch):
+    """Sunny, 2026-11-25: E, 'extricate person_1' became 'retreat person_1':
+    same hazard, same person, same how soon, same size, and the cell read
+    "nothing changed". How far the two actions are apart by meaning is a
+    field of its own. It has no direction (that is how soon and size)."""
+    from agentic import grounding4 as g
+    before = {"rank": 1, "action": "Extricate person_1 from the window.", "structured_reasoning": {
+        "threat": "building_1", "state": "collapsed", "effect": "may_harm",
+        "affected_objects": ["person_1"], "how_soon": "now", "size": "large"}}
+    after = {**before, "action": "Retreat person_1 to a safe distance."}
+    cell = {"state": g.STAYS, "after": after}
+    # the tests never load the embedding model: no such field, as before
+    assert g.action_shift(before["action"], after["action"]) is None
+    assert "action" not in [f["name"] for f in g.impact_detail(before, cell, 4)["fields"]]
+    # measured
+    monkeypatch.setattr(g, "action_shift", lambda a, b: 0.36)
+    det = g.impact_detail(before, cell, 4)
+    first = det["fields"][0]
+    assert (first["name"], first["size"], first["direction"]) == ("action", 0.36, "changed")
+    assert first["counted"] is False
+    assert det["value"] == 0.0 and det["way"] == ""          # not counted, no direction
+    data = json.loads(ui_iv.cell_bars(before["action"], {**cell, "fields": det["fields"],
+                                                         "impact": det["value"]}))
+    assert data["rows"][0]["name"] == "action" and data["rows"][0]["note"] == ui_iv.ACTION_NOTE
+    assert data["top"] == ["before: Extricate person_1 from the window.",
+                           "after: Retreat person_1 to a safe distance."]
+    # the measure that cannot be read, or breaks, leaves the cell as it was
+    monkeypatch.setattr(g, "action_shift", lambda a, b: None)
+    assert "action" not in [f["name"] for f in g.impact_detail(before, cell, 4)["fields"]]
+    monkeypatch.setattr(g, "action_shift", lambda a, b: 1 / 0)
+    assert "action" not in [f["name"] for f in g.impact_detail(before, cell, 4)["fields"]]
+
+
+def test_the_action_measure_never_raises_and_reads_the_same_text_as_zero(monkeypatch):
+    from agentic import grounding4 as g
+    assert g.action_shift("Move  man_1 back.", "Move man_1 back.") == 0.0     # no model needed
+    for a, b in ((None, "x"), ("x", None), ("", "x"), (3, "x"), ("x", ["y"]), ({}, {})):
+        assert g.action_shift(a, b) is None
+    calls = []
+
+    class Fake:
+        def rec_semantic_shift(self, x, y):
+            calls.append((x[0]["action"], y[0]["action"]))
+            return 0.4321
+    monkeypatch.setattr(g.iv4, "_frozen", lambda: Fake())
+    monkeypatch.setattr(g, "_ACTION_CACHE", {})
+    assert g.action_shift("Rescue him.", "Move him back.") == 0.432
+    assert g.action_shift("Rescue him.", "Move him back.") == 0.432 and len(calls) == 1   # kept
+
+    class Broken:
+        def rec_semantic_shift(self, x, y):
+            raise RuntimeError("no model")
+    monkeypatch.setattr(g.iv4, "_frozen", lambda: Broken())
+    assert g.action_shift("Rescue her.", "Move her back.") is None
+    for odd in ("0.4", True, None, [0.4]):
+        monkeypatch.setattr(g, "_ACTION_CACHE", {})
+        monkeypatch.setattr(g.iv4, "_frozen", lambda v=odd: type("F", (), {
+            "rec_semantic_shift": lambda self, x, y: v})())
+        assert g.action_shift("A b.", "C d.") is None
