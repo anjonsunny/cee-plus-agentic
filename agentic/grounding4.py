@@ -650,15 +650,26 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
         left_behind = sorted({m for h in rset if h in grp for m in grp[h] if m not in rset})
         target = str(one.get("target") or "")
         is_victim = bool(target) and iv4.is_victim(before, target)
+        # a try that FOLLOWED a recommendation may have acted on more than
+        # one thing ("move both officers back"): the others count as tried too
+        also = [str(x) for x in (one.get("also") if isinstance(one.get("also"), list) else [])
+                if isinstance(x, str) and x and x != target]
+        tried = {target} | {a for a in also if iv4.is_victim(before, a)}
+        if not is_victim:
+            more = [a for a in also if not iv4.is_victim(before, a)]
+            rset.update(more)
+            removed = removed + [a for a in more if a not in removed]
+            whole = {same4.key(h, grp) for h in rset
+                     if h in grp and all(m in rset for m in grp[h])}
         col_cells, used = _match_column(base, after_recs, rset | whole, name,
-                                        victims={target} if is_victim else None)
+                                        victims=tried if is_victim else None)
         if is_victim:
             lab = {str(o.get("label") or "") for o in before["detected_objects"]
                    if str(o.get("object_id") or "") == target}
             # only when that label is the victim's alone ("the man" with two men says nothing)
             lab = {x for x in lab if x and sum(1 for o in before["detected_objects"]
                                                if str(o.get("label") or "") == x) == 1}
-            _victim_cells(col_cells, base, {target}, lab,
+            _victim_cells(col_cells, base, tried, lab,
                           stays=one.get("kind") == "dealt with",
                           after_recs=after_recs, name=name, used=used)
         n_recs = max(len(base), len(after_recs))
@@ -713,6 +724,9 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
             # did the model see the edit that was meant?
             "edit": edit_seen(before, after, one),
             "kind": "dealt with" if one.get("kind") == "dealt with" else "removed",
+            # the recommendation this try carried out, when it followed one
+            "follows": one.get("follows") if isinstance(one.get("follows"), dict) else None,
+            "also": also,
             "also_removed": [x for x in removed if x != str(one.get("target") or "")],
             "left_behind": left_behind,
             "after_run": one.get("after_run"),

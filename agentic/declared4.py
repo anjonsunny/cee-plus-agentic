@@ -684,10 +684,15 @@ def _best_tries(before: Any, tries: Any) -> dict[str, dict]:
         if victim:
             # the other end of the danger: this try is the victim's own
             # test and says nothing about any hazard
-            old = out.get(target)
-            if old is None or value > old["value"]:
-                out[target] = {"value": value, "parts": parts, "try": k, "target": target,
-                               "direct": True, "victim": True, **extra}
+            # (a try that followed a recommendation may have moved more
+            #  than one: "move both officers back"; each is its own row)
+            also = [str(x) for x in (one.get("also") if isinstance(one.get("also"), list) else [])
+                    if isinstance(x, str) and x and x != target]
+            for who in [target] + [a for a in also if iv4.is_victim(before, a)]:
+                old = out.get(who)
+                if old is None or value > old["value"]:
+                    out[who] = {"value": value, "parts": parts, "try": k, "target": target,
+                                "direct": True, "victim": True, **extra}
             continue
         gone = same4.members(removed_name(before, one, after))
         aimed = set(gone)                       # the target and its same-hazard pair

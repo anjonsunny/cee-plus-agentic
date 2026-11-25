@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -57,9 +58,26 @@ def kind_of(x: Any) -> str:
     return DEALT_WITH if k == DEALT_WITH else REMOVED
 
 
+def followed(x: Any) -> Any:
+    """The rank of the recommendation a try carried out, or None: a try
+    made by FOLLOWING a recommendation (Sunny, 2026-11-25: "so that we can
+    apply rec") keeps {"follows": {"rank", "action"}}."""
+    f = x.get("follows") if isinstance(x, dict) else None
+    r = f.get("rank") if isinstance(f, dict) else None
+    return r if isinstance(r, int) and not isinstance(r, bool) else None
+
+
 def kind_phrase(kind: Any, what: Any) -> str:
-    """'removed fire_1' / 'fire_1 dealt with'."""
-    return f"{what} dealt with" if kind_of(kind) == DEALT_WITH else f"removed {what}"
+    """'removed fire_1' / 'fire_1 dealt with' / 'person_1 dealt with by
+    recommendation #1' (and 'person_1 + person_2 ...' when the followed
+    recommendation acted on more than one)."""
+    if kind_of(kind) != DEALT_WITH:
+        return f"removed {what}"
+    also = kind.get("also") if isinstance(kind, dict) else None
+    names = " + ".join([str(what)] + [str(a) for a in (also if isinstance(also, list) else [])
+                                      if isinstance(a, str) and a])
+    r = followed(kind)
+    return f"{names} dealt with" + (f" by recommendation #{r}" if r is not None else "")
 TRIES_FILE = "interventions.json"
 _IMG_EXT = (".png", ".jpg", ".jpeg", ".webp")
 MODALITY_LABEL = {"caption": "caption only", "image": "image only", "both": "both"}
@@ -280,6 +298,133 @@ def picker_component(info: Any, target: Any, box_id: Any = None) -> list:
     return [html.Div([html.Img(src=src)] + [b for _a, b in boxes], className="iv-pick-wrap")]
 
 
+# ---- a try made by FOLLOWING a recommendation --------------------------------
+# Sunny, 2026-11-25: instead of picking an object, pick one of the model's
+# own recommendations and show the scene after it was carried out. It is
+# always realistic (it is what the model itself said to do), and it is the
+# step of the progressive counterfactual. The model is never told: the
+# edited scene is a fresh, independent look, as with every other try.
+def _acting_recs(info: Any) -> list[dict]:
+    res = info.get("result") if isinstance(info, dict) else None
+    recs = res.get("recommendations") if isinstance(res, dict) else None
+    out = []
+    for r in recs if isinstance(recs, list) else []:
+        if not isinstance(r, dict) or r.get("benign"):
+            continue
+        q = r.get("structured_reasoning")
+        if (isinstance(r.get("rank"), int) and not isinstance(r.get("rank"), bool)
+                and isinstance(r.get("action"), str) and r["action"].strip()
+                and isinstance(q, dict) and str(q.get("effect") or "").strip().upper() != "N/A"):
+            out.append(r)
+    return out
+
+
+def rec_of(info: Any, rank: Any) -> Any:
+    for r in _acting_recs(info):
+        if r["rank"] == rank and not isinstance(rank, bool):
+            return r
+    return None
+
+
+def rec_targets(info: Any, rank: Any) -> list[str]:
+    """What a recommendation ACTS ON, among the things that can be tried:
+    the ones it protects when its action names them ("extricate person_1":
+    the person is moved), else its hazard ("clear rubble_1": the rubble is
+    dealt with). [] when it names nothing that can be tried."""
+    r = rec_of(info, rank)
+    if r is None:
+        return []
+    can = [str(c.get("object_id")) for c in (info.get("candidates") or [])
+           if isinstance(c, dict) and str(c.get("object_id") or "")]
+    q = r["structured_reasoning"]
+    words = set(re.findall(r"[a-z][a-z_]*_\d+", r["action"].lower()))
+    aff = [str(x) for x in (q.get("affected_objects") if isinstance(q.get("affected_objects"), list)
+                            else []) if isinstance(x, str)]
+    named = [a for a in dict.fromkeys(aff) if a in words and a in can]
+    if named:
+        return named
+    hazard = str(q.get("threat") or "").strip()
+    return [hazard] if hazard in can else []
+
+
+def rec_options(info: Any) -> list[dict]:
+    """One option per recommendation that can be followed (it acts on
+    something that can be tried)."""
+    out = []
+    for r in _acting_recs(info):
+        if rec_targets(info, r["rank"]):
+            text = " ".join(r["action"].split())
+            out.append({"label": f" #{r['rank']} " + (text if len(text) <= 90 else text[:87] + "..."),
+                        "value": r["rank"]})
+    return out
+
+
+def plain_action(info: Any, action: Any) -> str:
+    """The action with the run's names replaced by plain words, for the
+    person who edits the picture ('person_1' means nothing to an image
+    tool): 'the person (man visible at an upper window)' the first time,
+    'the person' after."""
+    text = " ".join(str(action or "").split())
+    res = info.get("result") if isinstance(info, dict) else None
+    listed = res.get("detected_objects") if isinstance(res, dict) else None
+    objs = {str(o.get("object_id")): o for o in (listed if isinstance(listed, list) else [])
+            if isinstance(o, dict) and str(o.get("object_id") or "")}
+    seen: set[str] = set()
+
+    def swap(m: Any) -> str:
+        oid = m.group(0)
+        o = objs.get(oid.lower())
+        if o is None:
+            return oid
+        label = str(o.get("label") or oid).replace("_", " ")
+        desc = " ".join(str(o.get("description") or "").split())
+        first = oid.lower() not in seen
+        seen.add(oid.lower())
+        return f"the {label}" + (f" ({desc})" if desc and first else "")
+    return re.sub(r"\b[A-Za-z][A-Za-z_]*_\d+\b", swap, text)
+
+
+def follow_instructions(info: Any, rank: Any) -> tuple[str, str]:
+    """(caption instruction, image instruction) for showing the scene after
+    one recommendation was carried out. ("", "") when it cannot be
+    followed. Text for the person who edits, never for the model."""
+    r = rec_of(info, rank)
+    if r is None or not rec_targets(info, rank):
+        return "", ""
+    act = plain_action(info, r["action"]).rstrip(".")
+    cap = (f"Rewrite the caption so it describes the picture after this action has been carried "
+           f"out and has worked: \u201c{act}.\u201d Describe only what is in the picture. "
+           f"Keep every other detail identical.")
+    img = (f"Edit this photo to show the scene after this action has been carried out and has "
+           f"worked: \u201c{act}.\u201d Keep everything else exactly the same: every other "
+           f"object, the positions, the lighting, the camera angle and the framing.")
+    return cap, img
+
+
+def follow_record(info: Any, rank: Any, target: Any) -> dict:
+    """What a try keeps when it followed a recommendation: {"target": the
+    thing that recommendation acts on, "follows": {"rank", "action"},
+    "also": [the other things it acted on]}. {} when the pick is not one
+    of the things that recommendation acts on (it was changed by hand
+    afterwards: an ordinary try).
+
+    The pick may be an option that stands for two hazards the model called
+    the same (building_1 + rubble_1). A followed recommendation acts on ONE
+    of them ("clear the rubble"), so the try is recorded on that one, not
+    on the option's lead name."""
+    targets = rec_targets(info, rank)
+    r = rec_of(info, rank)
+    if r is None or not targets:
+        return {}
+    unit = pick_unit(info, target)
+    mine = [t for t in targets if t in unit]
+    if not mine:
+        return {}
+    return {"target": mine[0],
+            "follows": {"rank": r["rank"], "action": " ".join(r["action"].split())},
+            "also": [t for t in targets if t != mine[0]]}
+
+
 def victim_instructions(label: str, others: list[str]) -> tuple[str, str]:
     """(caption instruction, image instruction) for taking a VICTIM out of
     the scene. The victim is not in the picture at all; every hazard stays
@@ -472,6 +617,11 @@ def finish_try(base_dir: Path, after_dir: Path | None, pending: dict,
         "after_run": Path(after_dir).name if after_dir else None,
         "settings": pending.get("settings"),
     }
+    # a try made by following a recommendation
+    if followed(pending) is not None:
+        one["follows"] = pending["follows"]
+        one["also"] = [str(x) for x in (pending.get("also") if isinstance(pending.get("also"), list)
+                                        else []) if isinstance(x, str) and x]
     if error:
         return {**one, "status": "failed", "why": str(error)}
     base = iv4.result_from_run_dir(base_dir)
@@ -748,6 +898,11 @@ def table_component(tbl: dict, runs_dir: Path | None = None) -> list:
             # thumbnail (it was black); nothing else under the picture
             + ([html.Span(f"#{c.get('index')} "), ent_chip(str(c.get("target")), chip_col(c)),
                 html.Span(" dealt with", className="iv-kind-col", title=KIND_HELP[DEALT_WITH])]
+               + ([html.Span(f" by recommendation #{followed(c)}", className="iv-followed",
+                             title="this try shows the scene after that recommendation was "
+                                   "carried out: " + str((c.get("follows") or {}).get("action") or ""),
+                             style={"color": "#1d4ed8", "fontWeight": "700"})]
+                  if followed(c) is not None else [])
                if kind_of(c) == DEALT_WITH else
                [html.Span(f"#{c.get('index')} removed "),
                 ent_chip(str(c.get("target")), chip_col(c))])

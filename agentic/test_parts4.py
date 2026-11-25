@@ -345,3 +345,45 @@ def test_the_row_shows_that_sentence_and_an_older_record_keeps_its_own():
         assert ui_iv.words_of(old) == "danger level eased"
         assert ui_iv.direction_colour(old) == "#16a34a"
     assert ui_iv.direction_colour(None) == "#64748b"
+
+
+# ---- a followed recommendation that acted on two things ----------------------
+def _two_officers(moved=False):
+    objs = [{"object_id": "building_1", "label": "building", "state": "collapsed"},
+            {"object_id": "officer_1", "label": "person", "state": "standing"},
+            {"object_id": "officer_2", "label": "person", "state": "standing"}]
+    edges = [] if moved else [
+        {"source": "building_1", "effect": "may_harm", "target": "officer_1"},
+        {"source": "building_1", "effect": "may_harm", "target": "officer_2"}]
+    recs = [] if moved else [_rec(1, "Move officer_1 and officer_2 back from building_1.",
+                                  "building_1", ["officer_1", "officer_2"], state="collapsed")]
+    return {"detected_objects": objs, "threats": [{"object_id": "building_1"}],
+            "at_risk": [] if moved else [{"object_id": "officer_1", "kind": "proximity"},
+                                         {"object_id": "officer_2", "kind": "proximity"}],
+            "graph_b": {"nodes": [], "edges": copy.deepcopy(edges)},
+            "causal_graph": {"nodes": [], "edges": copy.deepcopy(edges)},
+            "recommendations": recs, "disaster_level": 7}
+
+
+def test_both_things_a_followed_recommendation_moved_count_as_tried():
+    """E, 2026-11-25: 'move both officers back' is one try on two people."""
+    from agentic import grounding4
+    b, a = _two_officers(), _two_officers(moved=True)
+    one = {**_one("officer_1"), "also": ["officer_2"],
+           "follows": {"rank": 1, "action": "Move officer_1 and officer_2 back from building_1."}}
+    tbl = grounding4.table(b, [(one, a)])
+    col = tbl["columns"][0]
+    assert col["follows"]["rank"] == 1 and col["also"] == ["officer_2"] and col["victim"] is True
+    cell = tbl["rows"][0]["cells"][0]
+    assert cell["named_removed"] is True and cell["state"] == grounding4.GONE
+    # each of the two has its own row in the feature table, with that try's shift
+    rows = {r["object_id"]: r for r in declared4.compare(b, [(one, a)])["victims"]}
+    assert rows["officer_1"]["shift"] == rows["officer_2"]["shift"] is not None
+    # without "also", only the picked one is the tried one
+    rows = {r["object_id"]: r for r in declared4.compare(b, [(_one("officer_1"), a)])["victims"]}
+    assert rows["officer_1"]["shift"] is not None and rows["officer_2"]["shift"] is None
+    # nonsense in the record never breaks either table
+    for also in ("officer_2", 3, None, [None, 4, "ghost_9", "officer_1"]):
+        odd = {**_one("officer_1"), "also": also, "follows": "zz"}
+        grounding4.table(b, [(odd, a)])
+        declared4.compare(b, [(odd, a)])

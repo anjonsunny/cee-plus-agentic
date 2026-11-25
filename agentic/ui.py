@@ -6648,6 +6648,19 @@ app.layout = html.Div([
                               # boxed: click a box to pick it (Sunny, 2026-11-23)
                               html.Div([
                                   html.Div([
+                                  # FOLLOW A RECOMMENDATION (Sunny, 2026-11-25): pick one
+                                  # of the model's own recommendations instead of an
+                                  # object; WHAT and HOW are filled in from it and the
+                                  # edit instruction is its action, carried out
+                                  html.Div([
+                                      html.Span("follow", className="iv-lbl"),
+                                      dcc.Dropdown(id="iv-follow", options=[], value=None,
+                                                   clearable=True, searchable=False,
+                                                   placeholder="a recommendation: show the scene "
+                                                               "after it was carried out (optional)",
+                                                   style={"flex": "1", "fontSize": "11.5px",
+                                                          "color": "#111"}),
+                                  ], className="iv-row-form"),
                                   html.Div([
                                       html.Span("what", className="iv-lbl"),
                                       dcc.Dropdown(id="iv-target", options=[], value=None,
@@ -6941,17 +6954,58 @@ def iv_pick(clicks, options, run_id):
     return value if value else dash.no_update
 
 
+@app.callback(Output("iv-follow", "options"), Output("iv-follow", "value"),
+              Input("iv-target", "options"),
+              State("run-id", "data"), State("iv-follow", "value"))
+def iv_follow_options(_targets, run_id, value):
+    """The recommendations of the run on screen that can be followed. It is
+    refilled whenever the list of things that can be tried is; a pick is
+    kept while it is still one of them."""
+    from agentic import ui_intervene
+    opts = ui_intervene.rec_options(_iv_info(run_id))
+    keep = value if any(o["value"] == value for o in opts) else None
+    # one line each, cut with "..." when the column is narrow (a long action
+    # wrapped over the next option); the whole action shows on hover
+    one_line = {"display": "block", "whiteSpace": "nowrap", "overflow": "hidden",
+                "textOverflow": "ellipsis"}
+    return [{"value": o["value"],
+             "label": html.Span(o["label"].strip(), title=o["label"].strip(), style=one_line)}
+            for o in opts], keep
+
+
+@app.callback(Output("iv-target", "value", allow_duplicate=True),
+              Output("iv-kind", "value"),
+              Input("iv-follow", "value"), State("run-id", "data"),
+              prevent_initial_call=True)
+def iv_follow_pick(rank, run_id):
+    """Picking a recommendation fills in WHAT (the first thing it acts on)
+    and HOW (dealt with: its action was carried out)."""
+    from agentic import ui_intervene
+    info = _iv_info(run_id)
+    targets = ui_intervene.rec_targets(info, rank)
+    if not targets:
+        return dash.no_update, dash.no_update
+    # the option it belongs to (two hazards the model called the same are one option)
+    value = ui_intervene.option_for(info, ui_intervene.target_options(info), targets[0])
+    return (value or dash.no_update), ui_intervene.DEALT_WITH
+
+
 @app.callback(Output("iv-instructions", "children"), Output("iv-caption", "value"),
               Input("iv-target", "value"), Input("iv-kind", "value"),
+              Input("iv-follow", "value"),
               State("run-id", "data"))
-def iv_instructions(target, kind, run_id):
+def iv_instructions(target, kind, follow, run_id=None):
     """The two edit instructions for the picked hazard or victim and the
     kind of try (the frozen arm's words), and the original caption put in
-    the box, ready to be edited."""
+    the box, ready to be edited. When a recommendation is being followed,
+    the instructions are its own action, carried out."""
     from agentic import ui_intervene
     info = _iv_info(run_id)
     cap, img = (ui_intervene.instructions(info, target, kind)
                 if info and target else ("", ""))
+    if (cap and ui_intervene.kind_of(kind) == ui_intervene.DEALT_WITH
+            and ui_intervene.follow_record(info, follow, target)):
+        cap, img = ui_intervene.follow_instructions(info, follow)
     if not cap:
         return [], ""
     box = {"fontSize": "11px", "color": "#334155", "background": "#f1f5f9",
@@ -6992,7 +7046,8 @@ def iv_show_channel(modality):
 
 def iv_start(run_id: str | None, target: str | None, modality: str | None,
              caption: str | None, upload: str | None, filename: str | None,
-             kind: str | None = None, intended: str | None = None) -> str:
+             kind: str | None = None, intended: str | None = None,
+             follow: Any = None) -> str:
     """Start the after run for one try. Returns "" on success or a plain
     reason. No model is called when the try is not valid."""
     from agentic import ui_intervene
@@ -7028,6 +7083,12 @@ def iv_start(run_id: str | None, target: str | None, modality: str | None,
               "kind": kind, "mode": ui_intervene.KIND_MODE[kind], "edit_source": "hand"}
     if intended and kind == ui_intervene.DEALT_WITH:
         origin["intended_state"] = str(intended).strip().lower()
+    # a try that follows a recommendation keeps which one, and what else it
+    # acted on; the model is told nothing of it
+    if kind == ui_intervene.DEALT_WITH:
+        # (this also sets the target to the one thing the recommendation acts
+        #  on, when the pick stood for two hazards the model called the same)
+        origin.update(ui_intervene.follow_record(info, follow, target))
     after_id = start_live_run(image_bytes, name, plan["caption"],
                               settings=S, after_of=origin)
     IV_ACTIVE[info["run"]] = {
@@ -7044,11 +7105,13 @@ def iv_start(run_id: str | None, target: str | None, modality: str | None,
               State("iv-modality", "value"), State("iv-caption", "value"),
               State("iv-upload", "contents"), State("iv-upload", "filename"),
               State("iv-kind", "value"), State("iv-intended", "value"),
+              State("iv-follow", "value"),
               prevent_initial_call=True)
-def iv_run(n, run_id, target, modality, caption, upload, filename, kind=None, intended=None):
+def iv_run(n, run_id, target, modality, caption, upload, filename, kind=None, intended=None,
+           follow=None):
     if not n:
         return dash.no_update, dash.no_update
-    why = iv_start(run_id, target, modality, caption, upload, filename, kind, intended)
+    why = iv_start(run_id, target, modality, caption, upload, filename, kind, intended, follow)
     # started: the form folds away and the running line shows on top
     return why, (dash.no_update if why else False)
 

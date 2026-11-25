@@ -245,12 +245,12 @@ def test_the_panel_lists_hazards_for_the_open_run_and_hides_otherwise(page):
 
 
 def test_picking_a_hazard_shows_both_instructions_and_the_original_caption(page):
-    kids, caption = ui.iv_instructions("fire_1", None, "base")
+    kids, caption = ui.iv_instructions("fire_1", None, None, "base")
     text = _flat(kids)
     assert "for the caption" in text and "for the image tool" in text
     assert "was never present" in text and caption == RECORD["caption"]
-    assert ui.iv_instructions(None, None, "base") == ([], "")
-    assert ui.iv_instructions("nope_9", None, "base") == ([], "")
+    assert ui.iv_instructions(None, None, None, "base") == ([], "")
+    assert ui.iv_instructions("nope_9", None, None, "base") == ([], "")
 
 
 def test_run_starts_only_the_after_side_on_the_edited_input(page):
@@ -393,7 +393,7 @@ def test_the_form_folds_away_when_a_try_starts_and_stays_open_on_a_refusal(page)
 def test_the_instructions_carry_a_copy_button_each(page):
     from dash import dcc
     from agentic.test_ui_views import _walk
-    kids, _caption = ui.iv_instructions("fire_1", None, "base")
+    kids, _caption = ui.iv_instructions("fire_1", None, None, "base")
     clips = [n for n in _walk(kids) if isinstance(n, dcc.Clipboard)]
     assert sorted(c.target_id for c in clips) == ["iv-instr-caption", "iv-instr-image"]
 
@@ -1652,3 +1652,162 @@ def test_an_adjusted_cell_says_which_way_it_went_and_the_bar_takes_that_colour()
     reasons = _by_class(ui_iv.table_component(tbl), "iv-reason")
     assert reasons[0].style["color"] == "#16a34a" and reasons[1].style["color"] == "#b91c1c"
     assert reasons[-1].style["color"] == "#64748b"                  # rank: no direction, grey
+
+
+# ── a try made by FOLLOWING a recommendation (2026-11-25) ────────────────────
+
+def _follow_info(tmp_path):
+    return ui_iv.base_info(_run_dir(tmp_path))
+
+
+def test_a_recommendation_acts_on_what_it_moves_or_on_its_hazard(tmp_path):
+    """Sunny, 2026-11-25: "so that we can apply rec". 'Move man_1 away from
+    fire_1' moves the man; 'Close the valve on tanker_1' deals with the
+    tanker."""
+    info = _follow_info(tmp_path)
+    assert [o["value"] for o in ui_iv.rec_options(info)] == [1, 2]
+    assert ui_iv.rec_options(info)[0]["label"] == " #1 Move man_1 away from fire_1."
+    assert ui_iv.rec_targets(info, 1) == ["man_1"]          # it names who it protects
+    assert ui_iv.rec_targets(info, 2) == ["tanker_1"]       # it does not: its hazard
+    assert ui_iv.rec_targets(info, 9) == [] and ui_iv.rec_of(info, 9) is None
+    # a recommendation that moves two: both, in its own order
+    two = {**info, "result": {**info["result"], "recommendations": [
+        {"rank": 1, "action": "Move man_1 and fire_1 back.", "structured_reasoning": {
+            "threat": "tanker_1", "effect": "may_harm", "affected_objects": ["man_1", "fire_1"]}}]}}
+    assert ui_iv.rec_targets(two, 1) == ["man_1", "fire_1"]
+    assert ui_iv.follow_record(two, 1, "man_1")["also"] == ["fire_1"]
+    # a "no action" line, or one that names nothing that can be tried, is not offered
+    none = {**info, "result": {**info["result"], "recommendations": [
+        {"rank": 1, "action": "No action for road_1.", "benign": True, "structured_reasoning": {
+            "threat": "road_1", "effect": "N/A", "affected_objects": []}},
+        {"rank": 2, "action": "Watch cloud_7.", "structured_reasoning": {
+            "threat": "cloud_7", "effect": "may_harm", "affected_objects": ["bird_3"]}}]}}
+    assert ui_iv.rec_options(none) == []
+
+
+def test_the_edit_instruction_is_the_action_in_plain_words(tmp_path):
+    info = _follow_info(tmp_path)
+    cap, img = ui_iv.follow_instructions(info, 1)
+    assert "“Move the man away from the fire.”" in img          # no man_1, no fire_1
+    assert img.startswith("Edit this photo to show the scene after this action has been carried out")
+    assert "Keep everything else exactly the same" in img
+    assert "“Move the man away from the fire.”" in cap and "Describe only what is in the picture" in cap
+    assert ui_iv.follow_instructions(info, 9) == ("", "")
+    # the model's own description of a thing is given the first time it is named
+    objs = [{**o, "description": "a man filming" if o["object_id"] == "man_1" else ""}
+            for o in info["result"]["detected_objects"]]
+    said = ui_iv.plain_action({"result": {"detected_objects": objs}},
+                              "Move man_1 back, then check man_1 and ghost_9.")
+    assert said == "Move the man (a man filming) back, then check the man and ghost_9."
+    for bad in (None, "x", {}, {"result": 3}, {"result": {"detected_objects": [None, 4]}}):
+        assert ui_iv.plain_action(bad, "Move man_1.") == "Move man_1."
+        assert ui_iv.plain_action(bad, None) == ""
+
+
+def test_the_record_of_a_followed_try_and_how_it_reads(tmp_path):
+    info = _follow_info(tmp_path)
+    rec = ui_iv.follow_record(info, 1, "man_1")
+    assert rec == {"target": "man_1",
+                   "follows": {"rank": 1, "action": "Move man_1 away from fire_1."}, "also": []}
+    # the pick was changed by hand to something that recommendation does not act on:
+    # an ordinary try
+    assert ui_iv.follow_record(info, 1, "tanker_1") == {} and ui_iv.follow_record(info, None, "man_1") == {}
+    one = {"kind": "dealt with", **rec}
+    assert ui_iv.followed(one) == 1
+    assert ui_iv.kind_phrase(one, "man_1") == "man_1 dealt with by recommendation #1"
+    assert ui_iv.kind_phrase({**one, "also": ["dog_1"]}, "man_1") == (
+        "man_1 + dog_1 dealt with by recommendation #1")
+    assert ui_iv.kind_phrase({"kind": "dealt with"}, "man_1") == "man_1 dealt with"
+    assert ui_iv.kind_phrase({"kind": "removed", **rec}, "man_1") == "removed man_1"
+    for bad in (None, "x", {}, {"follows": "one"}, {"follows": {"rank": "1"}},
+                {"follows": {"rank": True}}):
+        assert ui_iv.followed(bad) is None
+    # it is saved with the try
+    import pathlib
+    base = pathlib.Path(info["dir"])
+    saved = ui_iv.finish_try(base, None, {**PENDING, "kind": "dealt with", **rec}, error="x")
+    assert saved["follows"]["rank"] == 1 and saved["also"] == []
+    assert "follows" not in ui_iv.finish_try(base, None, PENDING, error="x")
+    assert "follows" not in ui_iv.finish_try(base, None, {**PENDING, "follows": "zz"}, error="x")
+
+
+@pytest.mark.parametrize("bad", [None, "x", 3, {}, {"result": None}, {"result": {"recommendations": "r"}},
+                                 {"result": {"recommendations": [None, 3, {"rank": "1"},
+                                                                 {"rank": 1, "action": 5},
+                                                                 {"rank": 1, "action": "Go."},
+                                                                 {"rank": True, "action": "Go.",
+                                                                  "structured_reasoning": {}}]},
+                                  "candidates": "zz"}])
+def test_a_malformed_run_offers_no_recommendation_to_follow(bad):
+    assert ui_iv.rec_options(bad) == []
+    for rank in (1, None, "1", True, [1]):
+        assert ui_iv.rec_targets(bad, rank) == []
+        assert ui_iv.follow_instructions(bad, rank) == ("", "")
+        assert ui_iv.follow_record(bad, rank, "man_1") == {}
+
+
+def test_the_form_follows_a_recommendation(page):
+    import dash
+    opts, value = ui.iv_follow_options([], "base", None)
+    assert [o["value"] for o in opts] == [1, 2] and value is None
+    assert _flat(opts[0]["label"]) == "#1 Move man_1 away from fire_1."
+    assert opts[0]["label"].style["whiteSpace"] == "nowrap"       # one line, never over the next
+    assert ui.iv_follow_options([], "base", 2)[1] == 2            # a pick is kept
+    assert ui.iv_follow_options([], "base", 7)[1] is None         # unless it is gone
+    assert ui.iv_follow_options([], None, 1) == ([], None)
+    # picking one fills in WHAT and HOW
+    assert ui.iv_follow_pick(1, "base") == ("man_1", ui_iv.DEALT_WITH)
+    assert ui.iv_follow_pick(2, "base") == ("tanker_1", ui_iv.DEALT_WITH)
+    assert ui.iv_follow_pick(None, "base") == (dash.no_update,) * 2
+    assert ui.iv_follow_pick(1, None) == (dash.no_update,) * 2
+    # and the instructions are its action, carried out
+    kids, caption = ui.iv_instructions("man_1", ui_iv.DEALT_WITH, 1, "base")
+    assert "after this action has been carried out" in _flat(kids)
+    assert "Move the man away from the fire" in _flat(kids) and caption == RECORD["caption"]
+    # WHAT changed by hand afterwards, or HOW set to removed: the ordinary instructions
+    assert "has been carried out" not in _flat(ui.iv_instructions("fire_1", ui_iv.DEALT_WITH, 1, "base")[0])
+    assert "has been carried out" not in _flat(ui.iv_instructions("man_1", ui_iv.REMOVED, 1, "base")[0])
+
+
+def test_a_followed_try_is_started_with_its_recommendation_on_record(page):
+    assert ui.iv_start("base", "man_1", "caption", "a tanker leaks on a road", None, None,
+                       ui_iv.DEALT_WITH, None, 1) == ""
+    origin = page["calls"][0]["after_of"]
+    assert origin["follows"] == {"rank": 1, "action": "Move man_1 away from fire_1."}
+    assert origin["also"] == [] and origin["kind"] == ui_iv.DEALT_WITH
+    assert ui.IV_ACTIVE["ui_base"]["follows"]["rank"] == 1
+    # the model is told nothing of it: only the edited caption goes in
+    assert page["calls"][0]["caption"] == "a tanker leaks on a road"
+
+
+def test_a_try_not_on_what_the_recommendation_acts_on_is_an_ordinary_try(page):
+    assert ui.iv_start("base", "fire_1", "caption", "a tanker leaks on a road", None, None,
+                       ui_iv.DEALT_WITH, None, 1) == ""
+    assert "follows" not in page["calls"][0]["after_of"]
+    ui.IV_ACTIVE.clear()
+    ui.RUNS.pop("after", None)
+    assert ui.iv_start("base", "man_1", "caption", "a tanker leaks on a road", None, None,
+                       ui_iv.REMOVED, None, 1) == ""
+    assert "follows" not in page["calls"][1]["after_of"]
+
+
+def test_a_followed_try_is_recorded_on_the_one_thing_the_recommendation_acts_on(page):
+    """E, 2026-11-25: the model called building_1 and rubble_1 the same
+    hazard, so they are ONE option in WHAT. 'Clear the rubble' acts on the
+    rubble only: the try is recorded on the rubble, not on the option's
+    lead name."""
+    info = ui._iv_info("base")
+    info["result"]["same_hazards"] = [["fire_1", "tanker_1"]]
+    opts = ui_iv.target_options(info)
+    assert [o["value"] for o in opts] == ["fire_1", "man_1"]           # fire_1 stands for both
+    # picking recommendation #2 (close the valve on tanker_1) shows that option
+    assert ui.iv_follow_pick(2, "base") == ("fire_1", ui_iv.DEALT_WITH)
+    rec = ui_iv.follow_record(info, 2, "fire_1")
+    assert rec["target"] == "tanker_1" and rec["follows"]["rank"] == 2 and rec["also"] == []
+    assert "Close the valve on the tanker" in _flat(
+        ui.iv_instructions("fire_1", ui_iv.DEALT_WITH, 2, "base")[0])
+    assert ui.iv_start("base", "fire_1", "caption", "a tanker stands on a road", None, None,
+                       ui_iv.DEALT_WITH, None, 2) == ""
+    assert page["calls"][0]["after_of"]["target"] == "tanker_1"
+    # a pick outside that option is an ordinary try
+    assert ui_iv.follow_record(info, 2, "man_1") == {}
