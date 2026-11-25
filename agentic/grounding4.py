@@ -727,7 +727,6 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
             # the recommendation this try carried out, when it followed one
             "follows": one.get("follows") if isinstance(one.get("follows"), dict) else None,
             "also": also,
-            "addresses": one.get("addresses") if isinstance(one.get("addresses"), str) else None,
             "also_removed": [x for x in removed if x != str(one.get("target") or "")],
             "left_behind": left_behind,
             "after_run": one.get("after_run"),

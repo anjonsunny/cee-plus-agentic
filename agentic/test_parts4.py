@@ -389,40 +389,17 @@ def test_both_things_a_followed_recommendation_moved_count_as_tried():
         declared4.compare(b, [(odd, a)])
 
 
-def test_the_picked_thing_a_recommendation_only_addressed_gets_its_own_reading():
-    """E, 2026-11-25: the building is picked and changed BY recommendation
-    #1, which moves the officers. The officers were tried; the building is
-    as it was, and its row says "addressed by recommendation #1"."""
-    from agentic import ui_intervene as ui_iv
-    from agentic.test_ui_views import _by_class, _flat
+def test_only_what_was_changed_gets_the_row_never_the_other_end_of_the_recommendation():
+    """E, 2026-11-25 (Sunny: "intervention should be on a target variable...
+    the feature table should only reflect that"). Recommendation #1 names
+    building_1 as its hazard and moves the officers. The officers were
+    changed; the building was not, and its row stays untried, whatever an
+    older saved try says it was "for"."""
     b, a = _two_officers(), _two_officers(moved=True)
     one = {**_one("officer_1"), "also": ["officer_2"], "addresses": "building_1",
            "follows": {"rank": 1, "action": "Move officer_1 and officer_2 back from building_1."}}
     c = declared4.compare(b, [(one, a)])
     haz = {r["object_id"]: r for r in c["hazards"]}
     vic = {r["object_id"]: r for r in c["victims"]}
-    assert haz["building_1"]["addressed"] == {"rank": 1, "acted": ["officer_1", "officer_2"]}
-    assert haz["building_1"]["shift"] == vic["officer_1"]["shift"] is not None
-    assert haz["building_1"]["gone_with"] == []           # it did not go anywhere
-    assert vic["officer_1"]["addressed"] is None          # the officers were tried themselves
-    card = ui_iv.card_component(c, {})
-    row = [r for r in _by_class(card, "iv-feature") if _flat(r).startswith("building_1")][0]
-    assert _flat(_by_class(row, "iv-addressed")) == (
-        "addressed by recommendation #1 (officer_1 + officer_2 dealt with)")
-    assert not [r for r in _by_class(card, "iv-victim") if _by_class(r, "iv-addressed")]
-    # the column of the recommendations table says what it was for
-    from agentic import grounding4
-    assert grounding4.table(b, [(one, a)])["columns"][0]["addresses"] == "building_1"
-    # a try aimed at the building itself wins over "addressed"
-    direct = {**_one("building_1"), "signals": {**SIGNALS, "hazard_shift": 0.0}}
-    c2 = declared4.compare(b, [(one, a), (direct, _two_officers())])
-    assert {r["object_id"]: r for r in c2["hazards"]}["building_1"]["addressed"] is None
-    # nonsense never breaks it
-    for bad in (3, None, "", ["building_1"], "officer_1", "ghost_9"):
-        declared4.compare(b, [({**one, "addresses": bad}, a)])
-        ui_iv.card_component(declared4.compare(b, [({**one, "addresses": bad}, a)]), {})
-    for bad in (None, "x", {}, {"addressed": "one"}, {"addressed": {"rank": "1"}},
-                {"addressed": {"rank": True}}):
-        assert ui_iv.addressed_note(bad) == []
-    assert _flat(ui_iv.addressed_note({"addressed": {"rank": 2, "acted": "zz"}})) == (
-        "addressed by recommendation #2")
+    assert haz["building_1"]["shift"] is None and haz["building_1"]["does"] is None
+    assert vic["officer_1"]["shift"] == vic["officer_2"]["shift"] is not None

@@ -677,26 +677,6 @@ def _best_tries(before: Any, tries: Any) -> dict[str, dict]:
         extra = {"signed": rd["signed"], "way": rd["way"], "counts": rd["counts"],
                  "direction": rd["direction"], "type": rd["type"],
                  "direction_by": rd["direction_by"], "agree": rd.get("agree")}
-        # The thing that was PICKED, when it was changed by a recommendation
-        # that acts on something else (building_1 by "extricate person_1",
-        # 2026-11-25): it is as it was in the edited picture, and its row
-        # carries that try's shift, marked "addressed". A try aimed at the
-        # thing itself always wins over this.
-        addr = one.get("addresses")
-        f = one.get("follows")
-        if (isinstance(addr, str) and addr and addr != target and isinstance(f, dict)
-                and isinstance(f.get("rank"), int) and not isinstance(f.get("rank"), bool)):
-            acted = [target] + [str(x) for x in (one.get("also") if isinstance(one.get("also"), list)
-                                                 else []) if isinstance(x, str) and x != target]
-            old = out.get(addr)
-            if old is None or (not old["direct"] and value > old["value"]):
-                try:
-                    a_victim = iv4.is_victim(before, addr)
-                except Exception:
-                    a_victim = False
-                out[addr] = {"value": value, "parts": parts, "try": k, "target": target,
-                             "direct": False, "addressed": {"rank": f["rank"], "acted": acted},
-                             **({"victim": True} if a_victim else {}), **extra}
         try:
             victim = iv4.is_victim(before, target)
         except Exception:
@@ -851,7 +831,6 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
                      "direction": best[h].get("direction") if h in best else None,
                      "direction_by": best[h].get("direction_by") if h in best else None,
                      "agree": best[h].get("agree") if h in best else None,
-                     "addressed": best[h].get("addressed") if h in best else None,
                      "type": best[h].get("type") if h in best else None,
                      "counts": best[h].get("counts") if h in best else None,
                      "signed": best[h].get("signed") if h in best else None,
@@ -864,7 +843,6 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
                      # it went in a try that removed something else: the
                      # other hazards of that try (no fire, so no smoke)
                      "gone_with": ([] if h not in best or best[h]["direct"]
-                                   or best[h].get("addressed")
                                    else sorted(m for m in best if m != h
                                                and best[m]["try"] == best[h]["try"]
                                                and best[m]["direct"])),
@@ -929,7 +907,6 @@ def compare(before: Any, tries: list[tuple[dict, dict]]) -> dict:
                 "direction": v_best[h].get("direction") if h in v_best else None,
                 "direction_by": v_best[h].get("direction_by") if h in v_best else None,
                 "agree": v_best[h].get("agree") if h in v_best else None,
-                "addressed": v_best[h].get("addressed") if h in v_best else None,
                 "type": v_best[h].get("type") if h in v_best else None,
                 "counts": v_best[h].get("counts") if h in v_best else None,
                 "signed": v_best[h].get("signed") if h in v_best else None,

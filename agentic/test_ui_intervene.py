@@ -1684,20 +1684,20 @@ def test_a_recommendation_acts_on_what_it_moves_or_on_its_hazard(tmp_path):
     assert ui_iv.rec_options(none) == [] and ui_iv.recs_for(none, "road_1") == []
 
 
-def test_the_recommendations_offered_are_those_that_concern_the_picked_thing(tmp_path):
-    """#1 names fire_1 as its hazard and protects man_1; #2 names tanker_1
-    and protects man_1. So the fire has one, the tanker one, the man both."""
+def test_a_recommendation_is_offered_only_under_the_thing_it_changes(tmp_path):
+    """Sunny, 2026-11-25: a recommendation has a hazard and a target, and
+    carrying it out changes ONE of them. #1 (hazard fire_1) moves man_1: it
+    is offered under the man, never under the fire. #2 (protects man_1)
+    closes the tanker's valve: under the tanker, never under the man."""
     info = _follow_info(tmp_path)
-    assert ui_iv.recs_for(info, "fire_1") == [1]
+    assert ui_iv.recs_for(info, "man_1") == [1]
     assert ui_iv.recs_for(info, "tanker_1") == [2]
-    assert ui_iv.recs_for(info, "man_1") == [1, 2]
+    assert ui_iv.recs_for(info, "fire_1") == []            # only its hazard: not changed by it
     assert ui_iv.recs_for(info, "ghost_9") == [] and ui_iv.recs_for(info, None) == []
     opts = ui_iv.rec_options(info, "man_1")
-    assert [o["value"] for o in opts] == [1, 2]
-    # each says what it acts on: that is not always the picked thing
+    assert [o["value"] for o in opts] == [1]
     assert opts[0]["label"] == " #1 Move man_1 away from fire_1. \u00b7 acts on man_1"
-    assert opts[1]["label"].endswith("\u00b7 acts on tanker_1")
-    assert [o["value"] for o in ui_iv.rec_options(info, "fire_1")] == [1]
+    assert ui_iv.rec_options(info, "fire_1") == []
     assert [o["value"] for o in ui_iv.rec_options(info)] == [1, 2]      # no pick: all
 
 
@@ -1720,32 +1720,27 @@ def test_the_edit_instruction_is_the_action_in_plain_words(tmp_path):
         assert ui_iv.plain_action(bad, None) == ""
 
 
-def test_the_record_says_what_was_acted_on_and_what_it_was_for(tmp_path):
+def test_the_record_of_a_try_by_a_recommendation(tmp_path):
     info = _follow_info(tmp_path)
-    # the pick is what the recommendation acts on: nothing more to say
     rec = ui_iv.follow_record(info, 1, "man_1")
     assert rec == {"target": "man_1",
                    "follows": {"rank": 1, "action": "Move man_1 away from fire_1."}, "also": []}
-    # the pick is the HAZARD of a recommendation that moves its victim: the try is
-    # on the man, and it says it was for the fire (E: building_1 by "extricate person_1")
-    rec = ui_iv.follow_record(info, 1, "fire_1")
-    assert rec["target"] == "man_1" and rec["addresses"] == "fire_1" and rec["follows"]["rank"] == 1
-    # the pick is the VICTIM of a recommendation that deals with its hazard
-    rec = ui_iv.follow_record(info, 2, "man_1")
-    assert rec["target"] == "tanker_1" and rec["addresses"] == "man_1"
-    # a recommendation that does not concern the pick
-    assert ui_iv.follow_record(info, 1, "tanker_1") == {}
+    assert ui_iv.follow_record(info, 2, "tanker_1")["target"] == "tanker_1"
+    # the other end of a recommendation is not changed by it: no such try
+    assert ui_iv.follow_record(info, 1, "fire_1") == {}      # its hazard
+    assert ui_iv.follow_record(info, 2, "man_1") == {}       # who it protects
     assert ui_iv.follow_record(info, None, "man_1") == {} and ui_iv.follow_record(info, 9, "man_1") == {}
     # how it reads
-    one = {"kind": "dealt with", **ui_iv.follow_record(info, 1, "fire_1")}
+    one = {"kind": "dealt with", **rec}
     assert ui_iv.followed(one) == 1
-    assert ui_iv.kind_phrase(one, "man_1") == "man_1 dealt with by recommendation #1 (for fire_1)"
-    plain = {"kind": "dealt with", **ui_iv.follow_record(info, 1, "man_1")}
-    assert ui_iv.kind_phrase(plain, "man_1") == "man_1 dealt with by recommendation #1"
-    assert ui_iv.kind_phrase({**plain, "also": ["dog_1"]}, "man_1") == (
+    assert ui_iv.kind_phrase(one, "man_1") == "man_1 dealt with by recommendation #1"
+    assert ui_iv.kind_phrase({**one, "also": ["dog_1"]}, "man_1") == (
         "man_1 + dog_1 dealt with by recommendation #1")
+    # (a try saved on 2026-11-25 with the older "for building_1" mark reads the same)
+    assert ui_iv.kind_phrase({**one, "addresses": "fire_1"}, "man_1") == (
+        "man_1 dealt with by recommendation #1")
     assert ui_iv.kind_phrase({"kind": "dealt with"}, "man_1") == "man_1 dealt with"
-    assert ui_iv.kind_phrase({**plain, "kind": "removed"}, "man_1") == "removed man_1"
+    assert ui_iv.kind_phrase({**one, "kind": "removed"}, "man_1") == "removed man_1"
     for bad in (None, "x", {}, {"follows": "one"}, {"follows": {"rank": "1"}},
                 {"follows": {"rank": True}}):
         assert ui_iv.followed(bad) is None
@@ -1753,11 +1748,9 @@ def test_the_record_says_what_was_acted_on_and_what_it_was_for(tmp_path):
     import pathlib
     base = pathlib.Path(info["dir"])
     saved = ui_iv.finish_try(base, None, {**PENDING, **one}, error="x")
-    assert saved["follows"]["rank"] == 1 and saved["also"] == [] and saved["addresses"] == "fire_1"
-    assert "addresses" not in ui_iv.finish_try(base, None, {**PENDING, **plain}, error="x")
+    assert saved["follows"]["rank"] == 1 and saved["also"] == [] and "addresses" not in saved
     assert "follows" not in ui_iv.finish_try(base, None, PENDING, error="x")
-    assert "follows" not in ui_iv.finish_try(base, None, {**PENDING, "follows": "zz",
-                                                         "addresses": "fire_1"}, error="x")
+    assert "follows" not in ui_iv.finish_try(base, None, {**PENDING, "follows": "zz"}, error="x")
 
 
 @pytest.mark.parametrize("bad", [None, "x", 3, {}, {"result": None}, {"result": {"recommendations": "r"}},
@@ -1781,48 +1774,49 @@ def test_the_form_offers_by_a_recommendation_as_a_third_way(page):
     # WHICH shows only for "by a recommendation"
     assert ui.iv_follow_options("man_1", ui_iv.DEALT_WITH, "base", 1) == hidden
     assert ui.iv_follow_options("man_1", ui_iv.REMOVED, "base", None) == hidden
+    # it lists the recommendations that act on the pick; a lone one is picked for you
     opts, value, style = ui.iv_follow_options("man_1", ui_iv.BY_REC, "base", None)
-    assert [o["value"] for o in opts] == [1, 2] and value is None and style == {"display": "flex"}
+    assert [o["value"] for o in opts] == [1] and value == 1 and style == {"display": "flex"}
     assert _flat(opts[0]["label"]) == "#1 Move man_1 away from fire_1. \u00b7 acts on man_1"
     assert opts[0]["label"].style["whiteSpace"] == "nowrap"       # one line, never over the next
-    assert ui.iv_follow_options("man_1", ui_iv.BY_REC, "base", 2)[1] == 2     # a pick is kept
-    # another thing is picked: the list follows; a lone one is picked for you
-    opts, value, _s = ui.iv_follow_options("fire_1", ui_iv.BY_REC, "base", 2)
-    assert [o["value"] for o in opts] == [1] and value == 1
+    # another thing is picked: the list follows, and a pick that is gone is dropped
+    opts, value, _s = ui.iv_follow_options("tanker_1", ui_iv.BY_REC, "base", 1)
+    assert [o["value"] for o in opts] == [2] and value == 2
+    # the fire is only the HAZARD of #1: nothing acts on it
+    assert ui.iv_follow_options("fire_1", ui_iv.BY_REC, "base", 1) == ([], None, {"display": "flex"})
     assert ui.iv_follow_options(None, ui_iv.BY_REC, "base", 1)[:2] == ([], None)
     assert ui.iv_follow_options("man_1", ui_iv.BY_REC, None, 1)[:2] == ([], None)
     # the instructions are the recommendation's action, carried out
-    kids, caption = ui.iv_instructions("fire_1", ui_iv.BY_REC, 1, "base")
+    kids, caption = ui.iv_instructions("man_1", ui_iv.BY_REC, 1, "base")
     assert "after this action has been carried out" in _flat(kids)
     assert "Move the man away from the fire" in _flat(kids) and caption == RECORD["caption"]
-    # none picked yet, or one that does not concern the pick: it says so
+    # none picked yet: it says so; nothing acts on the pick: it says that
     assert "pick the recommendation" in _flat(ui.iv_instructions("man_1", ui_iv.BY_REC, None, "base")[0])
-    assert "pick the recommendation" in _flat(ui.iv_instructions("fire_1", ui_iv.BY_REC, 2, "base")[0])
+    assert "no recommendation acts on this one" in _flat(
+        ui.iv_instructions("fire_1", ui_iv.BY_REC, 1, "base")[0])
     # the other two ways are as they were, whatever is left in WHICH
     assert "has been carried out" not in _flat(ui.iv_instructions("man_1", ui_iv.DEALT_WITH, 1, "base")[0])
     assert "has been carried out" not in _flat(ui.iv_instructions("man_1", ui_iv.REMOVED, 1, "base")[0])
-    # the INTENDED state is off: the recommendation may act on something else
-    assert ui.iv_intended("fire_1", ui_iv.BY_REC, "base") == ("set by the recommendation", None, True)
+    assert ui.iv_intended("man_1", ui_iv.BY_REC, "base") == ("set by the recommendation", None, True)
 
 
-def test_a_try_by_a_recommendation_is_started_on_what_it_acts_on(page):
-    """The fire is picked, changed by #1 (move the man): the edited scene is
-    a dealt-with try on the man, for the fire."""
-    assert ui.iv_start("base", "fire_1", "caption", "a tanker leaks on a road", None, None,
+def test_a_try_by_a_recommendation_is_a_dealt_with_try_on_the_pick(page):
+    assert ui.iv_start("base", "man_1", "caption", "a tanker leaks on a road", None, None,
                        ui_iv.BY_REC, "burnt", 1) == ""
     origin = page["calls"][0]["after_of"]
-    assert origin["target"] == "man_1" and origin["addresses"] == "fire_1"
+    assert origin["target"] == "man_1" and "addresses" not in origin
     assert origin["follows"] == {"rank": 1, "action": "Move man_1 away from fire_1."}
     assert origin["kind"] == ui_iv.DEALT_WITH and origin["mode"] == ui_iv.KIND_MODE[ui_iv.DEALT_WITH]
-    assert "intended_state" not in origin               # a state meant for another thing is not kept
+    assert "intended_state" not in origin
     assert ui.IV_ACTIVE["ui_base"]["follows"]["rank"] == 1
     # the model is told nothing of it: only the edited caption goes in
     assert page["calls"][0]["caption"] == "a tanker leaks on a road"
 
 
-def test_by_a_recommendation_needs_one_that_concerns_the_pick(page):
-    for follow in (None, 2, 9, "1"):                     # #2 does not concern the fire
-        assert ui.iv_start("base", "fire_1", "caption", "a tanker leaks on a road", None, None,
+def test_by_a_recommendation_needs_one_that_acts_on_the_pick(page):
+    # #1 only names the fire as its hazard; #2 only protects the man
+    for target, follow in (("fire_1", 1), ("man_1", 2), ("man_1", None), ("man_1", 9), ("man_1", "1")):
+        assert ui.iv_start("base", target, "caption", "a tanker leaks on a road", None, None,
                            ui_iv.BY_REC, None, follow) == "pick the recommendation to carry out"
     assert page["calls"] == []                           # no model was called
     # the other two ways ignore whatever is left in WHICH
@@ -1831,7 +1825,7 @@ def test_by_a_recommendation_needs_one_that_concerns_the_pick(page):
     assert "follows" not in page["calls"][0]["after_of"]
 
 
-def test_a_pick_that_stands_for_two_hazards_is_recorded_on_the_one_named(page):
+def test_a_pick_that_stands_for_two_hazards_is_recorded_on_the_one_acted_on(page):
     """E, 2026-11-25: the model called building_1 and rubble_1 the same
     hazard, so they are ONE option in WHAT. 'Clear the rubble' acts on the
     rubble only: the try is recorded on the rubble, not on the option's
@@ -1839,9 +1833,9 @@ def test_a_pick_that_stands_for_two_hazards_is_recorded_on_the_one_named(page):
     info = ui._iv_info("base")
     info["result"]["same_hazards"] = [["fire_1", "tanker_1"]]
     assert [o["value"] for o in ui_iv.target_options(info)] == ["fire_1", "man_1"]   # fire_1 stands for both
-    assert ui_iv.recs_for(info, "fire_1") == [1, 2]      # those of either hazard
+    assert ui_iv.recs_for(info, "fire_1") == [2]         # the one that acts on either of the two
     rec = ui_iv.follow_record(info, 2, "fire_1")
-    assert rec["target"] == "tanker_1" and "addresses" not in rec and rec["also"] == []
+    assert rec["target"] == "tanker_1" and rec["also"] == []
     assert ui.iv_start("base", "fire_1", "caption", "a tanker stands on a road", None, None,
                        ui_iv.BY_REC, None, 2) == ""
     assert page["calls"][0]["after_of"]["target"] == "tanker_1"

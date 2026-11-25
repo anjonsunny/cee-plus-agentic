@@ -6668,7 +6668,7 @@ app.layout = html.Div([
                                               {"label": " removed (as if it never was)",
                                                "value": ui_intervene.REMOVED},
                                               # the third way (Sunny, 2026-11-25): one of
-                                              # the model's own recommendations that concern
+                                              # the model's own recommendations that act on
                                               # the picked thing, carried out
                                               {"label": " by a recommendation (its action "
                                                         "is carried out)",
@@ -6927,7 +6927,6 @@ def iv_intended(target, kind, run_id):
     from agentic import ui_intervene
     was = ui_intervene.state_of(_iv_info(run_id), target)
     if kind == ui_intervene.BY_REC:
-        # the recommendation may act on something else than the pick
         return "set by the recommendation", None, True
     if ui_intervene.kind_of(kind) != ui_intervene.DEALT_WITH:
         return "not in the picture", None, True
@@ -6966,7 +6965,7 @@ def iv_pick(clicks, options, run_id):
               State("run-id", "data"), State("iv-follow", "value"))
 def iv_follow_options(target, kind, run_id, value):
     """The WHICH row under HOW: shown only for "by a recommendation", and
-    listing the recommendations that concern the picked thing. A pick is
+    listing the recommendations that ACT ON the picked thing. A pick is
     kept while it is still one of them; a lone one is picked for you."""
     from agentic import ui_intervene
     if kind != ui_intervene.BY_REC:
@@ -7002,7 +7001,7 @@ def iv_instructions(target, kind, follow, run_id=None):
         if not cap:
             said = ("pick the recommendation to carry out" if info and target
                     and ui_intervene.rec_options(info, target)
-                    else "no recommendation concerns this one: use dealt with or removed")
+                    else "no recommendation acts on this one: use dealt with or removed")
             return ([html.Div(said, className="iv-follow-none",
                               style={"fontSize": "11px", "color": "#b45309"})],
                     str(info.get("caption") or "") if info else "")
@@ -7065,8 +7064,8 @@ def iv_start(run_id: str | None, target: str | None, modality: str | None,
             edited = base64.b64decode(str(upload).split(",", 1)[1])
         except Exception:
             return "the uploaded image could not be read"
-    # "by a recommendation": one that concerns the pick must be chosen; the
-    # try is then a "dealt with" try on what that recommendation acts on
+    # "by a recommendation": one that acts on the pick must be chosen; the
+    # try is then a "dealt with" try on the pick
     rec: dict = {}
     if kind == ui_intervene.BY_REC:
         rec = ui_intervene.follow_record(info, follow, target)
@@ -7094,8 +7093,8 @@ def iv_start(run_id: str | None, target: str | None, modality: str | None,
               "kind": kind, "mode": ui_intervene.KIND_MODE[kind], "edit_source": "hand"}
     if intended and kind == ui_intervene.DEALT_WITH and not rec:
         origin["intended_state"] = str(intended).strip().lower()
-    # a try that follows a recommendation keeps which one, what else it acted
-    # on, and the thing that was picked; the model is told nothing of it
+    # a try that follows a recommendation keeps which one and what else it
+    # acted on; the model is told nothing of it
     origin.update(rec)
     after_id = start_live_run(image_bytes, name, plan["caption"],
                               settings=S, after_of=origin)
