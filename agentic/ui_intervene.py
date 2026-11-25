@@ -805,8 +805,7 @@ CELL_WEIGHTS = ("the bar is these, each times its weight: who it protects or the
                 "hazard 0.15")
 
 
-ACTION_NOTE = ("how far the two actions above are apart by meaning; the same action reworded "
-               "reads about 0.25 to 0.30. Shown, not counted in the cell's bar")
+ACTION_NOTE = "by meaning \u00b7 not counted in the bar"
 
 
 def cell_bars(action: Any, c: Any, note: str = "") -> str:
