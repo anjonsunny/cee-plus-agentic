@@ -126,10 +126,12 @@ def test_with_the_names_matched_the_table_reads_the_pool_try_the_way_it_happened
     by = {r["rank"]: r["cells"][0] for r in t["rows"]}
     assert by[1]["state"] == "gone" and by[1]["label"] == "grounded"
     assert by[2]["state"] == "stays" and by[2]["hazard_renamed"] is True
-    assert by[3]["state"] == "stays"                                   # shares the one rescue
+    # one recommendation, one row (2026-11-25): the one rescue is #2's, so #3 has none
+    assert by[3]["state"] == "gone" and by[3]["after"] is None
     assert "same victim, the hazard is no longer named" in by[2]["why"]
     assert by[2]["after"]["action"] == "Water rescue of child_2 from pool_1."
-    assert t["shift"]["named"] == 1.0 and t["shift"]["other"] < 0.3
+    # (#3 no longer shares #2's rescue, so one of the two others reads dropped)
+    assert t["shift"]["named"] == 1.0 and t["shift"]["other"] == pytest.approx(0.537, abs=0.002)
     # the medical care for the child on the deck is new, not a kept #1
     assert [n["action"] for n in t["columns"][0]["new"]] == ["Medical care for child_1 on the deck."]
     col = t["columns"][0]
@@ -356,13 +358,15 @@ def test_a_recommendation_borrows_another_only_when_it_protects_the_same_thing()
     by = {r["rank"]: r["cells"][0] for r in t["rows"]}
     assert by[2]["state"] == "gone" and by[2]["label"] == "grounded"     # the fire engine: dropped
     assert by[1]["state"] == "stays"
-    # two recommendations that protect the same man from the same hazard: one
-    # piece left, the second borrows it and reads kept
+    # two recommendations that protect the same man from the same hazard, one
+    # piece left: it goes to the closest one, and the other has no counterpart
+    # (before 2026-11-25 the second borrowed it and read kept)
     b2 = {**b, "recommendations": [_rec(1, "house_1", ["man_1"], "Move man_1 away."),
                                    _rec(2, "house_1", ["man_1"], "Shield man_1.")]}
     after2 = {**b, "recommendations": [_rec(1, "house_1", ["man_1"], "Move man_1 away.")]}
     t = g.table(b2, [({"index": 1, "target": "shed_1"}, after2)])
-    assert [r["cells"][0]["state"] for r in t["rows"]] == ["stays", "changed"]
+    assert [r["cells"][0]["state"] for r in t["rows"]] == ["stays", "gone"]
+    assert t["rows"][1]["cells"][0]["after"] is None
     for bad in (None, {}, {"recommendations": [None, {"structured_reasoning": 3}]}):
         assert g.table(b, [({"index": 1, "target": "house_1", "kind": "dealt with"}, bad)])["rows"]
 
@@ -563,14 +567,14 @@ def test_a_dealt_with_victim_still_protected_but_eased_is_grounded_and_not_liste
     # the same eased answer after he was REMOVED is a masquerade (nothing should name him)
     t = g.table(b, [({"index": 1, "target": "man_1"}, after)])
     assert t["rows"][1]["cells"][0]["label"] == "masquerade"
-    # two recommendations about him, one left that still protects him: it is
-    # the counterpart of both, and it is still not a new one
+    # two recommendations about him, one left that still protects him: it is the
+    # counterpart of ONE of them (2026-11-25), and it is still not a new one
     b2 = _two_fires()
     b2["recommendations"].append(_soon(_rec(4, "car_1", ["man_1"], "Shield man_1."),
                                        "now", "large"))
     t = g.table(b2, [(one, after)])
     states = sorted(r["cells"][0]["state"] for r in t["rows"] if r["threat"] == "car_1")
-    assert states == ["stays", "stays"] and t["columns"][0]["new"] == []
+    assert states == ["gone", "stays"] and t["columns"][0]["new"] == []
 
 
 def test_a_dropped_recommendation_says_what_is_still_in_the_picture_not_why():

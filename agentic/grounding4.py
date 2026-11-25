@@ -153,6 +153,7 @@ def _victim_cells(cells: list[dict], base: list[dict], victims: set[str],
         if c["state"] == TARGET_REMOVED:
             c["state"] = GONE
         after = c.get("after")
+        hits: list = []
         if after is None and c["named_removed"]:
             # it has no counterpart; but does a recommendation about the SAME
             # hazard still name the victim? Then that is this one, kept.
@@ -164,11 +165,11 @@ def _victim_cells(cells: list[dict], base: list[dict], victims: set[str],
             # one no other row has taken, if there is one (it is then THIS
             # recommendation and not a new one); else one that names him anyway
             free = [k for k in hits if used is None or k not in used]
-            if hits:
-                k = (free or hits)[0]
+            if free:                            # never one another row has (2026-11-25)
+                k = free[0]
                 after = c["after"] = after_recs[k]["rec"]
                 c["state"] = STAYS
-                if free and used is not None:
+                if used is not None:
                     used.add(k)
                 if stays:
                     # A dealt-with victim is still there, so this is an
@@ -194,12 +195,17 @@ def _victim_cells(cells: list[dict], base: list[dict], victims: set[str],
             # masquerade when the recommendation still PROTECTS it.
             names = isinstance(after, dict) and bool(_quad(after)[2] & victims)
         else:
-            names = after is not None and _mentions(after, victims, labels)
+            # REMOVED: nothing should name it. A recommendation about the
+            # same hazard that still does is the finding, also when that
+            # one is another row's counterpart: it is noted here, and this
+            # row is NOT paired with it (one recommendation, one row).
+            names = (after is not None and _mentions(after, victims, labels)) or (
+                after is None and c["named_removed"] and bool(hits))
         c["still_names"] = bool(c["named_removed"] and names)
 
 
 def _match_column(base: list[dict], after_recs: list[dict], removed: set[str],
-                  name: Any = None, victims: Any = None) -> list[dict]:
+                  name: Any = None, victims: Any = None, stays: bool = False) -> list[dict]:
     """One cell per before-recommendation for one try. HAZARD FIRST (Sunny,
     2026-11-16, on C_tanker ui_63f16495: after the fire was removed the
     model still wrote "isolate the leak at tanker_truck_1", recorded with
@@ -216,9 +222,10 @@ def _match_column(base: list[dict], after_recs: list[dict], removed: set[str],
              TARGET WAS REMOVED (bookkeeping, no label)
 
     Like the trust checks, this compares hazards and targets, not whole
-    arrows. Each piece of after-advice is given to one row where it can be
-    (the closest row first); a row whose hazard still has advice but no
-    free piece left shares one, and reads as kept."""
+    arrows. Each piece of after-advice is given to ONE row, the closest
+    pair first; a row left without one was dropped, and a piece of
+    after-advice left without a row is new. `stays`: the try DEALT WITH its
+    victim, who is still in the picture."""
     # `name(hazard)`: the name a hazard goes by. Two hazards the model
     # called one and the same share a name (agentic/same4.py), so advice
     # that names either one is advice about the pair.
@@ -228,6 +235,11 @@ def _match_column(base: list[dict], after_recs: list[dict], removed: set[str],
     quads = [(name(t), e, a) for t, e, a in (_quad(r) for r in base)]
 
     victims = set(victims or ())
+    removed_all = set(removed)                  # what the try took out or dealt with
+    if stays:
+        # a victim that was DEALT WITH is still in the picture: it is not
+        # "removed" from what a recommendation protects
+        removed = set(removed) - victims
 
     def same(i: int, a: dict) -> bool:
         """The same arrow: the effect word and everything it still protects."""
@@ -247,31 +259,58 @@ def _match_column(base: list[dict], after_recs: list[dict], removed: set[str],
         cells[i] = {"state": state, "named_removed": quads[i][0] in removed,
                     "after": after_recs[j]["rec"], "after_quad": after_recs[j]["quad"]}
 
-    def free(i: int, test) -> int | None:
-        return next((j for j, a in enumerate(after_recs)
-                     if j not in used and a["quad"][0] == quads[i][0] and test(a)), None)
-    # closest first: the same arrow, then a shared target, then the same
-    # kind of action, then any advice about that hazard
-    for want in ("exact", "overlap", "intent", "any"):
-        for i, rec in enumerate(base):
-            if cells[i] is not None or only_the_victim(i):
-                continue
-            threat, effect, affected = quads[i]
-            left = affected - removed
-            if want == "exact":
-                j = free(i, lambda a: a["quad"][1] == effect and a["quad"][2] == left)
-            elif want == "overlap":
-                j = free(i, lambda a: bool(a["quad"][2] & left))
-            elif want == "intent":
-                mine = _intent(rec.get("action"))
-                j = free(i, lambda a: bool(mine) and _intent(a["rec"].get("action")) == mine)
-            else:
-                j = free(i, lambda a: True)
-            if j is not None:
-                # kept as it was only when it is the same arrow; a kept
-                # recommendation that names the removed hazard and now
-                # protects other things is adjusted like any other
-                take(i, j, STAYS if same(i, after_recs[j]) else CHANGED)
+    # THE CLOSEST PAIR FIRST, AND EACH AFTER-RECOMMENDATION ONCE (Sunny,
+    # 2026-11-25: "two rec use the same after rec... we just don't do it if
+    # it is already used"; "we have to make sure we consider the closest
+    # ones"). Every pair that names the same hazard is scored, the closest
+    # pair is given out first, and a recommendation that is taken is never
+    # given again. Before this the pairing went in four rounds and, inside
+    # a round, the first recommendation in the list won; one left without a
+    # partner could share one that was taken (E ui_3b05a27e: "extricate the
+    # man" and "move the officers back" both read as kept in "retreat all
+    # three").
+    #   closer = the very same hazard (before a "same hazard as" mate), then
+    #   more of the same things protected, then the same effect word, then
+    #   the closer action by meaning (the same kind of action when the
+    #   meaning cannot be measured), then the closer rank
+    def closeness(i: int, j: int) -> tuple:
+        _threat, effect, affected = quads[i]
+        left, now = affected - removed, after_recs[j]["quad"][2]
+        union = left | now
+        shared = len(left & now) / len(union) if union else 1.0
+        rec, aft = base[i], after_recs[j]["rec"]
+        try:
+            apart = action_shift(rec.get("action"), aft.get("action"))
+        except Exception:
+            apart = None
+        if apart is None:
+            mine = _intent(rec.get("action"))
+            apart = 0.0 if mine and _intent(aft.get("action")) == mine else 1.0
+        rb, ra = _rank(rec), _rank(aft)
+        gap = abs(rb - ra) if rb is not None and ra is not None else 99
+        # the very same hazard before one the model only called "the same
+        # hazard as" it (E: "clear rubble_1" was paired with "shore up
+        # building_1" while "cordon and clear rubble_1" was listed as new)
+        exact = 0 if after_recs[j].get("hazard", after_recs[j]["quad"][0]) == _quad(rec)[0] else 1
+        return (exact, -shared, 0 if after_recs[j]["quad"][1] == effect else 1, apart, gap, i, j)
+
+    def may_pair(i: int, j: int) -> bool:
+        if after_recs[j]["quad"][0] != quads[i][0]:
+            return False                        # not about the same hazard: not a pair
+        if only_the_victim(i):
+            # the victim was taken out and this one protected nothing else.
+            # Only when the victim is STILL THERE (dealt with) and the other
+            # one still protects it are the two the same recommendation.
+            return stays and bool(after_recs[j]["quad"][2] & victims)
+        return True
+    pairs = sorted((closeness(i, j), i, j) for i in range(len(base))
+                   for j in range(len(after_recs)) if may_pair(i, j))
+    for _score, i, j in pairs:
+        if cells[i] is None and j not in used:
+            # kept as it was only when it is the same arrow; a kept
+            # recommendation that names the removed hazard and now
+            # protects other things is adjusted like any other
+            take(i, j, STAYS if same(i, after_recs[j]) else CHANGED)
     # THE SAME VICTIM UNDER ANOTHER HAZARD WORD (B_pool ui_b3ada51c, Sunny,
     # 2026-11-20): before, "rescue the child" named the pool as its hazard;
     # after the edit the model named the child itself. No recommendation
@@ -288,47 +327,30 @@ def _match_column(base: list[dict], after_recs: list[dict], removed: set[str],
         if cells[i] is not None:
             continue
         threat, _effect, affected = quads[i]
-        left = affected - removed
+        # (the thing the try was ABOUT is left out also when it was dealt
+        #  with and is still there: "rescue child_1" is not kept because
+        #  "medical care for child_1" names the child afterwards)
+        left = affected - removed_all
         if threat in removed or not left:
             continue
         if any(a["quad"][0] == threat for a in after_recs):
             continue                            # its hazard still has advice: handled below
         j = next((j for j, a in enumerate(after_recs)
                   if j not in used and protects(a, left)), None)
-        k = j if j is not None else next(
-            (k for k, a in enumerate(after_recs) if protects(a, left)), None)
-        if k is not None:
-            if j is not None:
-                used.add(j)
+        if j is not None:                       # a free one only: never one that is taken
+            used.add(j)
             cells[i] = {"state": STAYS, "named_removed": False,
-                        "after": after_recs[k]["rec"], "after_quad": after_recs[k]["quad"],
+                        "after": after_recs[j]["rec"], "after_quad": after_recs[j]["quad"],
                         "hazard_renamed": True}
     for i, rec in enumerate(base):
         if cells[i] is not None:
             continue
         threat, _effect, affected = quads[i]
-        # Its hazard still has a recommendation, but none is free. It may
-        # BORROW one only when that one protects something this one
-        # protected: it is then the same recommendation, said once. (H
-        # ui_4a253340, Sunny, 2026-11-20: "fire engine on the house" read
-        # kept because "move the person off the porch" was still there.
-        # The frozen arm's word for the kind of action cannot tell the two
-        # apart, it calls both "assist"; what each protects can.)
-        # (When everything this one protected was itself removed, it has
-        # nothing of its own left to compare by, and the older rule stands:
-        # its hazard still has a recommendation, so it reads kept, adjusted.)
-        nothing_left = bool(affected) and not (affected - removed)
-        shared = None if only_the_victim(i) else next(
-            (a for a in after_recs if a["quad"][0] == threat
-             and (nothing_left or (a["quad"][2] & affected))), None)
-        if shared is not None:                  # its hazard still has advice
-            # a borrowed counterpart is another recommendation's: how close
-            # the two are cannot be told, so it reads as before (kept when
-            # it names the removed hazard, else adjusted, in full)
-            cells[i] = {"state": STAYS if threat in removed else CHANGED,
-                        "named_removed": threat in removed, "after": shared["rec"],
-                        "borrowed": True}
-        elif threat in removed:
+        # No free recommendation is left for it. It does NOT share one that
+        # another row has (2026-11-25): it has no counterpart, so it was
+        # dropped; or, when its hazard stayed and everything it pointed at
+        # was removed, its target was removed (bookkeeping, no label).
+        if threat in removed:
             cells[i] = {"state": GONE, "named_removed": True, "after": None}
         elif affected and not (affected - removed):
             cells[i] = {"state": TARGET_REMOVED, "named_removed": False, "after": None}
@@ -801,8 +823,9 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
         after_recs = []
         for r in _acting(after["recommendations"]):
             t, e, aff = _quad(r)
-            after_recs.append({"rec": r, "quad": (name(ren.get(t, t)), e,
-                                                  frozenset(ren.get(x, x) for x in aff))})
+            after_recs.append({"rec": r, "hazard": ren.get(t, t),
+                               "quad": (name(ren.get(t, t)), e,
+                                        frozenset(ren.get(x, x) for x in aff))})
         removed = removed_set(before, after, str(one.get("target") or ""), ren)
         rset = set(removed)
         # a pair the model called one hazard is removed only when BOTH are
@@ -831,7 +854,8 @@ def table(before: dict, tries: list[tuple[dict, dict]]) -> dict:
             whole = {same4.key(h, grp) for h in rset
                      if h in grp and all(m in rset for m in grp[h])}
         col_cells, used = _match_column(base, after_recs, rset | whole, name,
-                                        victims=tried if is_victim else None)
+                                        victims=tried if is_victim else None,
+                                        stays=one.get("kind") == "dealt with")
         if is_victim:
             lab = {str(o.get("label") or "") for o in before["detected_objects"]
                    if str(o.get("object_id") or "") == target}

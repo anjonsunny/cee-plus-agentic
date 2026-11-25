@@ -454,3 +454,104 @@ def test_a_cell_shows_how_those_it_protects_changed_as_a_bar_of_its_own():
         for ids in (["person_1"], None, "x", [3, None]):
             got = f(ids, bad, bad)
             assert got["size"] == 0.0 and got["direction"] == "unchanged"
+
+
+# ---- pairing: the closest pair first, each after-recommendation once ---------
+def _pair_scene(recs, same=None):
+    ids = {"building_1": "building", "rubble_1": "rubble", "person_1": "person",
+           "officer_1": "person", "officer_2": "person", "road_1": "road"}
+    return {"detected_objects": [{"object_id": i, "label": lab, "state": "s"} for i, lab in ids.items()],
+            "threats": [{"object_id": "building_1"}, {"object_id": "rubble_1"}],
+            "at_risk": [], "graph_b": None, "causal_graph": None, "recommendations": recs,
+            "same_hazards": same or [], "disaster_level": 7}
+
+
+def _paired(tbl):
+    return {r["rank"]: ((r["cells"][0].get("after") or {}).get("rank"), r["cells"][0]["state"])
+            for r in tbl["rows"]}
+
+
+def test_an_after_recommendation_is_never_the_partner_of_two():
+    """Sunny, 2026-11-25: "X - A, Y - A... we just don't do it if it already
+    is used". E: "extricate the man" and "move the officers back" both read
+    as kept in the one "retreat all three"."""
+    from agentic import grounding4
+    b = _pair_scene([_rec(1, "Extricate person_1.", "building_1", ["person_1"]),
+                     _rec(2, "Move officer_1 and officer_2 back.", "building_1",
+                          ["officer_1", "officer_2"])])
+    a = _pair_scene([_rec(1, "Retreat person_1, officer_1 and officer_2.", "building_1",
+                          ["person_1", "officer_1", "officer_2"])])
+    tbl = grounding4.table(b, [({"target": "road_1", "kind": "removed"}, a)])
+    got = _paired(tbl)
+    # it goes to the closer one (2 of 3 protected in common, against 1 of 3)
+    assert got[2] == (1, "changed") and got[1] == (None, "gone")
+    assert tbl["columns"][0]["new"] == []
+    # the same with the two in the other order: the closest wins, not the first in the list
+    b2 = _pair_scene([_rec(1, "Move officer_1 and officer_2 back.", "building_1",
+                           ["officer_1", "officer_2"]),
+                      _rec(2, "Extricate person_1.", "building_1", ["person_1"])])
+    got = _paired(grounding4.table(b2, [({"target": "road_1", "kind": "removed"}, a)]))
+    assert got[1] == (1, "changed") and got[2] == (None, "gone")
+    # never the same after-recommendation twice, whatever the scene
+    for scene in (b, b2):
+        cells = [r["cells"][0] for r in grounding4.table(scene, [({"target": "road_1"}, a)])["rows"]]
+        ranks = [c["after"]["rank"] for c in cells if isinstance(c.get("after"), dict)]
+        assert len(ranks) == len(set(ranks))
+
+
+def test_the_closest_pair_is_given_out_first():
+    from agentic import grounding4
+    # #1 and #2 both about the building; the after list has them in the other order
+    b = _pair_scene([_rec(1, "Extricate person_1.", "building_1", ["person_1"]),
+                     _rec(2, "Move officer_1 back.", "building_1", ["officer_1"])])
+    a = _pair_scene([_rec(1, "Move officer_1 back.", "building_1", ["officer_1"]),
+                     _rec(2, "Extricate person_1.", "building_1", ["person_1"])])
+    got = _paired(grounding4.table(b, [({"target": "road_1"}, a)]))
+    assert got == {1: (2, "stays"), 2: (1, "stays")}
+    # the same things protected: the same effect word is closer
+    b = _pair_scene([_rec(1, "Extricate person_1.", "building_1", ["person_1"], effect="traps")])
+    a = _pair_scene([_rec(1, "Watch person_1.", "building_1", ["person_1"], effect="may_harm"),
+                     _rec(2, "Free person_1.", "building_1", ["person_1"], effect="traps")])
+    assert _paired(grounding4.table(b, [({"target": "road_1"}, a)]))[1] == (2, "stays")
+    # nothing in common but the hazard: still its counterpart (hazard first), re-aimed in full
+    b = _pair_scene([_rec(1, "Extricate person_1.", "building_1", ["person_1"])])
+    a = _pair_scene([_rec(1, "Close road_1.", "building_1", ["road_1"])])
+    cell = grounding4.table(b, [({"target": "officer_1"}, a)])["rows"][0]["cells"][0]
+    assert cell["state"] == "changed" and cell["target_shift"] == 1.0
+    # another hazard is never a counterpart
+    a = _pair_scene([_rec(1, "Extricate person_1.", "rubble_1", ["person_1"])])
+    assert _paired(grounding4.table(b, [({"target": "officer_1"}, a)]))[1] == (None, "gone")
+
+
+def test_the_very_same_hazard_is_closer_than_one_the_model_called_the_same():
+    """E ui_3b05a27e: the model called building_1 and rubble_1 the same
+    hazard. "Clear rubble_1" was paired with "shore up building_1" (it
+    protects the same officers) while "cordon and clear rubble_1" was
+    listed as new."""
+    from agentic import grounding4
+    same = [["building_1", "rubble_1"]]
+    b = _pair_scene([_rec(1, "Clear rubble_1.", "rubble_1", ["officer_1", "officer_2"])], same)
+    a = _pair_scene([_rec(1, "Shore up building_1.", "building_1", ["officer_1", "officer_2"]),
+                     _rec(2, "Cordon and clear rubble_1.", "rubble_1", ["road_1"])], same)
+    tbl = grounding4.table(b, [({"target": "person_1"}, a)])
+    assert _paired(tbl)[1] == (2, "changed")
+    assert [n["action"] for n in tbl["columns"][0]["new"]] == ["Shore up building_1."]
+    # with no recommendation left about the rubble itself, its mate's is its counterpart
+    a = _pair_scene([_rec(1, "Shore up building_1.", "building_1", ["officer_1", "officer_2"])], same)
+    assert _paired(grounding4.table(b, [({"target": "person_1"}, a)]))[1] == (1, "stays")
+
+
+def test_pairing_reads_the_action_by_meaning_when_it_can(monkeypatch):
+    from agentic import grounding4
+    b = _pair_scene([_rec(1, "Extricate person_1 from the window.", "building_1", ["person_1"])])
+    a = _pair_scene([_rec(1, "Shield person_1.", "building_1", ["person_1"]),
+                     _rec(2, "Pull person_1 out of the window.", "building_1", ["person_1"])])
+    far = {"Shield person_1.": 0.8, "Pull person_1 out of the window.": 0.1}
+    monkeypatch.setattr(grounding4, "action_shift", lambda x, y: far.get(y))
+    assert _paired(grounding4.table(b, [({"target": "road_1"}, a)]))[1] == (2, "stays")
+    # a measure that breaks falls back to the kind of action, and never raises
+    monkeypatch.setattr(grounding4, "action_shift", lambda x, y: 1 / 0)
+    assert _paired(grounding4.table(b, [({"target": "road_1"}, a)]))[1][1] == "stays"
+    for bad in (None, {}, {"recommendations": [None, 3, {"rank": "x"}, {"structured_reasoning": 4}]}):
+        grounding4.table(b, [({"target": "road_1"}, bad)])
+        grounding4.table(bad, [({"target": "road_1"}, b)])

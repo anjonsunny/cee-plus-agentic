@@ -455,16 +455,17 @@ def test_masquerade_spurious_changed_and_target_removed():
     assert by[1]["cells"][0]["state"] == "stays" and by[1]["verdict"] == "untested"
     assert by[3]["cells"][0]["state"] == "changed"       # now protects more
     assert by[4]["cells"][0]["state"] == "gone" and by[4]["verdict"] == "spurious"
-    # its target (the spill) was removed, but the fire still has advice:
-    # the advice is kept, adjusted (hazard first, 2026-11-16)
-    assert by[6]["cells"][0]["state"] == "changed"
+    # its target (the spill) was removed. The fire still has advice, but each
+    # piece of it is another row's (one recommendation, one row, 2026-11-25;
+    # before, it shared one and read "kept, adjusted"): its target was removed
+    assert by[6]["cells"][0]["state"] == "target removed"
     assert by[6]["verdict"] == "untested"
-    assert t["columns"][0]["moved"] == 3 and t["columns"][0]["of"] == 5
+    assert t["columns"][0]["moved"] == 2 and t["columns"][0]["of"] == 4
     # every cell carries the frozen arm's word for (names it?) x (moved?)
     assert by[2]["cells"][0]["label"] == "masquerade"
     assert by[1]["cells"][0]["label"] == "correctly_ignored"
     assert by[4]["cells"][0]["label"] == "spurious"
-    assert by[6]["cells"][0]["label"] == "correctly_ignored"
+    assert by[6]["cells"][0]["label"] == ""                    # bookkeeping: no word
     assert by[3]["cells"][0]["label"] == "correctly_ignored"   # changed, but not gone
 
 
@@ -943,10 +944,10 @@ def test_a_cell_says_what_happened_to_the_advice_then_the_label():
     # it now protects one thing more: a small change, by how much (not a flat 0.40)
     assert by["#3"] == "0.17 unaffected 1 of 1 targets kept, 1 new"
     assert by["#4"] == "1.00 dropped, though its hazard and victim are still there"
-    assert by["#6"] == "0.50 re-aimed rank 6 \u2192 1"
+    assert by["#6"] == "its target was removed"
     labels = {_flat(r).split()[0]: getattr(_by_class(r, "iv-cell")[0], "data-label") for r in rows}
     assert labels == {"#1": "correctly_ignored", "#2": "masquerade", "#3": "correctly_ignored",
-                      "#4": "spurious", "#6": "correctly_ignored"}
+                      "#4": "spurious", "#6": ""}
     # the frozen word for the cell is on hover
     four = _by_class(next(r for r in rows if _flat(r).startswith("#4")), "iv-cell")[0]
     assert "spurious: went when a hazard it does not name was removed" in json.loads(
@@ -1502,7 +1503,8 @@ def test_gone_spurious_and_target_removed_still_exist_when_the_hazard_has_no_adv
     t = g.table(before, [({"index": 1, "target": "shed_1"}, after)])
     by = {r["rank"]: r for r in t["rows"]}
     assert by[1]["cells"][0]["state"] == "stays"
-    assert by[4]["cells"][0]["state"] == "changed"        # shares the one piece of fire advice
+    # the one piece of fire advice is #1's; #4 has no counterpart (2026-11-25)
+    assert by[4]["cells"][0]["state"] == "gone"
     assert by[2]["cells"][0]["state"] == "gone" and by[2]["verdict"] == "spurious"
     # the shed is a VICTIM: the advice that protected it was dropped with it,
     # which is evidence now (for a hazard try that cell is only bookkeeping)
